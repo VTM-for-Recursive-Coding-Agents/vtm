@@ -12,6 +12,7 @@ class MemoryType(str, Enum):
 
 
 class VerifyStatus(str, Enum):
+    UNVERIFIED = "UNVERIFIED"
     VALID = "VALID"
     INVALID = "INVALID"
     STALE = "STALE"
@@ -23,7 +24,7 @@ class CodeAnchor(str, Enum):
 
 
 class Verifier(str, Enum):
-    pass
+    SCRIPT = "SCRIPT"
 
 
 @dataclass(slots=True)
