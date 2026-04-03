@@ -5,3 +5,8 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = []
+
+[project.optional-dependencies]
+results = [
+	"matplotlib>=3.9,<4",
+]
