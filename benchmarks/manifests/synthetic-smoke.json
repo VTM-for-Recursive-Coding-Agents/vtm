@@ -1,0 +1,231 @@
+{
+  "description": "Deterministic synthetic Python corpus for retrieval, drift, and coding smoke tests.",
+  "manifest_id": "synthetic_python_smoke",
+  "repos": [
+    {
+      "branch": "main",
+      "commit_pairs": [
+        {
+          "base_ref": "smoke-initial",
+          "description": "Unchanged symbol control pair.",
+          "head_ref": "smoke-stable",
+          "label": "stable",
+          "pair_id": "stable"
+        },
+        {
+          "base_ref": "smoke-stable",
+          "description": "Whitespace-only relocation pair.",
+          "head_ref": "smoke-whitespace",
+          "label": "whitespace",
+          "pair_id": "whitespace"
+        },
+        {
+          "base_ref": "smoke-whitespace",
+          "description": "Function relocation with unchanged semantics.",
+          "head_ref": "smoke-relocated",
+          "label": "relocated",
+          "pair_id": "relocated"
+        },
+        {
+          "base_ref": "smoke-relocated",
+          "description": "Semantic change pair.",
+          "head_ref": "smoke-semantic",
+          "label": "semantic",
+          "pair_id": "semantic"
+        },
+        {
+          "base_ref": "smoke-semantic",
+          "description": "Symbol deletion pair.",
+          "head_ref": "smoke-deleted",
+          "label": "deleted",
+          "pair_id": "deleted"
+        },
+        {
+          "base_ref": "smoke-bug",
+          "description": "Synthetic coding benchmark bugfix pair.",
+          "head_ref": "smoke-bugfix",
+          "label": "bugfix",
+          "pair_id": "bugfix"
+        },
+        {
+          "base_ref": "smoke-sentinel-bug",
+          "description": "Synthetic default sentinel handling bugfix pair.",
+          "head_ref": "smoke-sentinel-fix",
+          "label": "sentinel",
+          "pair_id": "sentinel"
+        },
+        {
+          "base_ref": "smoke-branch-bug",
+          "description": "Synthetic branch-condition bugfix pair.",
+          "head_ref": "smoke-branch-fix",
+          "label": "branch",
+          "pair_id": "branch"
+        },
+        {
+          "base_ref": "smoke-path-bug",
+          "description": "Synthetic report-path bugfix pair.",
+          "head_ref": "smoke-path-fix",
+          "label": "path",
+          "pair_id": "path"
+        },
+        {
+          "base_ref": "smoke-collection-bug",
+          "description": "Synthetic collection-normalization bugfix pair.",
+          "head_ref": "smoke-collection-fix",
+          "label": "collection",
+          "pair_id": "collection"
+        }
+      ],
+      "repo_name": "synthetic_python_smoke",
+      "source_kind": "synthetic_python_smoke"
+    }
+  ],
+  "coding_tasks": [
+    {
+      "case_id": "synthetic_bugfix_unittest",
+      "commit_pair_id": "bugfix",
+      "failing_tests": [
+        "tests.test_bugfix_module.BugfixModuleTests.test_buggy_increment"
+      ],
+      "repo_name": "synthetic_python_smoke",
+      "task_statement": "Fix buggy_increment so the synthetic unit test passes again.",
+      "test_command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_*.py",
+        "-q"
+      ],
+      "task_kind": "off_by_one",
+      "difficulty": "easy",
+      "touched_paths": [
+        "bugfix_module.py",
+        "tests/test_bugfix_module.py"
+      ],
+      "expected_changed_paths": [
+        "bugfix_module.py"
+      ]
+    },
+    {
+      "case_id": "synthetic_default_sentinel_unittest",
+      "commit_pair_id": "sentinel",
+      "failing_tests": [
+        "tests.test_limit_module.LimitModuleTests.test_normalize_limit_uses_default_for_none"
+      ],
+      "repo_name": "synthetic_python_smoke",
+      "task_statement": "Fix normalize_limit so None falls back to the default limit.",
+      "test_command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_*.py",
+        "-q"
+      ],
+      "task_kind": "default_sentinel",
+      "difficulty": "easy",
+      "touched_paths": [
+        "limit_module.py",
+        "tests/test_limit_module.py"
+      ],
+      "expected_changed_paths": [
+        "limit_module.py"
+      ]
+    },
+    {
+      "case_id": "synthetic_branch_condition_unittest",
+      "commit_pair_id": "branch",
+      "failing_tests": [
+        "tests.test_status_module.StatusModuleTests.test_suspended_account_is_not_active"
+      ],
+      "repo_name": "synthetic_python_smoke",
+      "task_statement": "Fix describe_status so suspended accounts are not marked active.",
+      "test_command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_*.py",
+        "-q"
+      ],
+      "task_kind": "branch_condition",
+      "difficulty": "medium",
+      "touched_paths": [
+        "status_module.py",
+        "tests/test_status_module.py"
+      ],
+      "expected_changed_paths": [
+        "status_module.py"
+      ]
+    },
+    {
+      "case_id": "synthetic_report_path_unittest",
+      "commit_pair_id": "path",
+      "failing_tests": [
+        "tests.test_report_module.ReportModuleTests.test_build_report_path_normalizes_name"
+      ],
+      "repo_name": "synthetic_python_smoke",
+      "task_statement": "Fix build_report_path so report names become lowercase .json paths.",
+      "test_command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_*.py",
+        "-q"
+      ],
+      "task_kind": "path_transform",
+      "difficulty": "medium",
+      "touched_paths": [
+        "report_module.py",
+        "tests/test_report_module.py"
+      ],
+      "expected_changed_paths": [
+        "report_module.py"
+      ]
+    },
+    {
+      "case_id": "synthetic_collection_unittest",
+      "commit_pair_id": "collection",
+      "failing_tests": [
+        "tests.test_collection_module.CollectionModuleTests.test_unique_sorted_removes_duplicates"
+      ],
+      "repo_name": "synthetic_python_smoke",
+      "task_statement": "Fix unique_sorted so duplicate values are removed before sorting.",
+      "test_command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_*.py",
+        "-q"
+      ],
+      "task_kind": "collection_transform",
+      "difficulty": "medium",
+      "touched_paths": [
+        "collection_module.py",
+        "tests/test_collection_module.py"
+      ],
+      "expected_changed_paths": [
+        "collection_module.py"
+      ]
+    }
+  ],
+  "seed": 0
+}
