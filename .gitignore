@@ -15,3 +15,10 @@ venv/
 
 #Sensitive files
 .env
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+.benchmarks/

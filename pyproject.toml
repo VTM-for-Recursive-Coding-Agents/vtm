@@ -1,7 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
 [project]
 name = "vtm"
 version = "0.1.0"
-description = "Add your description here"
+description = "Verified Transactional Memory kernel for coding agents in mutable repositories."
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = []
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "Codex" }]
+dependencies = [
+  "pydantic>=2.12,<3.0",
+  "tree-sitter>=0.25,<0.26",
+  "tree-sitter-python>=0.25,<0.26",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.14",
+  "pytest>=8.3",
+  "ruff>=0.8",
+]
+openai = [
+  "openai>=2.26,<3.0",
+]
+bench = [
+  "datasets>=4.0,<5.0",
+  "swebench>=4.1,<5.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vtm"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["vtm"]
