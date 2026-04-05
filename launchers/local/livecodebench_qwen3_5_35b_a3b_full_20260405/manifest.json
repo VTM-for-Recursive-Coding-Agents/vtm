@@ -1,0 +1,47 @@
+[
+  {
+    "benchmark": "livecodebench",
+    "execution_env": "local",
+    "provider": "rag",
+    "run_id": "lcb_qwen3_5_35b_a3b_rag_full_20260405_a",
+    "model": "qwen3.5-35b-a3b",
+    "lm_studio_model_id": "qwen/qwen3.5-35b-a3b",
+    "scenario": "codegeneration",
+    "n": "10",
+    "temperature": "0.2",
+    "evaluate": "true",
+    "max_tokens": "512",
+    "status": "queued",
+    "launch_script": "launchers/local/livecodebench_qwen3_5_35b_a3b_full_20260405/01_rag.sh"
+  },
+  {
+    "benchmark": "livecodebench",
+    "execution_env": "local",
+    "provider": "rlm",
+    "run_id": "lcb_qwen3_5_35b_a3b_rlm_full_20260405_a",
+    "model": "qwen3.5-35b-a3b",
+    "lm_studio_model_id": "qwen/qwen3.5-35b-a3b",
+    "scenario": "codegeneration",
+    "n": "10",
+    "temperature": "0.2",
+    "evaluate": "true",
+    "max_tokens": "512",
+    "status": "queued",
+    "launch_script": "launchers/local/livecodebench_qwen3_5_35b_a3b_full_20260405/02_rlm.sh"
+  },
+  {
+    "benchmark": "livecodebench",
+    "execution_env": "local",
+    "provider": "rlm_rag",
+    "run_id": "lcb_qwen3_5_35b_a3b_rlm_rag_full_20260405_a",
+    "model": "qwen3.5-35b-a3b",
+    "lm_studio_model_id": "qwen/qwen3.5-35b-a3b",
+    "scenario": "codegeneration",
+    "n": "10",
+    "temperature": "0.2",
+    "evaluate": "true",
+    "max_tokens": "512",
+    "status": "queued",
+    "launch_script": "launchers/local/livecodebench_qwen3_5_35b_a3b_full_20260405/03_rlm_rag.sh"
+  }
+]
