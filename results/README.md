@@ -1,14 +1,15 @@
 # Results Layout
 
-This directory stores benchmark outputs produced by scripts in ../scripts.
+This directory stores benchmark outputs and derived analysis artifacts only.
 
 ## Structure
 
 - raw/livecodebench/<run_id>/
 - raw/swebench/<run_id>/
 - metrics/
-- runs/
 - visualizations/
+
+Generated launcher bundles no longer belong here. Use `../launchers/` for local and CHPC launcher bundles.
 
 ## Conventions
 
@@ -45,6 +46,22 @@ python3 normalize_results.py
 python3 visualize_results.py --latest-only
 ```
 
+To keep unusable runs out of analysis artifacts, use the explicit exclusion flag:
+
+```bash
+cd results
+python3 normalize_results.py --exclude-unusable
+python3 visualize_results.py --latest-only --exclude-unusable
+```
+
+To audit or delete unusable raw and archived run folders:
+
+```bash
+cd results
+python3 prune_unusable_runs.py
+python3 prune_unusable_runs.py --delete
+```
+
 If you only want the minimum plotting dependency instead of syncing extras:
 
 ```bash
@@ -67,6 +84,8 @@ Outputs:
 - LiveCodeBench pass metrics are extracted from *_eval.json outputs discovered from output_files.txt or default output paths.
 - Extraction provenance is recorded in metrics/extraction_sources.json so you can see exactly which files were parsed per run.
 - Cost and token usage fields are currently nullable placeholders until a stable source is wired in.
+- A run is considered unusable for analysis when it is not successful, has warnings, or is explicitly named with --known-failed-run-id.
+- prune_unusable_runs.py is dry-run by default; pass --delete only after reviewing the candidate list.
 
 ## Zero To Graphs
 
@@ -74,20 +93,20 @@ Outputs:
 
 ```bash
 scripts/setup_project.sh
-scripts/preflight_checks.sh --benchmark all
+scripts/local/preflight_checks.sh --benchmark all
 ```
 
 2. Generate raw benchmark outputs. Examples:
 
 ```bash
-scripts/run_livecodebench_baseline.sh --model gpt-4-1106-preview --scenario codegeneration --evaluate true
-scripts/run_swebench_baseline.sh --mode eval-only --predictions-path <path_to_predictions.jsonl>
+scripts/local/run_livecodebench.sh --model gpt-4-1106-preview --scenario codegeneration --evaluate true
+scripts/local/run_swebench.sh --mode eval-only --predictions-path <path_to_predictions.jsonl>
 ```
 
 For a fast no-cost SWE-bench smoke test, you can use the built-in gold patches and a single instance id:
 
 ```bash
-scripts/run_swebench_baseline.sh \
+scripts/local/run_swebench.sh \
   --mode eval-only \
   --predictions-path gold \
   --instance-id astropy__astropy-12907 \
@@ -100,8 +119,8 @@ scripts/run_swebench_baseline.sh \
 
 ```bash
 cd results
-python3 normalize_results.py
-python3 visualize_results.py --latest-only
+python3 normalize_results.py --exclude-unusable
+python3 visualize_results.py --latest-only --exclude-unusable
 ```
 
 4. Verify these artifacts exist and are non-empty:

@@ -1,0 +1,259 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+SWE_DIR="$PROJECT_ROOT/benchmarks/SWE-bench"
+RESULTS_ROOT="$PROJECT_ROOT/results"
+
+select_python() {
+    local benchmark_dir="$1"
+    if [[ -x "$benchmark_dir/.venv/bin/python" ]]; then
+        echo "$benchmark_dir/.venv/bin/python"
+        return 0
+    fi
+    if [[ -n "${VIRTUAL_ENV:-}" && -x "$VIRTUAL_ENV/bin/python" ]]; then
+        echo "$VIRTUAL_ENV/bin/python"
+        return 0
+    fi
+    command -v python3
+}
+
+MODE="eval-only"
+MODEL=""
+PROVIDER="baseline"
+PREDICTIONS_PATH=""
+INFER_DATASET="princeton-nlp/SWE-bench_oracle"
+EVAL_DATASET="SWE-bench/SWE-bench_Lite"
+SPLIT="test"
+MAX_WORKERS="4"
+TIMEOUT="1800"
+CACHE_LEVEL="env"
+RUN_ID=""
+INFERENCE_OUTPUT_DIR="$SWE_DIR/outputs"
+MODEL_ARGS=""
+MAX_COST=""
+INSTANCE_IDS=()
+
+usage() {
+    cat <<'EOF'
+Usage: scripts/local/run_swebench.sh [options]
+
+Modes:
+  eval-only            Evaluate an existing predictions file or the literal 'gold' (default)
+  infer-api-and-eval   Run swebench.inference.run_api, then evaluate generated predictions
+
+Options:
+  --mode <mode>                    eval-only | infer-api-and-eval
+  --predictions-path <path|gold>   Existing predictions JSON/JSONL or the literal 'gold' in eval-only mode
+  --model <name>                   API model for infer-api-and-eval mode (gpt-* or claude-*)
+  --provider <label>               Experiment label for normalization (default: baseline)
+  --infer-dataset <name_or_path>   Inference dataset (default: princeton-nlp/SWE-bench_oracle)
+  --eval-dataset <name_or_path>    Evaluation dataset (default: SWE-bench/SWE-bench_Lite)
+  --split <split>                  Dataset split (default: test)
+  --instance-id <id>               Optional instance id filter for smaller eval-only runs (repeatable)
+  --max-workers <int>              Evaluation workers (default: 4)
+  --timeout <seconds>              Per-instance timeout (default: 1800)
+  --cache-level <level>            Docker cache level: none|base|env|instance (default: env)
+  --run-id <id>                    Custom run id (default: timestamp-based)
+  --inference-output-dir <path>    Output directory for inference JSONL files
+  --model-args <k=v,...>           Optional API model args for run_api.py
+  --max-cost <float>               Optional API max cost cap for run_api.py
+  -h, --help                       Show help
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --mode)
+            MODE="$2"
+            shift 2
+            ;;
+        --predictions-path)
+            PREDICTIONS_PATH="$2"
+            shift 2
+            ;;
+        --model)
+            MODEL="$2"
+            shift 2
+            ;;
+        --provider)
+            PROVIDER="$2"
+            shift 2
+            ;;
+        --infer-dataset)
+            INFER_DATASET="$2"
+            shift 2
+            ;;
+        --eval-dataset)
+            EVAL_DATASET="$2"
+            shift 2
+            ;;
+        --split)
+            SPLIT="$2"
+            shift 2
+            ;;
+        --instance-id)
+            INSTANCE_IDS+=("$2")
+            shift 2
+            ;;
+        --max-workers)
+            MAX_WORKERS="$2"
+            shift 2
+            ;;
+        --timeout)
+            TIMEOUT="$2"
+            shift 2
+            ;;
+        --cache-level)
+            CACHE_LEVEL="$2"
+            shift 2
+            ;;
+        --run-id)
+            RUN_ID="$2"
+            shift 2
+            ;;
+        --inference-output-dir)
+            INFERENCE_OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        --model-args)
+            MODEL_ARGS="$2"
+            shift 2
+            ;;
+        --max-cost)
+            MAX_COST="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+if [[ "$MODE" != "eval-only" && "$MODE" != "infer-api-and-eval" ]]; then
+    echo "Invalid --mode value: $MODE" >&2
+    exit 1
+fi
+
+if [[ -z "$RUN_ID" ]]; then
+    RUN_ID="swe_$(date +%Y%m%d_%H%M%S)"
+fi
+
+RUN_DIR="$RESULTS_ROOT/raw/swebench/$RUN_ID"
+mkdir -p "$RUN_DIR"
+
+if [[ -n "${VTM_PREFLIGHT_SCRIPT:-}" ]]; then
+    "$VTM_PREFLIGHT_SCRIPT" --benchmark swe
+fi
+
+PYTHON_BIN="$(select_python "$SWE_DIR")"
+if [[ "$PYTHON_BIN" == "$SWE_DIR/.venv/bin/python" ]]; then
+    echo "[swe] Using benchmark-local Python: $PYTHON_BIN"
+else
+    echo "[swe] Using active Python: $PYTHON_BIN"
+    echo "[swe] Tip: create $SWE_DIR/.venv with 'cd benchmarks/SWE-bench && uv venv --python 3.11 && uv pip install -e .'"
+fi
+
+if [[ "$MODE" == "infer-api-and-eval" ]]; then
+    if [[ -z "$MODEL" ]]; then
+        echo "--model is required for infer-api-and-eval mode" >&2
+        exit 1
+    fi
+
+    mkdir -p "$INFERENCE_OUTPUT_DIR"
+
+    INFER_CMD=(
+        "$PYTHON_BIN" -m swebench.inference.run_api
+        --dataset_name_or_path "$INFER_DATASET"
+        --split "$SPLIT"
+        --model_name_or_path "$MODEL"
+        --output_dir "$INFERENCE_OUTPUT_DIR"
+    )
+
+    if [[ -n "$MODEL_ARGS" ]]; then
+        INFER_CMD+=(--model_args "$MODEL_ARGS")
+    fi
+    if [[ -n "$MAX_COST" ]]; then
+        INFER_CMD+=(--max_cost "$MAX_COST")
+    fi
+
+    pushd "$SWE_DIR" >/dev/null
+    echo "[swe] Running inference: ${INFER_CMD[*]}"
+    "${INFER_CMD[@]}" 2>&1 | tee "$RUN_DIR/inference.log"
+    popd >/dev/null
+
+    MODEL_NICKNAME="${MODEL//\//__}"
+    DATASET_NICKNAME="${INFER_DATASET##*/}"
+    PREDICTIONS_PATH="$INFERENCE_OUTPUT_DIR/${MODEL_NICKNAME}__${DATASET_NICKNAME}__${SPLIT}.jsonl"
+fi
+
+if [[ -z "$PREDICTIONS_PATH" ]]; then
+    echo "--predictions-path is required in eval-only mode" >&2
+    exit 1
+fi
+
+if [[ "$PREDICTIONS_PATH" != "gold" && ! -f "$PREDICTIONS_PATH" ]]; then
+    echo "Predictions file not found: $PREDICTIONS_PATH" >&2
+    exit 1
+fi
+
+EVAL_CMD=(
+    "$PYTHON_BIN" -m swebench.harness.run_evaluation
+    --dataset_name "$EVAL_DATASET"
+    --split "$SPLIT"
+    --predictions_path "$PREDICTIONS_PATH"
+    --max_workers "$MAX_WORKERS"
+    --timeout "$TIMEOUT"
+    --cache_level "$CACHE_LEVEL"
+    --run_id "$RUN_ID"
+)
+
+if [[ ${#INSTANCE_IDS[@]} -gt 0 ]]; then
+    EVAL_CMD+=(--instance_ids "${INSTANCE_IDS[@]}")
+fi
+
+MODEL_LABEL="$MODEL"
+if [[ -z "$MODEL_LABEL" ]]; then
+    if [[ "$PREDICTIONS_PATH" == "gold" ]]; then
+        MODEL_LABEL="gold"
+    else
+        MODEL_LABEL="$(basename "$PREDICTIONS_PATH")"
+    fi
+fi
+
+{
+    echo "run_id=$RUN_ID"
+    echo "benchmark=swebench"
+    echo "mode=$MODE"
+    echo "model=$MODEL_LABEL"
+    echo "provider=$PROVIDER"
+    echo "predictions_path=$PREDICTIONS_PATH"
+    echo "instance_ids=${INSTANCE_IDS[*]:-}"
+    echo "infer_dataset=$INFER_DATASET"
+    echo "eval_dataset=$EVAL_DATASET"
+    echo "split=$SPLIT"
+    echo "max_workers=$MAX_WORKERS"
+    echo "timeout=$TIMEOUT"
+    echo "cache_level=$CACHE_LEVEL"
+    echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+} > "$RUN_DIR/metadata.txt"
+
+pushd "$SWE_DIR" >/dev/null
+echo "[swe] Running evaluation: ${EVAL_CMD[*]}"
+"${EVAL_CMD[@]}" 2>&1 | tee "$RUN_DIR/evaluation.log"
+
+if [[ -d "$SWE_DIR/logs/run_evaluation/$RUN_ID" ]]; then
+    cp -R "$SWE_DIR/logs/run_evaluation/$RUN_ID" "$RUN_DIR/run_evaluation_logs"
+fi
+
+popd >/dev/null
+
+echo "[swe] Completed run_id=$RUN_ID"
+echo "[swe] Results folder: $RUN_DIR"

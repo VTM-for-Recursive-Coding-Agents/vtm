@@ -1,0 +1,38 @@
+[
+  {
+    "benchmark": "livecodebench",
+    "provider": "rag",
+    "run_id": "lcb_qwen3_5_35b_a3b_rag_driver_smoke_a",
+    "model": "qwen3.5-35b-a3b",
+    "lm_studio_model_id": "qwen/qwen3.5-35b-a3b",
+    "scenario": "codegeneration",
+    "n": "1",
+    "temperature": "0.2",
+    "status": "queued",
+    "launch_script": "results/runs/livecodebench_driver_smoke/01_rag.sh"
+  },
+  {
+    "benchmark": "livecodebench",
+    "provider": "rlm",
+    "run_id": "lcb_qwen3_5_35b_a3b_rlm_driver_smoke_a",
+    "model": "qwen3.5-35b-a3b",
+    "lm_studio_model_id": "qwen/qwen3.5-35b-a3b",
+    "scenario": "codegeneration",
+    "n": "1",
+    "temperature": "0.2",
+    "status": "queued",
+    "launch_script": "results/runs/livecodebench_driver_smoke/02_rlm.sh"
+  },
+  {
+    "benchmark": "livecodebench",
+    "provider": "rlm_rag",
+    "run_id": "lcb_qwen3_5_35b_a3b_rlm_rag_driver_smoke_a",
+    "model": "qwen3.5-35b-a3b",
+    "lm_studio_model_id": "qwen/qwen3.5-35b-a3b",
+    "scenario": "codegeneration",
+    "n": "1",
+    "temperature": "0.2",
+    "status": "queued",
+    "launch_script": "results/runs/livecodebench_driver_smoke/03_rlm_rag.sh"
+  }
+]

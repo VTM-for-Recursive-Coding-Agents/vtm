@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+BENCHMARK="all"
+PROVIDER="baseline"
+RUN_ID=""
+LCB_MODEL=""
+LCB_SCENARIO="codegeneration"
+SWE_MODE="eval-only"
+SWE_MODEL=""
+SWE_PREDICTIONS_PATH=""
+
+usage() {
+    cat <<'EOF'
+Usage: scripts/local/run_benchmarks.sh [options]
+
+Options:
+  --benchmark <all|lcb|swe>            Which benchmark pipeline to run (default: all)
+  --provider <baseline|vtm>            Prediction provider (default: baseline)
+  --run-id <id>                        Shared run id prefix
+
+LiveCodeBench options:
+  --lcb-model <name>                   Model key for LCB runner
+  --lcb-scenario <name>                Scenario for LCB (default: codegeneration)
+
+SWE-bench options:
+  --swe-mode <mode>                    eval-only | infer-api-and-eval (default: eval-only)
+  --swe-model <name>                   API model for infer-api-and-eval mode
+  --swe-predictions-path <path>        Predictions file for eval-only mode
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --benchmark)
+            BENCHMARK="$2"
+            shift 2
+            ;;
+        --provider)
+            PROVIDER="$2"
+            shift 2
+            ;;
+        --run-id)
+            RUN_ID="$2"
+            shift 2
+            ;;
+        --lcb-model)
+            LCB_MODEL="$2"
+            shift 2
+            ;;
+        --lcb-scenario)
+            LCB_SCENARIO="$2"
+            shift 2
+            ;;
+        --swe-mode)
+            SWE_MODE="$2"
+            shift 2
+            ;;
+        --swe-model)
+            SWE_MODEL="$2"
+            shift 2
+            ;;
+        --swe-predictions-path)
+            SWE_PREDICTIONS_PATH="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+if [[ "$BENCHMARK" != "all" && "$BENCHMARK" != "lcb" && "$BENCHMARK" != "swe" ]]; then
+    echo "Invalid --benchmark value: $BENCHMARK" >&2
+    exit 1
+fi
+
+if [[ "$PROVIDER" != "baseline" && "$PROVIDER" != "vtm" ]]; then
+    echo "Invalid --provider value: $PROVIDER" >&2
+    exit 1
+fi
+
+if [[ "$PROVIDER" == "vtm" ]]; then
+    echo "Provider 'vtm' is a reserved integration seam and is not implemented yet."
+    echo "Use --provider baseline for now, then wire VTM predictions into the same format later."
+    exit 1
+fi
+
+if [[ -z "$RUN_ID" ]]; then
+    RUN_ID="run_$(date +%Y%m%d_%H%M%S)"
+fi
+
+if [[ "$BENCHMARK" == "all" || "$BENCHMARK" == "lcb" ]]; then
+    if [[ -z "$LCB_MODEL" ]]; then
+        echo "--lcb-model is required when running LiveCodeBench" >&2
+        exit 1
+    fi
+
+    "$SCRIPT_DIR/run_livecodebench.sh" \
+        --model "$LCB_MODEL" \
+        --scenario "$LCB_SCENARIO" \
+        --run-id "${RUN_ID}_lcb"
+fi
+
+if [[ "$BENCHMARK" == "all" || "$BENCHMARK" == "swe" ]]; then
+    SWE_ARGS=(
+        --mode "$SWE_MODE"
+        --run-id "${RUN_ID}_swe"
+    )
+
+    if [[ -n "$SWE_MODEL" ]]; then
+        SWE_ARGS+=(--model "$SWE_MODEL")
+    fi
+    if [[ -n "$SWE_PREDICTIONS_PATH" ]]; then
+        SWE_ARGS+=(--predictions-path "$SWE_PREDICTIONS_PATH")
+    fi
+
+    "$SCRIPT_DIR/run_swebench.sh" "${SWE_ARGS[@]}"
+fi
+
+echo "[orchestrator] Completed benchmark=$BENCHMARK provider=$PROVIDER run_id=$RUN_ID"

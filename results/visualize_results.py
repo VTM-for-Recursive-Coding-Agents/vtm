@@ -9,7 +9,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from normalize_results import write_outputs, discover_runs, write_source_map
+from normalize_results import discover_runs, split_runs_by_usability, write_outputs, write_source_map
 
 
 def _print_no_data_guidance(raw_root: Path, metrics_dir: Path, output_dir: Path) -> None:
@@ -51,6 +51,39 @@ def _to_float(value: Any) -> float | None:
 		return float(text)
 	except ValueError:
 		return None
+
+
+def _warnings_from_csv(value: Any) -> list[str]:
+	text = str(value or "").strip()
+	if not text:
+		return []
+	return [item for item in text.split(";") if item]
+
+
+def _filter_unusable_csv_rows(
+	rows: list[dict[str, Any]],
+	*,
+	known_failed_run_ids: set[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[tuple[str, list[str]]]]:
+	filtered: list[dict[str, Any]] = []
+	excluded: list[tuple[str, list[str]]] = []
+
+	for row in rows:
+		run_id = str(row.get("run_id", ""))
+		reasons: list[str] = []
+		if known_failed_run_ids and run_id in known_failed_run_ids:
+			reasons.append("known_failed_run_id")
+		status = str(row.get("status", "")).strip()
+		if status != "success":
+			reasons.append(f"status:{status or 'unknown'}")
+		for warning in _warnings_from_csv(row.get("warnings")):
+			reasons.append(f"warning:{warning}")
+		if reasons:
+			excluded.append((run_id, reasons))
+			continue
+		filtered.append(row)
+
+	return filtered, excluded
 
 #this method takes a list of dictionaries (representing rows of benchmark results) and returns a new list of dictionaries that contains only the latest entry for each unique combination of "benchmark" and "model". It groups the rows by these two keys and compares their "timestamp" values to determine which one is the latest. The resulting list will have at most one entry for each benchmark/model pair, representing the most recent run.
 def _latest_by_model_and_benchmark(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -202,17 +235,44 @@ def build_arg_parser() -> argparse.ArgumentParser:
 		action="store_true",
 		help="Skip normalizing raw runs before plotting.",
 	)
+	parser.add_argument(
+		"--exclude-unusable",
+		action="store_true",
+		help="Exclude runs with non-success status, warnings, or explicitly named failed run ids.",
+	)
+	parser.add_argument(
+		"--known-failed-run-id",
+		action="append",
+		default=[],
+		help="Run id to treat as unusable even if parsing would otherwise consider it usable. Repeat as needed.",
+	)
 	return parser
 
 
 def main() -> int:
 	args = build_arg_parser().parse_args()
+	known_failed_run_ids = set(args.known_failed_run_id)
 	if not args.skip_normalize:
 		records = discover_runs(args.raw_root)
+		excluded = []
+		if args.exclude_unusable:
+			records, excluded = split_runs_by_usability(
+				records,
+				known_failed_run_ids=known_failed_run_ids,
+			)
 		write_outputs(records, args.metrics_dir)
 		write_source_map(records, args.metrics_dir)
 		print(f"[viz] Normalized {len(records)} runs into {args.metrics_dir}")
+		if excluded:
+			print(f"[viz] Excluded {len(excluded)} unusable runs during normalization")
 	rows = _read_csv_rows(args.metrics_dir / "normalized_metrics.csv")
+	if args.exclude_unusable:
+		rows, excluded_rows = _filter_unusable_csv_rows(
+			rows,
+			known_failed_run_ids=known_failed_run_ids,
+		)
+		if excluded_rows:
+			print(f"[viz] Excluded {len(excluded_rows)} unusable rows before plotting")
 
 	if args.model:
 		rows = [r for r in rows if r.get("model") == args.model]

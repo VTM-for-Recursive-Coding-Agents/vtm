@@ -74,6 +74,12 @@ class RunRecord:
         }
 
 
+@dataclass
+class ExcludedRun:
+    record: RunRecord
+    reasons: list[str]
+
+
 def _read_kv_metadata(path: Path) -> dict[str, str]:
     data: dict[str, str] = {}
     if not path.exists():
@@ -114,6 +120,26 @@ def _parse_iso_utc(value: str | None) -> str | None:
         return dt.astimezone(timezone.utc).isoformat()
     except ValueError:
         return value
+
+
+def infer_benchmark(run_dir: Path, metadata: dict[str, str] | None = None) -> str | None:
+    metadata = metadata or {}
+    benchmark = metadata.get("benchmark", "").strip().lower()
+    if benchmark in {"livecodebench", "swebench"}:
+        return benchmark
+
+    path_parts = [part.lower() for part in run_dir.parts]
+    if "livecodebench" in path_parts:
+        return "livecodebench"
+    if "swebench" in path_parts or "swe-bench" in path_parts:
+        return "swebench"
+
+    name = run_dir.name.lower()
+    if name.startswith("lcb_"):
+        return "livecodebench"
+    if name.startswith("swe_"):
+        return "swebench"
+    return None
 
 
 def _pick_lcb_eval_json(run_dir: Path, metadata: dict[str, str]) -> Path | None:
@@ -186,6 +212,7 @@ def parse_livecodebench_run(run_dir: Path) -> RunRecord:
     warnings: list[str] = []
 
     model = metadata.get("model", "unknown")
+    provider = metadata.get("provider", "baseline")
     run_id = metadata.get("run_id", run_dir.name)
     timestamp = _parse_iso_utc(metadata.get("started_at"))
     scenario = metadata.get("scenario")
@@ -224,7 +251,7 @@ def parse_livecodebench_run(run_dir: Path) -> RunRecord:
         benchmark="livecodebench",
         run_id=run_id,
         model=model,
-        provider="baseline",
+        provider=provider,
         scenario=scenario,
         timestamp=timestamp,
         status=status,
@@ -278,6 +305,7 @@ def parse_swebench_run(run_dir: Path) -> RunRecord:
     warnings: list[str] = []
 
     model = metadata.get("model", "unknown")
+    provider = metadata.get("provider", "baseline")
     run_id = metadata.get("run_id", run_dir.name)
     timestamp = _parse_iso_utc(metadata.get("started_at"))
     scenario = metadata.get("mode")
@@ -331,7 +359,7 @@ def parse_swebench_run(run_dir: Path) -> RunRecord:
         benchmark="swebench",
         run_id=run_id,
         model=model,
-        provider="baseline",
+        provider=provider,
         scenario=scenario,
         timestamp=timestamp,
         status=status,
@@ -354,6 +382,16 @@ def parse_swebench_run(run_dir: Path) -> RunRecord:
     )
 
 
+def parse_run_dir(run_dir: Path) -> RunRecord | None:
+    metadata = _read_kv_metadata(run_dir / "metadata.txt")
+    benchmark = infer_benchmark(run_dir, metadata)
+    if benchmark == "livecodebench":
+        return parse_livecodebench_run(run_dir)
+    if benchmark == "swebench":
+        return parse_swebench_run(run_dir)
+    return None
+
+
 def discover_runs(raw_root: Path) -> list[RunRecord]:
     runs: list[RunRecord] = []
 
@@ -368,6 +406,48 @@ def discover_runs(raw_root: Path) -> list[RunRecord]:
             runs.append(parse_swebench_run(run_dir))
 
     return runs
+
+
+def get_unusable_reasons(
+    record: RunRecord,
+    *,
+    known_failed_run_ids: set[str] | None = None,
+    exclude_non_success: bool = True,
+    exclude_warnings: bool = True,
+) -> list[str]:
+    reasons: list[str] = []
+    if known_failed_run_ids and record.run_id in known_failed_run_ids:
+        reasons.append("known_failed_run_id")
+    if exclude_non_success and record.status != "success":
+        reasons.append(f"status:{record.status}")
+    if exclude_warnings:
+        reasons.extend(f"warning:{warning}" for warning in record.warnings)
+    return reasons
+
+
+def split_runs_by_usability(
+    records: list[RunRecord],
+    *,
+    known_failed_run_ids: set[str] | None = None,
+    exclude_non_success: bool = True,
+    exclude_warnings: bool = True,
+) -> tuple[list[RunRecord], list[ExcludedRun]]:
+    usable: list[RunRecord] = []
+    excluded: list[ExcludedRun] = []
+
+    for record in records:
+        reasons = get_unusable_reasons(
+            record,
+            known_failed_run_ids=known_failed_run_ids,
+            exclude_non_success=exclude_non_success,
+            exclude_warnings=exclude_warnings,
+        )
+        if reasons:
+            excluded.append(ExcludedRun(record=record, reasons=reasons))
+            continue
+        usable.append(record)
+
+    return usable, excluded
 
 
 def write_outputs(records: list[RunRecord], metrics_dir: Path) -> tuple[Path, Path]:
@@ -451,16 +531,38 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=Path(__file__).resolve().parent / "metrics",
         help="Output folder for normalized metrics files.",
     )
+    parser.add_argument(
+        "--exclude-unusable",
+        action="store_true",
+        help="Exclude runs with non-success status, warnings, or explicitly named failed run ids.",
+    )
+    parser.add_argument(
+        "--known-failed-run-id",
+        action="append",
+        default=[],
+        help="Run id to treat as unusable even if parsing would otherwise consider it usable. Repeat as needed.",
+    )
     return parser
 
 
 def main() -> int:
     args = build_arg_parser().parse_args()
     records = discover_runs(args.raw_root)
+    excluded: list[ExcludedRun] = []
+    if args.exclude_unusable:
+        records, excluded = split_runs_by_usability(
+            records,
+            known_failed_run_ids=set(args.known_failed_run_id),
+        )
     jsonl_path, csv_path = write_outputs(records, args.metrics_dir)
     source_map_path = write_source_map(records, args.metrics_dir)
 
     print(f"[normalize] Runs processed: {len(records)}")
+    if excluded:
+        print(f"[normalize] Runs excluded: {len(excluded)}")
+        for item in excluded:
+            reason_text = ", ".join(item.reasons)
+            print(f"  - {item.record.run_id}: {reason_text}")
     print(f"[normalize] JSONL: {jsonl_path}")
     print(f"[normalize] CSV:   {csv_path}")
     print(f"[normalize] Sources: {source_map_path}")
