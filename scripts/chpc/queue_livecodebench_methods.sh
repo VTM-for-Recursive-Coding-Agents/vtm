@@ -3,6 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/chpc_env.sh"
 LAUNCHERS_ROOT="$PROJECT_ROOT/launchers/chpc"
 
 MODEL=""
@@ -21,6 +23,11 @@ RLM_MAX_ITERATIONS=""
 RLM_MAX_TIMEOUT=""
 QUEUE_TAG="$(date +%Y%m%d)"
 QUEUE_DIR=""
+STORAGE_ROOT=""
+PYTHON_MODULE=""
+CUDA_MODULE=""
+EXTRA_MODULES=""
+SKIP_MODULES="false"
 
 usage() {
   cat <<'EOF'
@@ -43,6 +50,11 @@ Options:
   --rlm-max-timeout <seconds>    Max wall-clock time for rlm/rlm_rag (optional)
   --queue-tag <tag>              Queue label/date suffix (default: YYYYMMDD)
   --queue-dir <path>             Output bundle directory (default: launchers/chpc/<derived>)
+  --storage-root <path>          Scratch-backed root for CHPC envs and caches
+  --python-module <name>         Module to load before resolving Python
+  --cuda-module <name>           CUDA module to load inside generated jobs
+  --extra-modules <list>         Space-separated extra modules to load inside jobs
+  --skip-modules                 Do not attempt to load environment modules
   -h, --help                     Show help
 
 This creates CHPC submission bundles only. It does not duplicate benchmark logic.
@@ -116,6 +128,26 @@ while [[ $# -gt 0 ]]; do
       QUEUE_DIR="$2"
       shift 2
       ;;
+    --storage-root)
+      STORAGE_ROOT="$2"
+      shift 2
+      ;;
+    --python-module)
+      PYTHON_MODULE="$2"
+      shift 2
+      ;;
+    --cuda-module)
+      CUDA_MODULE="$2"
+      shift 2
+      ;;
+    --extra-modules)
+      EXTRA_MODULES="$2"
+      shift 2
+      ;;
+    --skip-modules)
+      SKIP_MODULES="true"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -133,6 +165,21 @@ if [[ -z "$MODEL" ]]; then
   usage
   exit 1
 fi
+
+if [[ -n "$PYTHON_MODULE" ]]; then
+  export VTM_CHPC_PYTHON_MODULE="$PYTHON_MODULE"
+fi
+if [[ -n "$CUDA_MODULE" ]]; then
+  export VTM_CHPC_CUDA_MODULE="$CUDA_MODULE"
+fi
+if [[ -n "$EXTRA_MODULES" ]]; then
+  export VTM_CHPC_EXTRA_MODULES="$EXTRA_MODULES"
+fi
+if [[ "$SKIP_MODULES" == "true" ]]; then
+  export VTM_CHPC_SKIP_MODULES=true
+fi
+
+vtm_chpc_setup_environment "$STORAGE_ROOT"
 
 if [[ -z "$MODEL_TAG" ]]; then
   MODEL_TAG="$(printf '%s' "$MODEL" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '_' | sed 's/^_//; s/_$//')"
@@ -196,7 +243,7 @@ write_job_script() {
   local provider="$2"
   local run_id="lcb_${MODEL_TAG}_${provider}_${QUEUE_TAG}_a"
   local job_script="$QUEUE_DIR/${order}_${provider}.sbatch"
-  local method_example="benchmarks/LiveCodeBench/.venv/bin/python scripts/livecodebench_${provider}_driver.py --provider ${provider} --run-id ${run_id} --model ${MODEL} --scenario ${SCENARIO} --n ${N} --temperature ${TEMPERATURE} --evaluate ${EVALUATE}"
+  local method_example="$VTM_CHPC_LCB_VENV_DIR/bin/python $PROJECT_ROOT/scripts/livecodebench_${provider}_driver.py --provider ${provider} --run-id ${run_id} --model ${MODEL} --scenario ${SCENARIO} --n ${N} --temperature ${TEMPERATURE} --evaluate ${EVALUATE}"
 
   if [[ -n "$LM_STUDIO_MODEL_ID" ]]; then
     method_example+=" --lm-studio-model-id ${LM_STUDIO_MODEL_ID}"
@@ -232,8 +279,31 @@ write_job_script() {
 #SBATCH --job-name=${MODEL_TAG}_${provider}
 set -euo pipefail
 
-SCRIPT_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="\$(cd "\$SCRIPT_DIR/../../.." && pwd)"
+PROJECT_ROOT="$PROJECT_ROOT"
+STORAGE_ROOT="$VTM_CHPC_ROOT"
+PYTHON_MODULE="$PYTHON_MODULE"
+CUDA_MODULE="$CUDA_MODULE"
+EXTRA_MODULES="$EXTRA_MODULES"
+SKIP_MODULES="$SKIP_MODULES"
+
+# shellcheck disable=SC1091
+source "$PROJECT_ROOT/scripts/chpc/chpc_env.sh"
+
+if [[ -n "$PYTHON_MODULE" ]]; then
+  export VTM_CHPC_PYTHON_MODULE="$PYTHON_MODULE"
+fi
+if [[ -n "$CUDA_MODULE" ]]; then
+  export VTM_CHPC_CUDA_MODULE="$CUDA_MODULE"
+fi
+if [[ -n "$EXTRA_MODULES" ]]; then
+  export VTM_CHPC_EXTRA_MODULES="$EXTRA_MODULES"
+fi
+if [[ "$SKIP_MODULES" == "true" ]]; then
+  export VTM_CHPC_SKIP_MODULES=true
+fi
+
+vtm_chpc_setup_environment "$STORAGE_ROOT"
+vtm_chpc_load_requested_modules
 
 RUN_ID="$run_id"
 PROVIDER="$provider"
@@ -254,9 +324,16 @@ RLM_MAX_TIMEOUT="$RLM_MAX_TIMEOUT"
 if [[ -z "\${METHOD_COMMAND:-}" ]]; then
   echo "Set METHOD_COMMAND before submitting this job." >&2
   echo "Example:" >&2
-  echo "  METHOD_COMMAND='${method_example}' sbatch \"\$SCRIPT_DIR/${order}_${provider}.sbatch\"" >&2
+  echo "  METHOD_COMMAND='${method_example}' sbatch \"$job_script\"" >&2
   exit 2
 fi
+
+if [[ ! -d "\$PROJECT_ROOT" ]]; then
+  echo "Project root does not exist on this node: \$PROJECT_ROOT" >&2
+  exit 1
+fi
+
+vtm_chpc_print_summary
 
 cd "\$PROJECT_ROOT"
 echo "[chpc] Running \${RUN_ID} (\${PROVIDER})"
@@ -267,6 +344,7 @@ EOF
   chmod +x "$job_script"
 }
 
+write_job_script "00" "baseline"
 write_job_script "01" "rag"
 write_job_script "02" "rlm"
 write_job_script "03" "rlm_rag"
@@ -282,11 +360,12 @@ if ! command -v sbatch >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ -z "\${RAG_COMMAND:-}" || -z "\${RLM_COMMAND:-}" || -z "\${RLM_RAG_COMMAND:-}" ]]; then
-  echo "Set RAG_COMMAND, RLM_COMMAND, and RLM_RAG_COMMAND before running submit_all.sh" >&2
+if [[ -z "\${BASELINE_COMMAND:-}" || -z "\${RAG_COMMAND:-}" || -z "\${RLM_COMMAND:-}" || -z "\${RLM_RAG_COMMAND:-}" ]]; then
+  echo "Set BASELINE_COMMAND, RAG_COMMAND, RLM_COMMAND, and RLM_RAG_COMMAND before running submit_all.sh" >&2
   exit 2
 fi
 
+METHOD_COMMAND="\${BASELINE_COMMAND}" sbatch "\$SCRIPT_DIR/00_baseline.sbatch"
 METHOD_COMMAND="\${RAG_COMMAND}" sbatch "\$SCRIPT_DIR/01_rag.sbatch"
 METHOD_COMMAND="\${RLM_COMMAND}" sbatch "\$SCRIPT_DIR/02_rlm.sbatch"
 METHOD_COMMAND="\${RLM_RAG_COMMAND}" sbatch "\$SCRIPT_DIR/03_rlm_rag.sbatch"
@@ -296,6 +375,8 @@ chmod +x "$QUEUE_DIR/submit_all.sh"
 
 {
   printf '[\n'
+  write_manifest_entry "baseline" "$QUEUE_RELATIVE/00_baseline.sbatch"
+  printf ',\n'
   write_manifest_entry "rag" "$QUEUE_RELATIVE/01_rag.sbatch"
   printf ',\n'
   write_manifest_entry "rlm" "$QUEUE_RELATIVE/02_rlm.sbatch"
@@ -305,5 +386,5 @@ chmod +x "$QUEUE_DIR/submit_all.sh"
 } > "$QUEUE_DIR/manifest.json"
 
 echo "[queue] Created CHPC launcher bundle at: $QUEUE_DIR"
-echo "[queue] Submission files: 01_rag.sbatch, 02_rlm.sbatch, 03_rlm_rag.sbatch"
+echo "[queue] Submission files: 00_baseline.sbatch, 01_rag.sbatch, 02_rlm.sbatch, 03_rlm_rag.sbatch"
 echo "[queue] Manifest: $QUEUE_DIR/manifest.json"

@@ -15,6 +15,8 @@ Each bundle can contain:
 
 For LiveCodeBench method bundles, use `scripts/local/queue_livecodebench_methods.sh` for local runs and `scripts/chpc/queue_livecodebench_methods.sh` for CHPC submission bundles.
 
+For CHPC local-model runs with explicit Slurm resources, prefer `scripts/chpc/submit_livecodebench_local_model.sh`.
+
 Example smoke bundle:
 
 ```bash
@@ -28,6 +30,13 @@ scripts/local/queue_livecodebench_methods.sh \
 	--max-tokens 512 \
 	--rlm-max-iterations 2
 ```
+
+Generated LiveCodeBench bundles can contain four provider launchers:
+
+- `baseline`
+- `rag`
+- `rlm`
+- `rlm_rag`
 
 Example full bundle:
 

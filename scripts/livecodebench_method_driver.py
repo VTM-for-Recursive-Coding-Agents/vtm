@@ -159,19 +159,28 @@ def _resolve_model(args: MethodArgs):
     return LanguageModelStore[args.model]
 
 
-def _configure_model_env(args: MethodArgs, model: Any) -> None:
+def _lmstudio_style() -> Any | None:
     from lcb_runner.lm_styles import LMStyle
 
-    if model.model_style == LMStyle.LMStudio:
+    return getattr(LMStyle, "LMStudio", None)
+
+
+def _uses_lmstudio_backend(model: Any) -> bool:
+    lmstudio_style = _lmstudio_style()
+    return lmstudio_style is not None and getattr(model, "model_style", None) == lmstudio_style
+
+
+def _configure_model_env(args: MethodArgs, model: Any) -> None:
+    if _uses_lmstudio_backend(model):
         os.environ.setdefault("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
         if args.lm_studio_model_id:
             os.environ["LMSTUDIO_MODEL"] = args.lm_studio_model_id
 
 
 def _effective_prompt_model(model: Any) -> Any:
-    from lcb_runner.lm_styles import LMStyle
+    if _uses_lmstudio_backend(model):
+        from lcb_runner.lm_styles import LMStyle
 
-    if model.model_style == LMStyle.LMStudio:
         return dataclasses.replace(model, model_style=LMStyle.OpenAIChat)
 
     return model
@@ -347,13 +356,12 @@ def _build_rlm(model: Any, args: MethodArgs):
         from rlm import RLM
     except ImportError as exc:
         raise SystemExit(
-            "RLM package import failed. Ensure dependencies are installed in the active environment."
+            "RLM package import failed. Ensure the repo checkout exists at project_root/rlm and run scripts/setup_rlm.sh if needed."
         ) from exc
 
     backend_kwargs: dict[str, Any] = {}
-    from lcb_runner.lm_styles import LMStyle
 
-    if model.model_style == LMStyle.LMStudio:
+    if _uses_lmstudio_backend(model):
         backend_kwargs["base_url"] = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
         backend_kwargs["api_key"] = "lm-studio"
         backend_kwargs["model_name"] = os.getenv("LMSTUDIO_MODEL", args.model)
@@ -573,6 +581,9 @@ def run_provider(provider: str) -> None:
             if provider == "rag":
                 results = _run_standard_generation(runner_args, model, prompts)
                 provider_eval_meta = retrieval_meta if retrieval_meta else None
+            elif provider == "baseline":
+                results = _run_standard_generation(runner_args, model, prompts)
+                provider_eval_meta = None
             elif provider == "rlm":
                 results, provider_eval_meta = _run_rlm_generation(model, args, prompts)
             elif provider == "rlm_rag":

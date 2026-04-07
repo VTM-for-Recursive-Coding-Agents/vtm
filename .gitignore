@@ -20,3 +20,4 @@ results/visualizations/*
 results/raw/swebench/*
 results/raw/livecodebench/*
 results/metrics/*
+/logs/*
