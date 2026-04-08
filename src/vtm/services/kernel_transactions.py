@@ -1,3 +1,5 @@
+"""Kernel-side transaction helpers for staging and committing memory."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -12,6 +14,8 @@ from vtm.transactions import TransactionRecord
 
 
 class TransactionKernelOps:
+    """Owns transaction lifecycle, staging, visibility, and commit flows."""
+
     def __init__(
         self,
         *,
@@ -19,6 +23,7 @@ class TransactionKernelOps:
         mutations: MetadataMutationRunner,
         validate_committable_item: Callable[[MemoryItem], None],
     ) -> None:
+        """Create transaction helpers around metadata and mutation collaborators."""
         self._metadata_store = metadata_store
         self._mutations = mutations
         self._validate_committable_item = validate_committable_item
@@ -30,6 +35,7 @@ class TransactionKernelOps:
         parent_tx_id: str | None = None,
         metadata: dict[str, object] | None = None,
     ) -> TransactionRecord:
+        """Open a new active transaction."""
         if parent_tx_id is not None:
             parent = self._require_transaction(parent_tx_id)
             if parent.state is not TxState.ACTIVE:
@@ -51,6 +57,7 @@ class TransactionKernelOps:
         )
 
     def stage_memory_item(self, tx_id: str, item: MemoryItem) -> MemoryItem:
+        """Stage a memory item inside an active transaction."""
         transaction = self._require_active_transaction(tx_id)
         staged_item = item.model_copy(update={"tx_id": tx_id, "updated_at": utc_now()})
         return self._mutations.run(
@@ -69,6 +76,7 @@ class TransactionKernelOps:
         )
 
     def list_visible_memory(self, tx_id: str) -> tuple[MemoryItem, ...]:
+        """Return committed plus ancestor-staged memory visible to the tx."""
         transaction = self._require_transaction(tx_id)
         visible = {
             item.memory_id: item
@@ -80,6 +88,7 @@ class TransactionKernelOps:
         return tuple(sorted(visible.values(), key=lambda item: item.memory_id))
 
     def commit_transaction(self, tx_id: str) -> TransactionRecord:
+        """Commit an active transaction, merging into the parent when present."""
         transaction = self._require_active_transaction(tx_id)
         staged_items = list(self._metadata_store.list_staged_memory_items(tx_id))
 
@@ -117,6 +126,7 @@ class TransactionKernelOps:
         )
 
     def rollback_transaction(self, tx_id: str) -> TransactionRecord:
+        """Roll back an active transaction and discard staged items."""
         transaction = self._require_active_transaction(tx_id)
         discarded = len(self._metadata_store.list_staged_memory_items(tx_id))
         rolled_back = transaction.model_copy(

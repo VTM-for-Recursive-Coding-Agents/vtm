@@ -1,3 +1,5 @@
+"""Deterministic cache-key and cache-entry models."""
+
 from __future__ import annotations
 
 import json
@@ -30,6 +32,8 @@ def _normalize_args(args: Mapping[str, Any]) -> str:
 
 
 class CacheKey(VTMModel):
+    """Stable cache key derived from tool inputs and environment state."""
+
     tool_name: str
     normalized_args_json: str
     repo_fingerprint: RepoFingerprint
@@ -44,6 +48,7 @@ class CacheKey(VTMModel):
         repo_fingerprint: RepoFingerprint,
         env_fingerprint: EnvFingerprint,
     ) -> CacheKey:
+        """Build a normalized cache key from raw inputs."""
         normalized_args_json = _normalize_args(args)
         digest_payload = json.dumps(
             {
@@ -65,6 +70,8 @@ class CacheKey(VTMModel):
 
 
 class CacheEntry(VTMModel):
+    """Cached tool result plus freshness metadata."""
+
     entry_id: str = Field(default_factory=new_cache_entry_id)
     key: CacheKey
     value: dict[str, Any] = Field(default_factory=dict)
@@ -75,6 +82,7 @@ class CacheEntry(VTMModel):
 
     @model_validator(mode="after")
     def validate_expiry(self) -> CacheEntry:
+        """Reject entries whose expiry predates creation."""
         if self.expires_at is not None and self.expires_at < self.created_at:
             raise ValueError("cache entries cannot expire before they are created")
         return self

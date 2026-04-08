@@ -1,3 +1,5 @@
+"""Cache-store schema migrations."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -6,6 +8,7 @@ CACHE_SCHEMA_VERSION = 1
 
 
 def apply_cache_migrations(conn: sqlite3.Connection, current_version: int) -> None:
+    """Apply all pending cache-store migrations in order."""
     for version in range(current_version + 1, CACHE_SCHEMA_VERSION + 1):
         if version == 1:
             _apply_schema_v1(conn)

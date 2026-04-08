@@ -1,3 +1,5 @@
+"""Tree-sitter based syntax anchor construction and relocation."""
+
 from __future__ import annotations
 
 import hashlib
@@ -8,10 +10,14 @@ from vtm.anchors import AnchorAdapter, AnchorRelocation, CodeAnchor
 
 
 class SyntaxTreeAdapter(Protocol):
+    """Protocol for syntax-tree based anchor builders."""
+
     def build_anchor(self, source_path: str, symbol: str) -> CodeAnchor: ...
 
 
 class SyntaxAnchorAdapter(AnchorAdapter, Protocol):
+    """Combined syntax build-and-relocate adapter contract."""
+
     pass
 
 
@@ -24,6 +30,8 @@ def _context_digest(source: str, start_line: int, end_line: int) -> str:
 
 
 class UnavailableTreeSitterAdapter:
+    """Fallback adapter used when tree-sitter is unavailable."""
+
     def build_anchor(self, source_path: str, symbol: str) -> CodeAnchor:
         raise NotImplementedError("Tree-sitter integration is deferred in the kernel scaffold")
 
@@ -32,6 +40,8 @@ class UnavailableTreeSitterAdapter:
 
 
 class PythonTreeSitterSyntaxAdapter:
+    """Python anchor adapter backed by tree-sitter with optional fallback."""
+
     language = "python"
 
     def __init__(
@@ -39,6 +49,7 @@ class PythonTreeSitterSyntaxAdapter:
         *,
         fallback: AnchorAdapter | None = None,
     ) -> None:
+        """Initialize tree-sitter bindings if available."""
         self._fallback = fallback
         self._import_error: ImportError | None = None
         try:
@@ -54,6 +65,7 @@ class PythonTreeSitterSyntaxAdapter:
         self._parser = Parser(self._language)
 
     def build_anchor(self, source_path: str, symbol: str) -> CodeAnchor:
+        """Build a code anchor for a Python symbol."""
         if self._parser is None:
             if self._fallback is None:
                 raise NotImplementedError(
@@ -93,6 +105,7 @@ class PythonTreeSitterSyntaxAdapter:
         )
 
     def relocate(self, anchor: CodeAnchor) -> AnchorRelocation | None:
+        """Relocate an existing anchor by rebuilding the same symbol."""
         if anchor.language != self.language or anchor.symbol is None:
             if self._fallback is not None:
                 return self._fallback.relocate(anchor)

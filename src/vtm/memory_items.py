@@ -1,3 +1,5 @@
+"""Durable memory-item payloads and supporting state records."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -20,24 +22,32 @@ from vtm.ids import new_memory_id
 
 
 class ProcedureStep(VTMModel):
+    """One ordered instruction inside a procedure memory."""
+
     order: int = Field(ge=0)
     instruction: str
     expected_outcome: str | None = None
 
 
 class ValidatorSpec(VTMModel):
+    """Validator configuration attached to a procedure payload."""
+
     name: str
     kind: str
     config: dict[str, Any] = Field(default_factory=dict)
 
 
 class ClaimPayload(VTMModel):
+    """Payload for a claim memory item."""
+
     kind: Literal["claim"] = "claim"
     claim: str
     strength: ClaimStrength = ClaimStrength.SUPPORTED
 
 
 class ProcedurePayload(VTMModel):
+    """Payload for an executable or reviewable procedure."""
+
     kind: Literal["procedure"] = "procedure"
     goal: str
     steps: tuple[ProcedureStep, ...] = Field(default_factory=tuple)
@@ -45,12 +55,16 @@ class ProcedurePayload(VTMModel):
 
 
 class ConstraintPayload(VTMModel):
+    """Payload describing a durable constraint or policy."""
+
     kind: Literal["constraint"] = "constraint"
     statement: str
     severity: str = "info"
 
 
 class DecisionPayload(VTMModel):
+    """Payload describing a recorded decision and rationale."""
+
     kind: Literal["decision"] = "decision"
     summary: str
     rationale: str | None = None
@@ -58,6 +72,8 @@ class DecisionPayload(VTMModel):
 
 
 class SummaryCardPayload(VTMModel):
+    """Payload for a synthetic summary created from lower-level memory."""
+
     kind: Literal["summary_card"] = "summary_card"
     summary: str
     detail_level: DetailLevel = DetailLevel.SUMMARY
@@ -71,11 +87,15 @@ MemoryPayload = Annotated[
 
 
 class VisibilityScope(VTMModel):
+    """Namespace that determines where a memory item is visible."""
+
     kind: ScopeKind
     scope_id: str
 
 
 class ValidityState(VTMModel):
+    """Verification state attached to a memory item."""
+
     status: ValidityStatus = ValidityStatus.PENDING
     dependency_fingerprint: DependencyFingerprint | None = None
     checked_at: datetime | None = None
@@ -83,6 +103,8 @@ class ValidityState(VTMModel):
 
 
 class LineageEdge(VTMModel):
+    """Directed relationship between two memory items."""
+
     parent_id: str
     child_id: str
     edge_type: str
@@ -91,6 +113,8 @@ class LineageEdge(VTMModel):
 
 
 class MemoryStats(VTMModel):
+    """Derived usage counters maintained by retrieval and verification flows."""
+
     retrieval_count: int = Field(default=0, ge=0)
     verification_count: int = Field(default=0, ge=0)
     last_retrieved_at: datetime | None = None
@@ -107,6 +131,8 @@ VERIFIED_STATUSES = {ValidityStatus.VERIFIED, ValidityStatus.RELOCATED}
 
 
 class MemoryItem(VTMModel):
+    """Canonical durable memory record stored by the kernel."""
+
     memory_id: str = Field(default_factory=new_memory_id)
     kind: MemoryKind
     title: str
@@ -125,6 +151,7 @@ class MemoryItem(VTMModel):
 
     @model_validator(mode="after")
     def validate_invariants(self) -> MemoryItem:
+        """Enforce cross-field invariants for durable memory records."""
         if self.kind.value != self.payload.kind:
             raise ValueError("memory kind must match payload kind")
 

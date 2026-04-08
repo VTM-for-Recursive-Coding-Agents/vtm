@@ -1,3 +1,5 @@
+"""Top-level benchmark runner that writes cases, results, and summaries."""
+
 from __future__ import annotations
 
 import hashlib
@@ -5,10 +7,12 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
+from vtm.adapters.agent_model import AgentModelAdapter
 from vtm.adapters.embeddings import EmbeddingAdapter
 from vtm.adapters.rlm import RLMAdapter
 from vtm.base import utc_now
 from vtm.benchmarks.models import (
+    BenchmarkAttemptResult,
     BenchmarkCaseResult,
     BenchmarkManifest,
     BenchmarkRunConfig,
@@ -24,6 +28,8 @@ from vtm.benchmarks.symbol_index import SymbolIndexer
 
 
 class BenchmarkRunner:
+    """Orchestrates one benchmark run from manifest load to summary artifacts."""
+
     def __init__(
         self,
         manifest: BenchmarkManifest,
@@ -31,7 +37,9 @@ class BenchmarkRunner:
         *,
         rlm_adapter: RLMAdapter | None = None,
         embedding_adapter: EmbeddingAdapter | None = None,
+        agent_model_adapter: AgentModelAdapter | None = None,
     ) -> None:
+        """Bind the runner to a manifest, config, and optional adapters."""
         self._manifest = manifest
         self._config = config
         self._embedding_adapter = embedding_adapter
@@ -42,10 +50,12 @@ class BenchmarkRunner:
             symbol_indexer=SymbolIndexer(),
             rlm_adapter=rlm_adapter,
             embedding_adapter=embedding_adapter,
+            agent_model_adapter=agent_model_adapter,
         )
         self._reporter = BenchmarkReporter()
 
     def run(self) -> BenchmarkRunResult:
+        """Execute the configured suite and persist run artifacts."""
         started_at = utc_now()
         output_dir = Path(self._config.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -55,10 +65,32 @@ class BenchmarkRunner:
             "mode": self._config.mode,
             "seed": self._config.seed,
         }
+        if self._config.suite == "coding":
+            manifest_lock["coding_executor"] = self._config.coding_executor
+            manifest_lock["workspace_backend"] = "local_workspace"
+            manifest_lock["attempt_count"] = self._config.attempt_count
+            manifest_lock["pass_k_values"] = list(self._config.pass_k_values)
+            manifest_lock["agent_temperature"] = self._config.agent_temperature
+            if self._config.agent_seed_base is not None:
+                manifest_lock["agent_seed_base"] = self._config.agent_seed_base
         if self._config.repo_filters:
             manifest_lock["repo_filters"] = list(self._config.repo_filters)
         if self._config.pair_filters:
             manifest_lock["pair_filters"] = list(self._config.pair_filters)
+        if self._config.executor_command:
+            manifest_lock["executor_command"] = list(self._config.executor_command)
+        if self._config.coding_executor == "native_agent":
+            manifest_lock["agent_model_id"] = self._config.agent_model_id
+            manifest_lock["agent_mode"] = self._config.agent_mode.value
+            manifest_lock["agent_prompt_profile"] = self._config.agent_prompt_profile
+            manifest_lock["agent_max_turns"] = self._config.agent_max_turns
+            manifest_lock["agent_max_tool_failures"] = self._config.agent_max_tool_failures
+            manifest_lock["agent_max_runtime_seconds"] = self._config.agent_max_runtime_seconds
+            manifest_lock["agent_compaction_window"] = self._config.agent_compaction_window
+            manifest_lock["agent_command_timeout_seconds"] = (
+                self._config.agent_command_timeout_seconds
+            )
+            manifest_lock["agent_max_output_chars"] = self._config.agent_max_output_chars
         if self._config.swebench_dataset_name:
             manifest_lock["swebench_dataset_name"] = self._config.swebench_dataset_name
         manifest_lock["swebench_harness_workers"] = self._config.swebench_harness_workers
@@ -76,19 +108,26 @@ class BenchmarkRunner:
         run_id = manifest_digest[:16]
         cases: Sequence[RetrievalCase | DriftCase | CodingTaskCase]
         results: list[BenchmarkCaseResult]
+        attempt_results: list[BenchmarkAttemptResult] = []
 
         if self._config.suite == "retrieval":
             cases, results = self._executor.run_retrieval_suite(output_dir)
         elif self._config.suite == "drift":
             cases, results = self._executor.run_drift_suite(output_dir)
         else:
-            cases, results = self._executor.run_coding_suite(output_dir)
+            cases, results, attempt_results = self._executor.run_coding_suite(output_dir)
 
         self._validate_case_results_alignment(cases, results)
-        summary_metrics = self._reporter.summarize_results(self._config.suite, results)
+        summary_metrics = self._reporter.summarize_results(
+            self._config.suite,
+            results,
+            attempts=attempt_results,
+            pass_k_values=self._config.pass_k_values,
+        )
         manifest_lock_path = output_dir / "manifest.lock.json"
         cases_path = output_dir / "cases.jsonl"
         results_path = output_dir / "results.jsonl"
+        attempts_path = output_dir / "attempts.jsonl"
         summary_json_path = output_dir / "summary.json"
         summary_md_path = output_dir / "summary.md"
 
@@ -101,6 +140,11 @@ class BenchmarkRunner:
             results_path,
             [result.model_dump(mode="json") for result in results],
         )
+        if attempt_results:
+            self._reporter.write_jsonl(
+                attempts_path,
+                [attempt.model_dump(mode="json") for attempt in attempt_results],
+            )
 
         run_result = BenchmarkRunResult(
             run_id=run_id,
@@ -120,6 +164,8 @@ class BenchmarkRunner:
                 "summary_md": str(summary_md_path),
             },
         )
+        if attempt_results:
+            run_result.artifacts["attempts_jsonl"] = str(attempts_path)
         for name in ("predictions.jsonl", "swebench_harness_results.json"):
             candidate = output_dir / name
             if candidate.exists():
@@ -141,6 +187,7 @@ class BenchmarkRunner:
         cases: Sequence[RetrievalCase | DriftCase | CodingTaskCase],
         results: Sequence[BenchmarkCaseResult],
     ) -> None:
+        """Reject mismatches between emitted case IDs and result IDs."""
         case_ids = [case.case_id for case in cases]
         result_ids = [result.case_id for result in results]
         if len(case_ids) != len(set(case_ids)):

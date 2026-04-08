@@ -6,10 +6,12 @@ import subprocess
 from pathlib import Path
 
 from vtm.adapters.rlm import RLMRankRequest, RLMRankResponse
+from vtm.agents import AgentModelTurnRequest, AgentModelTurnResponse, AgentToolCall
 from vtm.benchmarks import BenchmarkManifest, BenchmarkRunConfig, BenchmarkRunner
 from vtm.benchmarks.models import CommitPair, RepoSpec
 from vtm.benchmarks.symbol_index import SymbolIndexer
 from vtm.benchmarks.synthetic import SyntheticPythonSmokeCorpus
+from vtm.harness.models import HarnessTaskPack
 
 
 def _run(repo: Path, *args: str) -> str:
@@ -101,6 +103,113 @@ class FakeBenchmarkRLMAdapter:
 class FailingBenchmarkRLMAdapter:
     def rank_candidates(self, request: RLMRankRequest) -> RLMRankResponse:
         raise RuntimeError("benchmark rerank failure")
+
+
+class FakeNativeBugfixAgentModel:
+    model_id = "fake-native-bugfix-agent"
+
+    def __init__(self) -> None:
+        self._step = 0
+        self._recorded_memory_id: str | None = None
+
+    def complete_turn(self, request: AgentModelTurnRequest) -> AgentModelTurnResponse:
+        self._capture_memory_id(request)
+        if self._step == 0:
+            response = AgentModelTurnResponse(
+                tool_calls=(
+                    AgentToolCall(
+                        tool_name="retrieve_memory",
+                        arguments={"query": "buggy increment adds one", "limit": 3},
+                    ),
+                    AgentToolCall(tool_name="read", arguments={"path": "bugfix_module.py"}),
+                )
+            )
+        elif self._step == 1:
+            response = AgentModelTurnResponse(
+                tool_calls=(
+                    AgentToolCall(
+                        tool_name="record_task_memory",
+                        arguments={
+                            "kind": "claim",
+                            "title": "buggy_increment root cause",
+                            "summary": "buggy_increment returns the input unchanged",
+                            "claim": "buggy_increment returns the input unchanged",
+                            "raw_content": "return value",
+                            "tags": ["bugfix", "task-memory"],
+                        },
+                    ),
+                )
+            )
+        elif self._step == 2:
+            response = AgentModelTurnResponse(
+                tool_calls=(
+                    AgentToolCall(
+                        tool_name="apply_patch",
+                        arguments={"patch": self._bugfix_patch()},
+                    ),
+                )
+            )
+        elif self._step == 3:
+            response = AgentModelTurnResponse(
+                tool_calls=(
+                    AgentToolCall(
+                        tool_name="terminal",
+                        arguments={
+                            "command": " ".join(request.task_payload.get("test_command", []))
+                        },
+                    ),
+                )
+            )
+        elif self._step == 4:
+            if self._recorded_memory_id is None:
+                raise AssertionError("expected record_task_memory result in prior messages")
+            response = AgentModelTurnResponse(
+                tool_calls=(
+                    AgentToolCall(
+                        tool_name="promote_procedure",
+                        arguments={
+                            "source_memory_ids": [self._recorded_memory_id],
+                            "title": "Fix buggy_increment",
+                            "summary": "Patch buggy_increment so it adds one.",
+                            "goal": "Repair buggy_increment and verify with unittest.",
+                            "steps": [
+                                {
+                                    "instruction": "Update buggy_increment to return value + 1.",
+                                    "expected_outcome": "The function increments its input.",
+                                },
+                                {
+                                    "instruction": "Run the targeted unittest file.",
+                                    "expected_outcome": "The failing test passes.",
+                                },
+                            ],
+                        },
+                    ),
+                )
+            )
+        else:
+            response = AgentModelTurnResponse(assistant_message="done", done=True)
+        self._step += 1
+        return response
+
+    def _capture_memory_id(self, request: AgentModelTurnRequest) -> None:
+        for message in reversed(request.messages):
+            if message.role != "tool" or message.tool_name != "record_task_memory":
+                continue
+            self._recorded_memory_id = str(json.loads(message.content)["memory_id"])
+            return
+
+    def _bugfix_patch(self) -> str:
+        return (
+            "diff --git a/bugfix_module.py b/bugfix_module.py\n"
+            "index 8e8edcf..286dfbc 100644\n"
+            "--- a/bugfix_module.py\n"
+            "+++ b/bugfix_module.py\n"
+            "@@ -1,3 +1,3 @@\n"
+            " def buggy_increment(value: int) -> int:\n"
+            "     \"\"\"Return value plus one.\"\"\"\n"
+            "-    return value\n"
+            "+    return value + 1\n"
+        )
 
 
 def test_manifest_lock_is_deterministic_for_identical_runs(tmp_path: Path) -> None:
@@ -241,18 +350,18 @@ def test_coding_suite_dry_run_writes_task_pack(tmp_path: Path) -> None:
 
     assert result.case_count == 1
     assert result.metrics["executed_count"] == 0
-    task_payload = json.loads(
+    task_pack = HarnessTaskPack.from_json(
         (tmp_path / "coding" / "task-packs" / "synthetic_bugfix_unittest.json").read_text(
             encoding="utf-8"
         )
     )
-    assert task_payload["base_ref"] == "smoke-bug"
-    assert task_payload["head_ref"] == "smoke-bugfix"
-    assert task_payload["expected_changed_paths"] == ["bugfix_module.py"]
-    assert task_payload["memory_mode"] == "lexical"
-    assert task_payload["top_k"] == 3
-    assert task_payload["memory_context"]
-    assert task_payload["memory_context"][0]["raw_anchor_path"] is not None
+    assert task_pack.base_ref == "smoke-bug"
+    assert task_pack.head_ref == "smoke-bugfix"
+    assert task_pack.expected_changed_paths == ("bugfix_module.py",)
+    assert task_pack.memory_mode == "lexical"
+    assert task_pack.top_k == 3
+    assert task_pack.memory_context
+    assert task_pack.memory_context[0].raw_anchor_path is not None
 
 
 def test_coding_suite_executor_writes_benchmark_local_artifacts(tmp_path: Path) -> None:
@@ -296,11 +405,90 @@ def test_coding_suite_executor_writes_benchmark_local_artifacts(tmp_path: Path) 
     assert first_result["metrics"]["changed_path_precision"] == 1.0
     assert first_result["metrics"]["changed_path_recall"] == 1.0
     assert first_result["metrics"]["changed_path_f1"] == 1.0
+    assert first_result["metrics"]["final_verification_passed"] is True
+    assert first_result["metrics"]["infra_failure"] is False
     assert first_result["metadata"]["test_exit_code"] is not None
     assert Path(first_result["metadata"]["executor_stdout_path"]).exists()
     assert Path(first_result["metadata"]["executor_stderr_path"]).exists()
     assert Path(first_result["metadata"]["produced_patch_path"]).exists()
+    assert Path(first_result["metadata"]["command_events_path"]).exists()
+    assert Path(first_result["metadata"]["final_git_status_path"]).exists()
+    assert Path(first_result["metadata"]["final_verification_stdout_path"]).exists()
+    assert Path(first_result["metadata"]["final_verification_stderr_path"]).exists()
     assert (tmp_path / "coding-exec" / "executor-artifacts").exists()
+
+
+def test_coding_suite_native_agent_writes_agent_artifacts_and_metrics(tmp_path: Path) -> None:
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
+    result = BenchmarkRunner(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="coding",
+            mode="lexical",
+            output_dir=str(tmp_path / "coding-native"),
+            top_k=3,
+            max_cases=1,
+            pair_filters=("bugfix",),
+            coding_executor="native_agent",
+            agent_model_id="fake-native-bugfix-agent",
+            agent_max_turns=8,
+            agent_compaction_window=4,
+        ),
+        agent_model_adapter=FakeNativeBugfixAgentModel(),
+    ).run()
+
+    assert result.case_count == 1
+    assert result.metrics["executed_count"] == 1
+    assert result.metrics["pass_rate"] == 1.0
+    assert result.metrics["mean_changed_path_f1"] == 1.0
+    assert result.metrics["median_turn_count"] >= 1
+    assert result.metrics["mean_tool_call_count"] >= 1.0
+    assert result.metrics["mean_terminal_command_count"] >= 1.0
+    assert result.metrics["mean_command_timeout_count"] == 0.0
+    assert result.metrics["mean_memory_write_count"] == 1.0
+    assert result.metrics["mean_memory_promotion_count"] == 1.0
+    assert result.metrics["final_verification_pass_rate"] == 1.0
+    assert result.metrics["infra_failure_rate"] == 0.0
+    assert result.metrics["agent_status_breakdown"]["completed"] == 1
+    assert result.metrics["failure_breakdown"] == {}
+
+    result_rows = Path(result.artifacts["results_jsonl"]).read_text(encoding="utf-8").splitlines()
+    row = json.loads(result_rows[0])
+    assert row["metrics"]["executed"] is True
+    assert row["metrics"]["passed"] is True
+    assert row["metrics"]["turn_count"] >= 5
+    assert row["metrics"]["tool_call_count"] >= 5
+    assert row["metrics"]["terminal_command_count"] == 1
+    assert row["metrics"]["command_timeout_count"] == 0
+    assert row["metrics"]["memory_write_count"] == 1
+    assert row["metrics"]["memory_promotion_count"] == 1
+    assert row["metrics"]["final_verification_passed"] is True
+    assert row["metadata"]["coding_executor"] == "native_agent"
+    assert row["metadata"]["agent_status"] == "completed"
+    assert row["metadata"]["agent_model_id"] == "fake-native-bugfix-agent"
+    assert Path(row["metadata"]["session"]).exists()
+    assert Path(row["metadata"]["turns_jsonl"]).exists()
+    assert Path(row["metadata"]["tool_calls_jsonl"]).exists()
+    assert Path(row["metadata"]["compactions_jsonl"]).exists()
+    assert Path(row["metadata"]["trace_manifest"]["session"]).exists()
+    assert Path(row["metadata"]["command_events_path"]).exists()
+    assert Path(row["metadata"]["final_git_status_path"]).exists()
+    assert Path(row["metadata"]["final_verification_stdout_path"]).exists()
+    assert Path(row["metadata"]["final_verification_stderr_path"]).exists()
+    manifest_lock = json.loads(Path(result.artifacts["manifest_lock"]).read_text(encoding="utf-8"))
+    assert manifest_lock["workspace_backend"] == "local_workspace"
+    assert manifest_lock["agent_command_timeout_seconds"] == 120
+    assert manifest_lock["agent_max_output_chars"] == 20000
+    command_events_path = Path(row["metadata"]["command_events_path"])
+    command_events = [
+        json.loads(line)
+        for line in command_events_path.read_text(encoding="utf-8").splitlines()
+    ]
+    verification_events = [
+        event for event in command_events if event["operation"] == "final_verification_command"
+    ]
+    assert len(verification_events) == 1
 
 
 def test_synthetic_coding_tasks_fail_on_base_and_pass_on_head(tmp_path: Path) -> None:

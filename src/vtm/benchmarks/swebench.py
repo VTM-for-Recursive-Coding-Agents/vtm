@@ -1,3 +1,5 @@
+"""SWE-bench Lite dataset normalization and manifest generation helpers."""
+
 from __future__ import annotations
 
 import hashlib
@@ -14,6 +16,8 @@ from vtm.benchmarks.models import BenchmarkManifest, CodingTaskCase, CommitPair,
 
 @dataclass(frozen=True)
 class SWEbenchLiteInstance:
+    """Normalized SWE-bench Lite row used by VTM preparation code."""
+
     instance_id: str
     repo: str
     repo_name: str
@@ -29,6 +33,8 @@ class SWEbenchLiteInstance:
 
 
 class SWEbenchLitePreparer:
+    """Loads SWE-bench Lite instances and turns them into VTM manifests."""
+
     def load_instances(
         self,
         *,
@@ -38,6 +44,7 @@ class SWEbenchLitePreparer:
         instance_filters: Sequence[str] = (),
         max_instances: int | None = None,
     ) -> list[SWEbenchLiteInstance]:
+        """Load and normalize SWE-bench Lite instances with optional filtering."""
         rows = self._load_rows(dataset_name=dataset_name, dataset_path=dataset_path)
         selected_repo_filters = set(repo_filters)
         selected_instance_filters = set(instance_filters)
@@ -72,6 +79,7 @@ class SWEbenchLitePreparer:
         instance_filters: Sequence[str] = (),
         max_instances: int | None = None,
     ) -> BenchmarkManifest:
+        """Prepare repos and write a VTM benchmark manifest for SWE-bench Lite."""
         cache_root_path = Path(cache_root)
         instances = self.load_instances(
             dataset_name=dataset_name,
@@ -99,6 +107,7 @@ class SWEbenchLitePreparer:
         instances: Sequence[SWEbenchLiteInstance],
         cache_root: str | Path,
     ) -> list[PreparedSWEbenchLiteInstance]:
+        """Prepare local git refs and metadata for each selected instance."""
         cache_root_path = Path(cache_root)
         repos_root = cache_root_path / "repos"
         worktrees_root = cache_root_path / "worktrees"
@@ -137,6 +146,7 @@ class SWEbenchLitePreparer:
         dataset_name: str,
         prepared_instances: Sequence[PreparedSWEbenchLiteInstance],
     ) -> BenchmarkManifest:
+        """Convert prepared SWE-bench instances into a benchmark manifest."""
         repos: OrderedDict[str, list[PreparedSWEbenchLiteInstance]] = OrderedDict()
         for prepared in prepared_instances:
             repos.setdefault(prepared.instance.repo_name, []).append(prepared)
@@ -416,18 +426,24 @@ class SWEbenchLitePreparer:
 
 @dataclass(frozen=True)
 class PreparedRepoCache:
+    """Cached local clone metadata for a SWE-bench repository."""
+
     repo_root: Path
     default_branch: str
 
 
 @dataclass(frozen=True)
 class PreparedInstanceRefs:
+    """Prepared git refs for a SWE-bench instance."""
+
     base_ref: str
     gold_ref: str
 
 
 @dataclass(frozen=True)
 class PreparedSWEbenchLiteInstance:
+    """Prepared SWE-bench instance plus git refs and digests."""
+
     instance: SWEbenchLiteInstance
     repo_cache: PreparedRepoCache
     base_ref: str

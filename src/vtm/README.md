@@ -1,26 +1,19 @@
 # src/vtm
 
-Purpose: public VTM package. This directory holds the stable record layer plus the service, store, adapter, and benchmark subpackages.
+Purpose: public VTM package rooted in the typed memory kernel.
+
+Start here
+- `__init__.py`: stable kernel-first import surface for applications.
+- `memory_items.py`, `retrieval.py`, `transactions.py`, `verification.py`: core durable records most callers manipulate directly.
+- `services/memory_kernel.py`: main `TransactionalMemoryKernel` facade.
+- `stores/` and `adapters/`: concrete infrastructure needed to wire the kernel.
 
 Contents
-- `__init__.py`: Package export surface that re-exports the main public types and implementations.
-- `anchors.py`: Code-anchor models plus protocols for anchor verification and relocation.
-- `artifacts.py`: Artifact capture record and artifact integrity report models.
-- `base.py`: Shared base model, schema version constant, and common UTC timestamp helper.
-- `cache.py`: Cache key normalization plus cache entry models used by cache-backed services.
-- `consolidation.py`: Consolidation action and run-result records for deterministic maintenance passes.
-- `embeddings.py`: Derived embedding index record used by embedding-backed retrieval.
-- `enums.py`: Shared string enums for memory kinds, statuses, scopes, capture states, and retrieval policy.
-- `events.py`: Canonical memory-event record used by metadata and cache event logging.
-- `evidence.py`: Typed evidence references for artifacts, code anchors, and other memories.
-- `fingerprints.py`: Repo, environment, tool-version, and dependency fingerprint record types.
-- `ids.py`: Typed ID aliases and UUID-based ID constructors for persisted records.
-- `memory_items.py`: Core memory payloads, visibility, validity, lineage, stats, and `MemoryItem` invariants.
-- `policies.py`: Default retrieval policy constants and helper functions.
-- `retrieval.py`: Retrieval request, explanation, candidate, and result record types.
-- `transactions.py`: Transaction record model and transaction-state validation.
-- `verification.py`: Verification and procedure-validation result records.
-- `adapters/`: Integration boundary for Git, runtime, parser, embedding, and reranking adapters.
-- `benchmarks/`: Benchmark harness package for retrieval, drift, and coding-task evaluation.
-- `services/`: Kernel orchestration layer and retriever, validator, and consolidator implementations.
-- `stores/`: Persistence layer protocols and concrete SQLite/filesystem stores.
+- `__init__.py`: Kernel-first root export surface.
+- `anchors.py`, `artifacts.py`, `cache.py`, `consolidation.py`, `embeddings.py`, `events.py`, `evidence.py`, `fingerprints.py`, `memory_items.py`, `retrieval.py`, `transactions.py`, `verification.py`: durable record and enum modules.
+- `services/`: Kernel orchestration and retrieval/verification/consolidation services.
+- `stores/`: Metadata, cache, embedding, and artifact storage protocols plus concrete implementations.
+- `adapters/`: Git, runtime, syntax, embedding, and RLM integrations.
+- `harness/`: Typed task-pack, workspace, executor, and scoring boundary.
+- `agents/`: Native single-agent runtime, tool registry, and permission policies.
+- `benchmarks/`: Manifest-driven evaluation and reporting orchestration.

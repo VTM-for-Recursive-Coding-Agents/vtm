@@ -1,3 +1,5 @@
+"""Deterministic lexical retrieval helpers and retriever contracts."""
+
 from __future__ import annotations
 
 import re
@@ -25,6 +27,8 @@ TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 
 
 class Retriever(Protocol):
+    """Minimal retrieval contract consumed by the kernel."""
+
     def retrieve(self, request: RetrieveRequest) -> RetrieveResult: ...
 
     def expand(self, memory_id: str) -> tuple[EvidenceRef, ...]: ...
@@ -114,10 +118,14 @@ def _explanation_metadata(item: MemoryItem) -> dict[str, Any]:
 
 
 class LexicalRetriever:
+    """Token-overlap retriever over committed visible memory."""
+
     def __init__(self, metadata_store: MetadataStore) -> None:
+        """Bind the retriever to a metadata store."""
         self._metadata_store = metadata_store
 
     def retrieve(self, request: RetrieveRequest) -> RetrieveResult:
+        """Return deterministically ranked candidates for a retrieval request."""
         statuses = request.statuses or DEFAULT_RETRIEVAL_STATUSES
         memories = self._metadata_store.query_memory_items(
             request.scopes,
@@ -160,6 +168,7 @@ class LexicalRetriever:
         return RetrieveResult(request=request, candidates=limited, total_candidates=len(candidates))
 
     def expand(self, memory_id: str) -> tuple[EvidenceRef, ...]:
+        """Return all raw evidence attached to a stored memory item."""
         memory = self._metadata_store.get_memory_item(memory_id)
         if memory is None:
             return ()

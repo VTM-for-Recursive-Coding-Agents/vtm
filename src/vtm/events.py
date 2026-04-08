@@ -1,3 +1,5 @@
+"""Canonical event-ledger records emitted by kernel operations."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -10,6 +12,8 @@ from vtm.ids import new_event_id
 
 
 class MemoryEvent(VTMModel):
+    """An append-only event describing a kernel-side mutation."""
+
     event_id: str = Field(default_factory=new_event_id)
     event_type: str
     occurred_at: datetime = Field(default_factory=utc_now)

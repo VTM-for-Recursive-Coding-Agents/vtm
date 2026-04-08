@@ -1,3 +1,5 @@
+"""SQLite-backed cache store with optional event logging."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -18,7 +20,10 @@ from vtm.stores.migrations.cache import CACHE_SCHEMA_VERSION, apply_cache_migrat
 
 
 class SqliteCacheStore:
+    """Persists cache entries and optionally emits cache hit/miss events."""
+
     def __init__(self, db_path: str | Path, *, event_store: EventStore | None = None) -> None:
+        """Open or initialize the SQLite cache database."""
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._event_store = event_store
@@ -27,6 +32,7 @@ class SqliteCacheStore:
         self._init_schema()
 
     def close(self) -> None:
+        """Close the underlying SQLite connection."""
         self._conn.close()
 
     def _init_schema(self) -> None:

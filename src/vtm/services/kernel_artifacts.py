@@ -1,3 +1,5 @@
+"""Artifact and code-anchor helpers used by the kernel facade."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -13,10 +15,14 @@ from vtm.stores.base import ArtifactStore, EventStore
 
 
 class CodeAnchorBuilder(Protocol):
+    """Minimal contract for building code anchors inside the kernel."""
+
     def build_anchor(self, source_path: str, symbol: str) -> CodeAnchor: ...
 
 
 class ArtifactKernelOps:
+    """Owns artifact capture, anchor building, and evidence conversion."""
+
     def __init__(
         self,
         *,
@@ -24,11 +30,13 @@ class ArtifactKernelOps:
         artifact_store: ArtifactStore,
         anchor_builder: CodeAnchorBuilder | None,
     ) -> None:
+        """Create the artifact helper with its backing stores and builder."""
         self._event_store = event_store
         self._artifact_store = artifact_store
         self._anchor_builder = anchor_builder
 
     def build_code_anchor(self, source_path: str, symbol: str) -> CodeAnchor:
+        """Build a code anchor and emit an audit event."""
         if self._anchor_builder is None:
             raise RuntimeError("no code anchor builder configured")
         anchor = self._anchor_builder.build_anchor(source_path, symbol)
@@ -50,6 +58,7 @@ class ArtifactKernelOps:
         tool_version: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> ArtifactRecord:
+        """Capture an artifact through prepare-and-commit semantics."""
         capture_group_id = f"capgrp_{uuid4().hex}"
         prepared = self._artifact_store.prepare_bytes(
             data,
@@ -95,6 +104,7 @@ class ArtifactKernelOps:
         label: str | None = None,
         summary: str | None = None,
     ) -> EvidenceRef:
+        """Convert an artifact record into an evidence reference."""
         return EvidenceRef(
             kind=EvidenceKind.ARTIFACT,
             ref_id=f"artifact:{record.artifact_id}",
@@ -114,6 +124,7 @@ class ArtifactKernelOps:
         label: str | None = None,
         summary: str | None = None,
     ) -> EvidenceRef:
+        """Convert a code anchor into an evidence reference."""
         return EvidenceRef(
             kind=EvidenceKind.CODE_ANCHOR,
             ref_id=f"anchor:{anchor.path}:{anchor.symbol}",

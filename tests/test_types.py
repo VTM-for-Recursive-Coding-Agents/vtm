@@ -6,6 +6,17 @@ import pytest
 from pydantic import ValidationError
 
 from vtm.adapters.rlm import RLMRankedCandidate, RLMRankRequest, RLMRankResponse
+from vtm.agents import (
+    AgentMode,
+    AgentRunRequest,
+    AgentRunResult,
+    AgentRunStatus,
+    AgentSessionRecord,
+    AgentToolCall,
+    AgentToolSpec,
+    AgentTurnRecord,
+    CompactionRecord,
+)
 from vtm.artifacts import ArtifactRecord
 from vtm.benchmarks import (
     BenchmarkManifest,
@@ -43,6 +54,27 @@ from vtm.verification import ProcedureValidationResult, VerificationResult
 def test_package_import_smoke() -> None:
     module = importlib.import_module("vtm")
     assert module.SCHEMA_VERSION == "1.0"
+
+
+def test_package_root_exports_core_implementations() -> None:
+    from vtm import (
+        FilesystemArtifactStore,
+        LexicalRetriever,
+        SqliteMetadataStore,
+        TransactionalMemoryKernel,
+    )
+
+    assert TransactionalMemoryKernel.__name__ == "TransactionalMemoryKernel"
+    assert LexicalRetriever.__name__ == "LexicalRetriever"
+    assert SqliteMetadataStore.__name__ == "SqliteMetadataStore"
+    assert FilesystemArtifactStore.__name__ == "FilesystemArtifactStore"
+
+
+def test_package_root_keeps_compatibility_exports_for_non_kernel_surfaces() -> None:
+    from vtm import BenchmarkRunner, OpenAIEmbeddingAdapter
+
+    assert BenchmarkRunner.__name__ == "BenchmarkRunner"
+    assert OpenAIEmbeddingAdapter.__name__ == "OpenAIEmbeddingAdapter"
 
 
 def test_core_models_round_trip(
@@ -151,6 +183,55 @@ def test_core_models_round_trip(
                 ),
             ),
         ),
+        AgentRunRequest(
+            session_id="agent_session",
+            case_id="task",
+            task_file=".benchmarks/task.json",
+            workspace=".benchmarks/workspace",
+            model_id="fake-agent",
+        ),
+        AgentRunResult(
+            session_id="agent_session",
+            status=AgentRunStatus.COMPLETED,
+            model_id="fake-agent",
+            mode=AgentMode.BENCHMARK_AUTONOMOUS,
+            started_at="2026-04-05T00:00:00+00:00",
+            completed_at="2026-04-05T00:00:01+00:00",
+        ),
+        AgentSessionRecord(
+            session_id="agent_session",
+            case_id="task",
+            model_id="fake-agent",
+            mode=AgentMode.BENCHMARK_AUTONOMOUS,
+            workspace=".benchmarks/workspace",
+            task_file=".benchmarks/task.json",
+            prompt_profile="vtm-native-agent-v1",
+            tool_registry=("read", "terminal"),
+        ),
+        AgentTurnRecord(
+            turn_index=1,
+            started_at="2026-04-05T00:00:00+00:00",
+            completed_at="2026-04-05T00:00:01+00:00",
+            prompt_chars=42,
+            assistant_message="Inspecting workspace",
+            tool_call_count=1,
+            status="completed",
+        ),
+        AgentToolSpec(
+            name="terminal",
+            description="Run a command",
+            input_schema={"type": "object"},
+        ),
+        AgentToolCall(tool_name="terminal", arguments={"command": "pwd"}),
+        CompactionRecord(
+            compaction_id="compact-1",
+            turn_index=1,
+            created_at="2026-04-05T00:00:00+00:00",
+            trigger_message_count=8,
+            dropped_message_count=4,
+            kept_message_count=4,
+            summary="compacted prior context",
+        ),
         BenchmarkRunConfig(
             manifest_path="benchmarks/manifests/synthetic-smoke.json",
             suite="retrieval",
@@ -227,6 +308,35 @@ def test_summary_card_requires_memory_or_artifact_evidence(scope, anchor_evidenc
             evidence=(anchor_evidence,),
             visibility=scope,
         )
+
+
+def test_benchmark_run_config_validates_attempt_controls() -> None:
+    with pytest.raises(ValidationError):
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="coding",
+            output_dir=".benchmarks/synthetic",
+            attempt_count=2,
+            pass_k_values=(1, 3),
+        )
+
+    with pytest.raises(ValidationError):
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="retrieval",
+            output_dir=".benchmarks/synthetic",
+            attempt_count=2,
+        )
+
+    config = BenchmarkRunConfig(
+        manifest_path="benchmarks/manifests/synthetic-smoke.json",
+        suite="coding",
+        output_dir=".benchmarks/synthetic",
+        attempt_count=3,
+        pass_k_values=(3, 1, 2),
+    )
+
+    assert config.pass_k_values == (3, 1, 2)
 
 
 def test_evidence_kind_enforces_matching_target() -> None:

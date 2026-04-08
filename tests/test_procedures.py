@@ -8,7 +8,7 @@ import pytest
 
 from vtm.adapters.git import GitRepoFingerprintCollector
 from vtm.adapters.runtime import RuntimeEnvFingerprintCollector
-from vtm.enums import EvidenceBudget, EvidenceKind, ValidityStatus
+from vtm.enums import ArtifactCaptureState, EvidenceBudget, EvidenceKind, ValidityStatus
 from vtm.memory_items import ValidatorSpec
 from vtm.retrieval import RetrieveRequest
 from vtm.services.fingerprints import DependencyFingerprintBuilder
@@ -63,6 +63,32 @@ def test_command_validator_success_captures_artifacts(
     assert artifact_store.get_artifact_record_by_id(result.stdout_artifact_id) is not None
     assert artifact_store.read_bytes_by_id(result.stdout_artifact_id) == b"ok\n"
     assert artifact_store.get_artifact_record_by_id(result.stderr_artifact_id) is not None
+
+
+def test_command_validator_commits_captured_artifacts(
+    tmp_path: Path,
+    artifact_store,
+    procedure_factory,
+) -> None:
+    validator = CommandProcedureValidator(artifact_store)
+    procedure = procedure_factory(
+        evidence=(),
+        validator=ValidatorSpec(
+            name="echo-check",
+            kind="command",
+            config={"command": ["python3", "-c", "print('ok')"]},
+        ),
+    )
+
+    result = validator.validate(procedure, repo_root=str(tmp_path))
+    stdout_record = artifact_store.get_artifact_record_by_id(result.stdout_artifact_id)
+    stderr_record = artifact_store.get_artifact_record_by_id(result.stderr_artifact_id)
+
+    assert stdout_record is not None
+    assert stderr_record is not None
+    assert stdout_record.capture_state is ArtifactCaptureState.COMMITTED
+    assert stderr_record.capture_state is ArtifactCaptureState.COMMITTED
+    assert artifact_store.audit_integrity().prepared_artifact_ids == ()
 
 
 def test_command_validator_exit_code_mismatch_refutes(
@@ -267,6 +293,7 @@ def test_validate_procedure_promotes_pending_procedure_and_attaches_evidence(
     tmp_path: Path,
     kernel,
     metadata_store,
+    artifact_store,
     procedure_factory,
 ) -> None:
     repo = tmp_path / "repo"
@@ -294,6 +321,14 @@ def test_validate_procedure_promotes_pending_procedure_and_attaches_evidence(
     assert updated.validity.dependency_fingerprint is not None
     assert updated.stats.verification_count == 1
     assert updated.metadata["latest_procedure_validation"]["success"] is True
+    assert (
+        artifact_store.get_artifact_record_by_id(result.stdout_artifact_id).capture_state
+        is ArtifactCaptureState.COMMITTED
+    )
+    assert (
+        artifact_store.get_artifact_record_by_id(result.stderr_artifact_id).capture_state
+        is ArtifactCaptureState.COMMITTED
+    )
 
     expanded = kernel.expand(procedure.memory_id)
     artifact_ids = {
@@ -353,6 +388,52 @@ def test_validate_procedure_failure_modes_update_memory_status(
     assert refuted_memory.validity.status is ValidityStatus.REFUTED
     assert unknown_result.status is ValidityStatus.UNKNOWN
     assert unknown_memory.validity.status is ValidityStatus.UNKNOWN
+
+
+def test_validate_procedure_downgrades_success_when_dependency_refresh_fails(
+    kernel,
+    metadata_store,
+    procedure_factory,
+    dep_fp,
+) -> None:
+    stale_dependency = dep_fp.model_copy(
+        update={
+            "repo": dep_fp.repo.model_copy(update={"repo_root": "/definitely/missing/path"}),
+        }
+    )
+    procedure = procedure_factory(
+        title="Stale dependency procedure",
+        summary="Procedure with stale dependency fingerprint",
+        goal="Run the stale dependency procedure",
+        evidence=(),
+        validator=ValidatorSpec(
+            name="validated-check",
+            kind="command",
+            config={"command": ["python3", "-c", "print('validated')"]},
+        ),
+        validity_status=ValidityStatus.PENDING,
+        dependency=stale_dependency,
+    )
+    metadata_store.save_memory_item(procedure)
+
+    result = kernel.validate_procedure(procedure.memory_id)
+    updated = metadata_store.get_memory_item(procedure.memory_id)
+
+    assert updated is not None
+    assert result.exit_code == 0
+    assert result.success is False
+    assert result.status is ValidityStatus.UNKNOWN
+    assert result.metadata["dependency_fingerprint_refresh_failed"] is True
+    assert "dependency_fingerprint_error" in result.metadata
+    assert updated.validity.status is ValidityStatus.UNKNOWN
+    assert updated.validity.dependency_fingerprint == stale_dependency
+    assert updated.metadata["latest_procedure_validation"]["success"] is False
+    assert (
+        updated.metadata["latest_procedure_validation"]["metadata"][
+            "dependency_fingerprint_refresh_failed"
+        ]
+        is True
+    )
 
 
 def test_promote_to_procedure_records_lineage(

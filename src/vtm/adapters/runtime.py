@@ -1,3 +1,5 @@
+"""Runtime environment fingerprint collection helpers."""
+
 from __future__ import annotations
 
 import platform
@@ -15,6 +17,8 @@ DEFAULT_TOOL_PROBES: dict[str, tuple[str, ...]] = {
 
 
 class EnvFingerprintAdapter(Protocol):
+    """Interface for collecting environment fingerprints."""
+
     def collect(
         self,
         *,
@@ -23,12 +27,15 @@ class EnvFingerprintAdapter(Protocol):
 
 
 class RuntimeEnvFingerprintCollector:
+    """Captures Python, platform, and probed tool versions."""
+
     def __init__(
         self,
         *,
         python_version: str | None = None,
         platform_name: str | None = None,
     ) -> None:
+        """Create a collector with optional deterministic overrides."""
         self._python_version = python_version or platform.python_version()
         self._platform_name = platform_name or (
             f"{platform.system().lower()}-{platform.machine().lower()}"
@@ -39,6 +46,7 @@ class RuntimeEnvFingerprintCollector:
         *,
         tool_probes: Mapping[str, Sequence[str]] | None = None,
     ) -> EnvFingerprint:
+        """Collect the runtime fingerprint using the configured probes."""
         probes = dict(DEFAULT_TOOL_PROBES)
         if tool_probes is not None:
             probes.update({name: tuple(command) for name, command in tool_probes.items()})
@@ -75,4 +83,5 @@ class RuntimeEnvFingerprintCollector:
 
 
 def current_python_version() -> str:
+    """Return the current interpreter version as `major.minor.patch`."""
     return ".".join(str(part) for part in sys.version_info[:3])

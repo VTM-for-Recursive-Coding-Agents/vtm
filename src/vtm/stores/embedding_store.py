@@ -1,3 +1,5 @@
+"""SQLite-backed derived embedding index store."""
+
 from __future__ import annotations
 
 import json
@@ -18,7 +20,10 @@ from vtm.stores.migrations.embedding import (
 
 
 class SqliteEmbeddingIndexStore:
+    """Persists derived embeddings keyed by memory and adapter id."""
+
     def __init__(self, db_path: str | Path) -> None:
+        """Open or initialize the SQLite embedding index database."""
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self._db_path)
@@ -26,6 +31,7 @@ class SqliteEmbeddingIndexStore:
         self._init_schema()
 
     def close(self) -> None:
+        """Close the underlying SQLite connection."""
         self._conn.close()
 
     def _init_schema(self) -> None:

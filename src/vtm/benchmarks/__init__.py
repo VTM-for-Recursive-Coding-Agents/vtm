@@ -1,8 +1,11 @@
+"""Public benchmark manifest, result, and runner exports."""
+
 from vtm.benchmarks.models import (
     BenchmarkCaseResult,
     BenchmarkManifest,
     BenchmarkRunConfig,
     BenchmarkRunResult,
+    CodingExecutor,
     CodingTaskCase,
     CommitPair,
     DriftCase,
@@ -17,6 +20,7 @@ __all__ = [
     "BenchmarkRunConfig",
     "BenchmarkRunResult",
     "BenchmarkRunner",
+    "CodingExecutor",
     "CodingTaskCase",
     "CommitPair",
     "DriftCase",

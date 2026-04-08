@@ -1,3 +1,5 @@
+"""Request and result models for retrieval operations."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -11,6 +13,8 @@ from vtm.memory_items import MemoryItem, VisibilityScope
 
 
 class RetrieveRequest(VTMModel):
+    """Inputs for a retrieval call against visible committed memory."""
+
     query: str
     scopes: tuple[VisibilityScope, ...]
     statuses: tuple[ValidityStatus, ...] | None = None
@@ -21,6 +25,8 @@ class RetrieveRequest(VTMModel):
 
 
 class RetrieveExplanation(VTMModel):
+    """Why a candidate was returned and how it was scored."""
+
     matched_tokens: tuple[str, ...] = Field(default_factory=tuple)
     matched_fields: tuple[str, ...] = Field(default_factory=tuple)
     score: float
@@ -29,6 +35,8 @@ class RetrieveExplanation(VTMModel):
 
 
 class RetrieveCandidate(VTMModel):
+    """One retrieved memory item plus score and attached evidence."""
+
     memory: MemoryItem
     score: float
     explanation: RetrieveExplanation
@@ -37,6 +45,8 @@ class RetrieveCandidate(VTMModel):
 
 
 class RetrieveResult(VTMModel):
+    """Ordered retrieval response for a single query."""
+
     request: RetrieveRequest
     candidates: tuple[RetrieveCandidate, ...] = Field(default_factory=tuple)
     total_candidates: int = Field(default=0, ge=0)

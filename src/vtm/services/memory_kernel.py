@@ -1,3 +1,5 @@
+"""Primary kernel facade that composes stores, adapters, and services."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -25,6 +27,8 @@ from vtm.verification import ProcedureValidationResult, VerificationResult
 
 
 class MemoryKernel(Protocol):
+    """Public transactional-memory contract implemented by the kernel facade."""
+
     def begin_transaction(
         self,
         visibility: VisibilityScope,
@@ -98,10 +102,14 @@ class MemoryKernel(Protocol):
 
 
 class CodeAnchorBuilder(Protocol):
+    """Minimal contract for building code anchors from repository symbols."""
+
     def build_anchor(self, source_path: str, symbol: str) -> CodeAnchor: ...
 
 
 class TransactionalMemoryKernel:
+    """Reference kernel facade used by applications, harnesses, and benchmarks."""
+
     def __init__(
         self,
         *,
@@ -116,6 +124,7 @@ class TransactionalMemoryKernel:
         procedure_validator: ProcedureValidator | None = None,
         require_shared_event_store: bool = True,
     ) -> None:
+        """Compose storage and service collaborators into one kernel instance."""
         shared_sqlite_event_store = cast(object, event_store) is cast(
             object,
             metadata_store,
@@ -168,6 +177,7 @@ class TransactionalMemoryKernel:
         parent_tx_id: str | None = None,
         metadata: dict[str, object] | None = None,
     ) -> TransactionRecord:
+        """Open a new transaction scoped to the provided visibility boundary."""
         return self._transactions.begin_transaction(
             visibility,
             parent_tx_id=parent_tx_id,
@@ -175,15 +185,19 @@ class TransactionalMemoryKernel:
         )
 
     def stage_memory_item(self, tx_id: str, item: MemoryItem) -> MemoryItem:
+        """Stage a candidate memory item inside an active transaction."""
         return self._transactions.stage_memory_item(tx_id, item)
 
     def list_visible_memory(self, tx_id: str) -> tuple[MemoryItem, ...]:
+        """List committed plus staged memory visible to the given transaction."""
         return self._transactions.list_visible_memory(tx_id)
 
     def commit_transaction(self, tx_id: str) -> TransactionRecord:
+        """Commit all staged memory for the transaction."""
         return self._transactions.commit_transaction(tx_id)
 
     def rollback_transaction(self, tx_id: str) -> TransactionRecord:
+        """Roll back an active transaction and clear staged memory."""
         return self._transactions.rollback_transaction(tx_id)
 
     def verify_memory(
@@ -191,6 +205,7 @@ class TransactionalMemoryKernel:
         memory_id: str,
         current_dependency: DependencyFingerprint,
     ) -> tuple[MemoryItem, VerificationResult]:
+        """Re-check a memory item against the current dependency fingerprint."""
         return self._validation.verify_memory(memory_id, current_dependency)
 
     def validate_procedure(
@@ -199,6 +214,7 @@ class TransactionalMemoryKernel:
         *,
         repo_root: str | None = None,
     ) -> ProcedureValidationResult:
+        """Execute the configured validator for a procedure memory."""
         return self._validation.validate_procedure(memory_id, repo_root=repo_root)
 
     def promote_to_procedure(
@@ -206,15 +222,19 @@ class TransactionalMemoryKernel:
         source_memory_ids: tuple[str, ...],
         procedure: MemoryItem,
     ) -> MemoryItem:
+        """Write a procedure memory derived from existing source memories."""
         return self._validation.promote_to_procedure(source_memory_ids, procedure)
 
     def retrieve(self, request: RetrieveRequest) -> RetrieveResult:
+        """Retrieve visible committed memory using the configured retriever."""
         return self._retrieval_ops.retrieve(request)
 
     def expand(self, memory_id: str) -> tuple[EvidenceRef, ...]:
+        """Return raw evidence attached to a stored memory item."""
         return self._retrieval_ops.expand(memory_id)
 
     def build_code_anchor(self, source_path: str, symbol: str) -> CodeAnchor:
+        """Build a code anchor for a symbol in the current repository state."""
         return self._artifacts.build_code_anchor(source_path, symbol)
 
     def capture_artifact(
@@ -226,6 +246,7 @@ class TransactionalMemoryKernel:
         tool_version: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> ArtifactRecord:
+        """Persist an artifact blob and commit the capture immediately."""
         return self._artifacts.capture_artifact(
             data,
             content_type=content_type,
@@ -241,6 +262,7 @@ class TransactionalMemoryKernel:
         label: str | None = None,
         summary: str | None = None,
     ) -> EvidenceRef:
+        """Convert an artifact record into an evidence reference."""
         return self._artifacts.artifact_evidence(record, label=label, summary=summary)
 
     def anchor_evidence(
@@ -250,10 +272,13 @@ class TransactionalMemoryKernel:
         label: str | None = None,
         summary: str | None = None,
     ) -> EvidenceRef:
+        """Convert a code anchor into an evidence reference."""
         return self._artifacts.anchor_evidence(anchor, label=label, summary=summary)
 
     def save_cache_entry(self, entry: CacheEntry) -> None:
+        """Persist a cache entry through the retrieval subsystem."""
         self._retrieval_ops.save_cache_entry(entry)
 
     def get_cache_entry(self, key: CacheKey) -> CacheEntry | None:
+        """Load a cache entry if it exists and is still valid."""
         return self._retrieval_ops.get_cache_entry(key)

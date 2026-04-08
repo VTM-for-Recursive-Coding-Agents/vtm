@@ -1,3 +1,5 @@
+"""Result models for verification and procedure validation."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -13,6 +15,8 @@ from vtm.memory_items import ValidatorSpec, ValidityState
 
 
 class VerificationResult(VTMModel):
+    """Outcome of checking a memory item against current dependencies."""
+
     memory_id: str
     previous_status: ValidityStatus
     current_status: ValidityStatus
@@ -26,6 +30,8 @@ class VerificationResult(VTMModel):
 
 
 class ProcedureValidationResult(VTMModel):
+    """Outcome of executing a procedure validator."""
+
     memory_id: str
     validator_spec: ValidatorSpec
     success: bool

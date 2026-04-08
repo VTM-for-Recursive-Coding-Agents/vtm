@@ -1,3 +1,5 @@
+"""Evidence reference records stored on memory items."""
+
 from __future__ import annotations
 
 from pydantic import model_validator
@@ -8,12 +10,16 @@ from vtm.enums import EvidenceKind
 
 
 class ArtifactRef(VTMModel):
+    """Minimal pointer to an artifact record and blob digest."""
+
     artifact_id: str
     sha256: str
     content_type: str | None = None
 
 
 class EvidenceRef(VTMModel):
+    """Typed reference from a memory item to supporting evidence."""
+
     kind: EvidenceKind
     ref_id: str
     artifact_ref: ArtifactRef | None = None
@@ -24,6 +30,7 @@ class EvidenceRef(VTMModel):
 
     @model_validator(mode="after")
     def validate_target(self) -> EvidenceRef:
+        """Enforce that the populated target matches the evidence kind."""
         if self.kind is EvidenceKind.ARTIFACT:
             if (
                 self.artifact_ref is None

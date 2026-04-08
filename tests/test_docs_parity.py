@@ -15,6 +15,15 @@ IGNORED_MD_PARTS = {
     "dist",
     "__pycache__",
 }
+EXPECTED_CORE_DOCS = (
+    Path("docs/harness.md"),
+    Path("src/vtm/harness/README.md"),
+)
+EXPECTED_BENCHMARK_DOCS = (
+    Path("docs/benchmark-recipes.md"),
+    Path("src/vtm/benchmarks/README.md"),
+    Path("docs/decisions/0010-multi-attempt-coding-benchmarks.md"),
+)
 
 
 def _first_python_fence(path: Path) -> str:
@@ -78,3 +87,44 @@ def test_markdown_manifest_references_exist_and_load() -> None:
         assert resolved.exists()
         manifest = BenchmarkManifest.from_path(resolved)
         assert manifest.repos
+
+
+def test_harness_docs_exist_and_reference_public_contracts() -> None:
+    for path in EXPECTED_CORE_DOCS:
+        assert path.exists()
+
+    harness_doc = Path("docs/harness.md").read_text(encoding="utf-8")
+    assert "HarnessTaskPack" in harness_doc
+    assert "ExecutorRequest" in harness_doc
+    assert "ExecutorResult" in harness_doc
+    assert "TraceManifest" in harness_doc
+
+
+def test_readme_keeps_kernel_and_harness_boundaries_distinct() -> None:
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "vtm.harness" in readme
+    assert "terminal-smoke" in readme
+    assert "from vtm import BenchmarkRunner" not in readme
+    assert "from vtm import OpenAIEmbeddingAdapter" not in readme
+
+
+def test_benchmark_docs_cover_terminal_smoke_attempts_and_pass_k() -> None:
+    for path in EXPECTED_BENCHMARK_DOCS:
+        assert path.exists()
+
+    recipes = Path("docs/benchmark-recipes.md").read_text(encoding="utf-8")
+    assert "benchmarks/manifests/terminal-smoke.json" in recipes
+    assert "--attempts" in recipes
+    assert "--pass-k" in recipes
+
+    harness_doc = Path("docs/harness.md").read_text(encoding="utf-8")
+    assert "attempts.jsonl" in harness_doc
+    assert "artifact_root" in harness_doc
+
+    benchmark_readme = Path("src/vtm/benchmarks/README.md").read_text(encoding="utf-8")
+    assert "terminal-smoke.json" in benchmark_readme
+    assert "attempts.jsonl" in benchmark_readme
+
+    audit = Path("docs/current-state-audit.md").read_text(encoding="utf-8")
+    assert "pass@k" in audit
+    assert "pass@k controller" not in audit

@@ -1,3 +1,5 @@
+"""Kernel-side retrieval helpers that persist retrieval side effects."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -14,6 +16,8 @@ from vtm.stores.base import CacheStore, EventStore, MetadataStore
 
 
 class RetrievalKernelOps:
+    """Owns retrieval, evidence expansion, and retrieval-stat updates."""
+
     def __init__(
         self,
         *,
@@ -23,6 +27,7 @@ class RetrievalKernelOps:
         retriever: Retriever,
         mutations: MetadataMutationRunner,
     ) -> None:
+        """Create retrieval helpers around stores, retriever, and cache."""
         self._metadata_store = metadata_store
         self._event_store = event_store
         self._cache_store = cache_store
@@ -30,6 +35,7 @@ class RetrievalKernelOps:
         self._mutations = mutations
 
     def retrieve(self, request: RetrieveRequest) -> RetrieveResult:
+        """Retrieve candidates and persist retrieval statistics."""
         result = self._retriever.retrieve(request)
         retrieved_at = utc_now()
         updated_result, _events = self._mutations.run(
@@ -39,6 +45,7 @@ class RetrievalKernelOps:
         return updated_result
 
     def expand(self, memory_id: str) -> tuple[EvidenceRef, ...]:
+        """Expand raw evidence for a memory item and emit an audit event."""
         evidence = self._retriever.expand(memory_id)
         if evidence:
             self._event_store.save_event(
@@ -51,9 +58,11 @@ class RetrievalKernelOps:
         return evidence
 
     def save_cache_entry(self, entry: CacheEntry) -> None:
+        """Persist a cache entry through the configured cache store."""
         self._cache_store.save_cache_entry(entry)
 
     def get_cache_entry(self, key: CacheKey) -> CacheEntry | None:
+        """Load a cache entry through the configured cache store."""
         return self._cache_store.get_cache_entry(key)
 
     def _increment_retrieval_stats(

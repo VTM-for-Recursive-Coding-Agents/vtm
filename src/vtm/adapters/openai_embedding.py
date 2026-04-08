@@ -1,3 +1,5 @@
+"""Optional OpenAI embedding adapter implementation."""
+
 from __future__ import annotations
 
 import os
@@ -7,6 +9,8 @@ from vtm.adapters.embeddings import EmbeddingAdapter
 
 
 class OpenAIEmbeddingAdapter:
+    """Embedding adapter backed by the OpenAI embeddings API."""
+
     def __init__(
         self,
         *,
@@ -15,6 +19,7 @@ class OpenAIEmbeddingAdapter:
         api_key: str | None = None,
         api_key_env: str = "OPENAI_API_KEY",
     ) -> None:
+        """Create an embedding adapter for the provided model."""
         if not model:
             raise ValueError("OpenAI embedding adapter requires a non-empty model name")
         self._model = model
@@ -22,9 +27,11 @@ class OpenAIEmbeddingAdapter:
 
     @property
     def adapter_id(self) -> str:
+        """Return the stable adapter identifier used by the index store."""
         return f"openai:{self._model}"
 
     def embed_text(self, text: str) -> tuple[float, ...]:
+        """Embed one text input and return the numeric vector."""
         response = self._client.embeddings.create(
             model=self._model,
             input=text,

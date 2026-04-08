@@ -1,3 +1,5 @@
+"""Verification services that compare stored and current dependencies."""
+
 from __future__ import annotations
 
 from typing import Protocol
@@ -12,6 +14,8 @@ from vtm.verification import VerificationResult
 
 
 class Verifier(Protocol):
+    """Contract for updating memory validity against current dependencies."""
+
     def verify(
         self,
         item: MemoryItem,
@@ -20,7 +24,10 @@ class Verifier(Protocol):
 
 
 class BasicVerifier:
+    """Default verifier using dependency equality and optional anchor relocation."""
+
     def __init__(self, *, relocator: AnchorRelocator | None = None) -> None:
+        """Create a verifier with an optional code-anchor relocator."""
         self._relocator = relocator
 
     def verify(
@@ -28,6 +35,7 @@ class BasicVerifier:
         item: MemoryItem,
         current_dependency: DependencyFingerprint,
     ) -> VerificationResult:
+        """Produce a verification result and any updated anchor evidence."""
         checked_at = utc_now()
         previous_status = item.validity.status
         stored_dependency = item.validity.dependency_fingerprint

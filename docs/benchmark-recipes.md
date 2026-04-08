@@ -1,17 +1,17 @@
 # Benchmark Recipes
 
-These commands are the maintained entrypoints for repeatable local benchmark runs.
+These commands are the maintained entrypoints for repeatable local runs.
 
-## Tonight baseline
+## Retrieval
 
-Synthetic retrieval without memory:
+Synthetic no-memory baseline:
 
 ```bash
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/synthetic-smoke.json \
   --suite retrieval \
   --mode no_memory \
-  --output .benchmarks/2026-04-03/synth-retrieval-no-memory
+  --output .benchmarks/retrieval-no-memory
 ```
 
 Synthetic lexical retrieval:
@@ -21,7 +21,7 @@ uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/synthetic-smoke.json \
   --suite retrieval \
   --mode lexical \
-  --output .benchmarks/2026-04-03/synth-retrieval-lexical
+  --output .benchmarks/retrieval-lexical
 ```
 
 Synthetic embedding retrieval:
@@ -31,89 +31,10 @@ uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/synthetic-smoke.json \
   --suite retrieval \
   --mode embedding \
-  --output .benchmarks/2026-04-03/synth-retrieval-embedding
+  --output .benchmarks/retrieval-embedding
 ```
 
-Synthetic drift:
-
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/synthetic-smoke.json \
-  --suite drift \
-  --mode lexical \
-  --output .benchmarks/2026-04-03/synth-drift
-```
-
-OSS retrieval without memory:
-
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/oss-python.json \
-  --suite retrieval \
-  --mode no_memory \
-  --output .benchmarks/2026-04-03/oss-retrieval-no-memory
-```
-
-OSS lexical retrieval:
-
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/oss-python.json \
-  --suite retrieval \
-  --mode lexical \
-  --output .benchmarks/2026-04-03/oss-retrieval-lexical
-```
-
-## Full synthetic runs
-
-Target one commit pair without truncation:
-
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/synthetic-smoke.json \
-  --suite retrieval \
-  --mode lexical \
-  --output .benchmarks/synthetic-stable \
-  --pair stable
-```
-
-Coding benchmark comparisons:
-
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/synthetic-smoke.json \
-  --suite coding \
-  --mode no_memory \
-  --output .benchmarks/coding-no-memory
-
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/synthetic-smoke.json \
-  --suite coding \
-  --mode lexical \
-  --output .benchmarks/coding-lexical
-
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/synthetic-smoke.json \
-  --suite coding \
-  --mode embedding \
-  --output .benchmarks/coding-embedding
-```
-
-Run reranking coverage with a provider-backed adapter:
-
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/synthetic-smoke.json \
-  --suite retrieval \
-  --mode lexical_rlm_rerank \
-  --output .benchmarks/synthetic-rerank \
-  --pair stable \
-  --rlm-model "$VTM_OPENAI_MODEL"
-```
-
-## Targeted OSS runs
-
-Focus on one repo and commit pair:
+Target one repo/pair deterministically:
 
 ```bash
 uv run python -m vtm.benchmarks.run \
@@ -125,47 +46,143 @@ uv run python -m vtm.benchmarks.run \
   --pair flag_default_sentinel
 ```
 
-Targeted embedding run:
+## Drift
 
 ```bash
 uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/oss-python.json \
-  --suite retrieval \
-  --mode embedding \
-  --output .benchmarks/oss-click-embedding \
-  --repo click \
-  --pair flag_default_sentinel \
-  --embedding-model "$VTM_OPENAI_EMBEDDING_MODEL"
+  --manifest benchmarks/manifests/synthetic-smoke.json \
+  --suite drift \
+  --mode lexical \
+  --output .benchmarks/drift-lexical
 ```
 
-## Notes
+## Coding tasks
 
-- Retrieval output now reports both `taskish_behavior` and `smoke_identity` slices.
-- Coding task packs now include base/head refs, expected changed paths, target patch digests, memory mode metadata, and richer retrieval context.
-- Coding summaries report total tasks, resolved counts, pass rate, resolved rate, changed-path F1, patch similarity, and retrieval/context diagnostics.
-- `case_count` in `summary.json` and `summary.md` matches the number of persisted benchmark cases.
-- Prefer `--repo` and `--pair` filters over `--max-cases` when you want a stable targeted run.
-- Coding-task results remain useful for harness validation, not for external solve-rate claims.
+Dry run that only writes typed task packs and retrieval context:
+
+```bash
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/synthetic-smoke.json \
+  --suite coding \
+  --mode lexical \
+  --output .benchmarks/coding-dry-run
+```
+
+Harder local terminal-task track:
+
+```bash
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/terminal-smoke.json \
+  --suite coding \
+  --mode lexical \
+  --output .benchmarks/terminal-smoke-dry-run
+```
+
+External-command executor:
+
+```bash
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/synthetic-smoke.json \
+  --suite coding \
+  --mode lexical \
+  --output .benchmarks/coding-external \
+  --pair bugfix \
+  --executor-command "python scripts/vtm_local_patcher.py --task-file {task_file} --workspace {workspace}"
+```
+
+Attempt-aware external-command executor:
+
+```bash
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/terminal-smoke.json \
+  --suite coding \
+  --mode lexical \
+  --output .benchmarks/terminal-smoke-external \
+  --attempts 3 \
+  --pass-k 1 \
+  --pass-k 3 \
+  --executor-command "python scripts/vtm_local_patcher.py --task-file {task_file} --workspace {workspace} --attempt {attempt} --artifact-root {artifact_root}"
+```
+
+Native-agent executor:
+
+```bash
+export VTM_AGENT_BASE_URL=http://127.0.0.1:8000
+export VTM_AGENT_MODEL=qwen3.5-35b-a3b
+
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/synthetic-smoke.json \
+  --suite coding \
+  --mode lexical \
+  --output .benchmarks/coding-native-agent \
+  --pair bugfix \
+  --coding-executor native_agent \
+  --agent-model "$VTM_AGENT_MODEL" \
+  --agent-command-timeout-seconds 120 \
+  --agent-max-output-chars 20000
+```
+
+Attempt-aware native-agent run on the harder terminal track:
+
+```bash
+export VTM_AGENT_BASE_URL=http://127.0.0.1:8000
+export VTM_AGENT_MODEL=qwen3.5-35b-a3b
+
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/terminal-smoke.json \
+  --suite coding \
+  --mode lexical \
+  --output .benchmarks/terminal-smoke-native-agent \
+  --coding-executor native_agent \
+  --agent-model "$VTM_AGENT_MODEL" \
+  --attempts 5 \
+  --pass-k 1 \
+  --pass-k 5 \
+  --agent-temperature 0.3 \
+  --agent-seed-base 1000
+```
+
+Comparable memory-mode matrix for the terminal-smoke track:
+
+```bash
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/terminal-smoke.json \
+  --suite coding \
+  --mode no_memory \
+  --output .benchmarks/terminal-smoke-no-memory
+
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/terminal-smoke.json \
+  --suite coding \
+  --mode lexical \
+  --output .benchmarks/terminal-smoke-lexical
+
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/terminal-smoke.json \
+  --suite coding \
+  --mode lexical_rlm_rerank \
+  --output .benchmarks/terminal-smoke-lexical-rlm
+
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/terminal-smoke.json \
+  --suite coding \
+  --mode embedding \
+  --output .benchmarks/terminal-smoke-embedding
+```
 
 ## SWE-bench Lite
 
-For a full Windows and WSL2 setup guide, see [`swebench-lite-windows.md`](swebench-lite-windows.md).
-
-Install the optional benchmark dependencies first:
+Prepare a generated manifest:
 
 ```bash
 uv sync --extra bench
-```
 
-Prepare a generated manifest plus local repo caches:
-
-```bash
 uv run python -m vtm.benchmarks.prepare_swebench_lite \
   --output-manifest .benchmarks/generated/swebench-lite.json \
   --cache-root .benchmarks/swebench-lite
 ```
 
-Run a targeted harness-backed coding benchmark:
+Run a targeted harness-backed slice:
 
 ```bash
 export VTM_LOCAL_LLM_BASE_URL=http://127.0.0.1:8000
@@ -176,21 +193,21 @@ uv run python -m vtm.benchmarks.run \
   --manifest .benchmarks/generated/swebench-lite.json \
   --suite coding \
   --mode lexical \
-  --output .benchmarks/swebench-lite-qwen-q4 \
+  --output .benchmarks/swebench-lite-targeted \
   --repo astropy__astropy \
   --pair astropy__astropy-14182 \
   --executor-command "python $PATCHER_SCRIPT --task-file {task_file} --workspace {workspace}" \
   --swebench-dataset-name princeton-nlp/SWE-bench_Lite
 ```
 
-Run the full Lite set with the same local patcher:
+## Notes
 
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest .benchmarks/generated/swebench-lite.json \
-  --suite coding \
-  --mode lexical \
-  --output .benchmarks/swebench-lite-full \
-  --executor-command "python $PATCHER_SCRIPT --task-file {task_file} --workspace {workspace}" \
-  --swebench-dataset-name princeton-nlp/SWE-bench_Lite
-```
+- Retrieval summaries include both `taskish_behavior` and `smoke_identity` slices.
+- Coding task packs are written as typed `HarnessTaskPack` JSON under `task-packs/`.
+- Repeated-attempt coding runs keep one aggregate row per case in `results.jsonl` and one row per attempt in `attempts.jsonl`.
+- Attempt-aware workspaces and artifacts live under `workspaces/<mode>/<case-id>/attempt-01` and `executor-artifacts/<case-id>/attempt-01`.
+- Case-local executor artifacts always include `command-events.jsonl`, `final-git-status.txt`, `produced.patch`, and final verification stdout/stderr files.
+- Native-agent runs additionally emit `session.json`, `turns.jsonl`, `tool_calls.jsonl`, and `compactions.jsonl` through the harness trace manifest.
+- If `--attempts > 1` and no explicit `--pass-k` values are provided, the runner reports `pass_at_1` and `pass_at_<attempt_count>` by default.
+- For meaningful native-agent `pass@k` experiments, prefer a nonzero `--agent-temperature`.
+- Prefer `--repo` and `--pair` filters over ad hoc truncation when you want reproducible targeted runs.

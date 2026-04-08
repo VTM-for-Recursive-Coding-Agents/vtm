@@ -1,3 +1,5 @@
+"""Transaction records for staging and committing memory changes."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -12,6 +14,8 @@ from vtm.memory_items import VisibilityScope
 
 
 class TransactionRecord(VTMModel):
+    """Durable record of a memory transaction lifecycle."""
+
     tx_id: str = Field(default_factory=new_transaction_id)
     parent_tx_id: str | None = None
     state: TxState = TxState.ACTIVE
@@ -23,6 +27,7 @@ class TransactionRecord(VTMModel):
 
     @model_validator(mode="after")
     def validate_state(self) -> TransactionRecord:
+        """Require the appropriate terminal timestamp for each terminal state."""
         if self.state is TxState.COMMITTED and self.committed_at is None:
             raise ValueError("committed transactions require committed_at")
         if self.state is TxState.ROLLED_BACK and self.rolled_back_at is None:
