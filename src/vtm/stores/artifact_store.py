@@ -1,3 +1,5 @@
+"""Filesystem blob storage backed by a SQLite artifact index."""
+
 from __future__ import annotations
 
 import hashlib
@@ -22,7 +24,10 @@ from vtm.stores.migrations.artifact import (
 
 
 class FilesystemArtifactStore:
+    """Artifact store that persists blobs on disk and metadata in SQLite."""
+
     def __init__(self, root: str | Path) -> None:
+        """Open or initialize the artifact root and index."""
         self._root = Path(root)
         self._root.mkdir(parents=True, exist_ok=True)
         self._blob_root = self._root / "sha256"
@@ -33,6 +38,7 @@ class FilesystemArtifactStore:
         self._init_schema()
 
     def close(self) -> None:
+        """Close the artifact index connection."""
         self._conn.close()
 
     def _init_schema(self) -> None:

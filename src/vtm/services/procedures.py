@@ -1,3 +1,5 @@
+"""Procedure-validation services backed by external commands."""
+
 from __future__ import annotations
 
 import os
@@ -16,6 +18,8 @@ from vtm.verification import ProcedureValidationResult
 
 
 class ProcedureValidator(Protocol):
+    """Contract for validating a procedure memory item."""
+
     def validate(
         self,
         procedure: MemoryItem,
@@ -25,7 +29,10 @@ class ProcedureValidator(Protocol):
 
 
 class CommandProcedureValidator:
+    """Runs a configured command and captures stdout/stderr as artifacts."""
+
     def __init__(self, artifact_store: ArtifactStore) -> None:
+        """Create a validator that writes durable artifacts for each run."""
         self._artifact_store = artifact_store
 
     def validate(
@@ -34,6 +41,7 @@ class CommandProcedureValidator:
         *,
         repo_root: str | None = None,
     ) -> ProcedureValidationResult:
+        """Execute the configured validator command for the given procedure."""
         payload = self._require_procedure_payload(procedure)
         validator = payload.validator
         if validator is None:
@@ -142,7 +150,7 @@ class CommandProcedureValidator:
         max_output_bytes: int | None,
         capture_group_id: str,
     ) -> ArtifactRecord:
-        return self._artifact_store.prepare_bytes(
+        prepared = self._artifact_store.prepare_bytes(
             payload,
             content_type="application/octet-stream",
             tool_name="procedure-validator",
@@ -157,6 +165,7 @@ class CommandProcedureValidator:
                 "max_output_bytes": max_output_bytes,
             },
         )
+        return self._artifact_store.commit_artifact(prepared.artifact_id)
 
     def _require_procedure_payload(self, procedure: MemoryItem) -> ProcedurePayload:
         if procedure.kind is not MemoryKind.PROCEDURE or not isinstance(

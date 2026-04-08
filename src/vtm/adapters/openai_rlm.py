@@ -1,3 +1,5 @@
+"""Optional OpenAI-backed reranking adapter."""
+
 from __future__ import annotations
 
 import json
@@ -8,6 +10,8 @@ from vtm.adapters.rlm import RLMAdapter, RLMRankedCandidate, RLMRankRequest, RLM
 
 
 class OpenAIRLMAdapter:
+    """Ranks lexical retrieval candidates using an OpenAI model."""
+
     def __init__(
         self,
         *,
@@ -18,6 +22,7 @@ class OpenAIRLMAdapter:
         max_output_tokens: int = 1200,
         temperature: float = 0.0,
     ) -> None:
+        """Create a reranker bound to the provided model and client."""
         if not model:
             raise ValueError("OpenAI RLM adapter requires a non-empty model name")
         if max_output_tokens <= 0:
@@ -30,9 +35,11 @@ class OpenAIRLMAdapter:
 
     @property
     def cache_identity(self) -> str:
+        """Return the adapter identity used in cache keys."""
         return f"openai:{self._model}"
 
     def rank_candidates(self, request: RLMRankRequest) -> RLMRankResponse:
+        """Rerank lexical candidates and return a normalized response."""
         if not request.candidates:
             return RLMRankResponse(model_name=self._model)
 

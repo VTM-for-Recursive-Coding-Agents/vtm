@@ -1,3 +1,5 @@
+"""SQLite-backed metadata and canonical event storage."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -26,7 +28,10 @@ JSONL_EXPORT_NAME = "jsonl"
 
 
 class SqliteMetadataStore:
+    """SQLite implementation of metadata storage and the canonical event ledger."""
+
     def __init__(self, db_path: str | Path, *, event_log_path: str | Path | None = None) -> None:
+        """Open or initialize the metadata store and optional JSONL export file."""
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._event_log_path = Path(event_log_path) if event_log_path is not None else None
@@ -38,6 +43,7 @@ class SqliteMetadataStore:
         self._init_schema()
 
     def close(self) -> None:
+        """Close the underlying SQLite connection."""
         self._conn.close()
 
     def _init_schema(self) -> None:

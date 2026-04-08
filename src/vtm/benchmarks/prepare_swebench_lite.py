@@ -1,3 +1,5 @@
+"""CLI entrypoint for generating a SWE-bench Lite manifest."""
+
 from __future__ import annotations
 
 import argparse
@@ -6,6 +8,7 @@ from vtm.benchmarks.swebench import SWEbenchLitePreparer
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the SWE-bench Lite preparation CLI parser."""
     parser = argparse.ArgumentParser(description="Prepare a SWE-bench Lite manifest for VTM.")
     parser.add_argument(
         "--dataset-path",
@@ -49,6 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    """Generate a manifest and print it to stdout."""
     args = build_parser().parse_args()
     manifest = SWEbenchLitePreparer().prepare_manifest(
         dataset_name=args.dataset_name,

@@ -1,3 +1,5 @@
+"""Git-backed repository fingerprint collection."""
+
 from __future__ import annotations
 
 import hashlib
@@ -9,11 +11,16 @@ from vtm.fingerprints import RepoFingerprint
 
 
 class GitFingerprintAdapter(Protocol):
+    """Interface for collecting repository fingerprints."""
+
     def collect(self, repo_root: str) -> RepoFingerprint: ...
 
 
 class GitRepoFingerprintCollector:
+    """Collects repo identity plus dirty-state digests from git."""
+
     def collect(self, repo_root: str) -> RepoFingerprint:
+        """Capture branch, commit, tree, and dirty-worktree fingerprints."""
         root = Path(repo_root).resolve()
         branch_output = self._git_text(root, "branch", "--show-current")
         head_commit = self._git_text(root, "rev-parse", "HEAD")

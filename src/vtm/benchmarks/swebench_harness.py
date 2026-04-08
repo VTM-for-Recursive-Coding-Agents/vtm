@@ -1,3 +1,5 @@
+"""Integration helpers for the external SWE-bench harness."""
+
 from __future__ import annotations
 
 import json
@@ -14,6 +16,8 @@ from vtm.benchmarks.models import BenchmarkCaseResult, BenchmarkRunConfig, Codin
 
 @dataclass(frozen=True)
 class SWEbenchHarnessInstanceResult:
+    """Normalized SWE-bench evaluation outcome for one instance."""
+
     instance_id: str
     resolved: bool
     patch_applied: bool
@@ -23,6 +27,8 @@ class SWEbenchHarnessInstanceResult:
 
 @dataclass(frozen=True)
 class SWEbenchHarnessRunArtifacts:
+    """Artifact paths produced by one SWE-bench harness run."""
+
     predictions_path: str
     results_path: str
     logs_dir: str
@@ -31,6 +37,8 @@ class SWEbenchHarnessRunArtifacts:
 
 
 class SWEbenchHarnessRunner:
+    """Writes predictions and normalizes results from the SWE-bench harness."""
+
     def write_predictions(
         self,
         *,
@@ -39,6 +47,7 @@ class SWEbenchHarnessRunner:
         output_dir: Path,
         model_name_or_path: str,
     ) -> Path:
+        """Write harness prediction JSONL from local case results."""
         result_map = {result.case_id: result for result in results}
         predictions_path = output_dir / "predictions.jsonl"
         with predictions_path.open("w", encoding="utf-8") as handle:
@@ -65,6 +74,7 @@ class SWEbenchHarnessRunner:
         config: BenchmarkRunConfig,
         output_dir: Path,
     ) -> tuple[dict[str, SWEbenchHarnessInstanceResult], SWEbenchHarnessRunArtifacts]:
+        """Run the external harness and normalize the resulting report."""
         output_dir.mkdir(parents=True, exist_ok=True)
         logs_dir = output_dir / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)

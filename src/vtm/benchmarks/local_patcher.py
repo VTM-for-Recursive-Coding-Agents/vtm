@@ -1,17 +1,24 @@
+"""Local LLM patcher used by external-command coding benchmarks."""
+
 from __future__ import annotations
 
 import json
 import os
 import re
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib import error, request
+
+from vtm.adapters.openai_chat import OpenAICompatibleChatClient, OpenAICompatibleChatConfig
+from vtm.harness.models import HarnessTaskPack
 
 
 @dataclass(frozen=True)
 class LocalPatcherConfig:
+    """Configuration for the local OpenAI-compatible patch generator."""
+
     base_url: str
     api_key: str
     model: str
@@ -23,6 +30,7 @@ class LocalPatcherConfig:
 
     @classmethod
     def from_env(cls) -> LocalPatcherConfig:
+        """Load patcher configuration from environment variables."""
         base_url = os.getenv("VTM_LOCAL_LLM_BASE_URL", "").strip()
         model = os.getenv("VTM_LOCAL_LLM_MODEL", "").strip()
         if not base_url:
@@ -40,13 +48,24 @@ class LocalPatcherConfig:
 
 
 class LocalOpenAIPatcher:
+    """Generates and applies a patch using a local OpenAI-compatible model."""
+
     def __init__(self, config: LocalPatcherConfig | None = None) -> None:
+        """Create the patcher and its chat client."""
         self._config = config or LocalPatcherConfig.from_env()
+        self._client = OpenAICompatibleChatClient(
+            OpenAICompatibleChatConfig(
+                base_url=self._config.base_url,
+                api_key=self._config.api_key,
+                timeout_seconds=self._config.timeout_seconds,
+            )
+        )
 
     def run(self, *, task_file: str | Path, workspace: str | Path) -> int:
+        """Load a task pack, request a patch, and apply it in the workspace."""
         task_path = Path(task_file)
         workspace_root = Path(workspace)
-        task = json.loads(task_path.read_text(encoding="utf-8"))
+        task = self._load_task_pack(task_path)
         artifact_dir = workspace_root / ".vtm-local-patcher"
         artifact_dir.mkdir(parents=True, exist_ok=True)
 
@@ -69,8 +88,15 @@ class LocalOpenAIPatcher:
         )
         return 0
 
-    def build_prompt(self, *, task: dict[str, Any], workspace_root: Path) -> str:
-        candidate_paths = self._candidate_paths(task)
+    def build_prompt(
+        self,
+        *,
+        task: HarnessTaskPack | Mapping[str, Any],
+        workspace_root: Path,
+    ) -> str:
+        """Build the patch-generation prompt for one task pack."""
+        task_pack = self._coerce_task_pack(task)
+        candidate_paths = self._candidate_paths(task_pack)
         file_blocks = []
         for relative_path in candidate_paths:
             path = workspace_root / relative_path
@@ -88,15 +114,15 @@ class LocalOpenAIPatcher:
                 )
             )
         memory_blocks = []
-        for candidate in task.get("memory_context", ())[: self._config.max_memory_context_paths]:
+        for candidate in task_pack.memory_context[: self._config.max_memory_context_paths]:
             memory_blocks.append(
                 json.dumps(
                     {
-                        "title": candidate.get("title"),
-                        "summary": candidate.get("summary"),
-                        "relative_path": candidate.get("relative_path"),
-                        "symbol": candidate.get("symbol"),
-                        "score": candidate.get("score"),
+                        "title": candidate.title,
+                        "summary": candidate.summary,
+                        "relative_path": candidate.relative_path,
+                        "symbol": candidate.symbol,
+                        "score": candidate.score,
                     },
                     sort_keys=True,
                 )
@@ -108,13 +134,13 @@ class LocalOpenAIPatcher:
                 "Do not include prose, Markdown fences, or explanations."
             ),
             "",
-            f"TASK ID: {task.get('case_id')}",
-            f"ISSUE: {task.get('problem_statement') or task.get('task_statement')}",
-            f"HINTS: {task.get('hints_text') or 'none'}",
+            f"TASK ID: {task_pack.case_id}",
+            f"ISSUE: {task_pack.problem_statement or task_pack.task_statement}",
+            f"HINTS: {task_pack.hints_text or 'none'}",
             "FAILING TESTS:",
-            json.dumps(task.get("failing_tests", []), indent=2),
+            json.dumps(list(task_pack.failing_tests), indent=2),
             "EXPECTED CHANGED PATHS:",
-            json.dumps(task.get("expected_changed_paths", []), indent=2),
+            json.dumps(list(task_pack.expected_changed_paths), indent=2),
             "RETRIEVED MEMORY CONTEXT:",
             "\n".join(memory_blocks) if memory_blocks else "(none)",
             "CURRENT FILE CONTENTS:",
@@ -127,6 +153,78 @@ class LocalOpenAIPatcher:
         ]
         return "\n".join(sections).strip() + "\n"
 
+    def _load_task_pack(self, task_path: Path) -> HarnessTaskPack:
+        payload = json.loads(task_path.read_text(encoding="utf-8"))
+        if isinstance(payload, Mapping):
+            return self._coerce_task_pack(payload)
+        raise TypeError(f"task file must contain a JSON object: {task_path}")
+
+    def _coerce_task_pack(self, task: HarnessTaskPack | Mapping[str, Any]) -> HarnessTaskPack:
+        if isinstance(task, HarnessTaskPack):
+            return task
+        payload = dict(task)
+        raw_memory_context = payload.get("memory_context", ())
+        memory_context: list[dict[str, Any]] = []
+        if isinstance(raw_memory_context, list):
+            for index, item in enumerate(raw_memory_context):
+                if not isinstance(item, Mapping):
+                    continue
+                memory_context.append(
+                    {
+                        "memory_id": str(item.get("memory_id") or f"memory-{index}"),
+                        "title": str(item.get("title") or ""),
+                        "summary": str(item.get("summary") or ""),
+                        "score": float(item.get("score") or 0.0),
+                        "status": str(item.get("status") or "unknown"),
+                        "relative_path": item.get("relative_path"),
+                        "symbol": item.get("symbol"),
+                        "slice_name": item.get("slice_name"),
+                        "raw_anchor_path": item.get("raw_anchor_path"),
+                    }
+                )
+
+        expected_changed_paths = tuple(payload.get("expected_changed_paths", ()) or ())
+        touched_paths = tuple(payload.get("touched_paths", ()) or expected_changed_paths)
+        task_statement = str(
+            payload.get("task_statement") or payload.get("problem_statement") or ""
+        )
+        problem_statement = payload.get("problem_statement")
+        if problem_statement is not None:
+            problem_statement = str(problem_statement)
+
+        return HarnessTaskPack.model_validate(
+            {
+                "case_id": str(payload.get("case_id") or ""),
+                "repo_name": str(payload.get("repo_name") or ""),
+                "commit_pair_id": str(
+                    payload.get("commit_pair_id") or payload.get("case_id") or ""
+                ),
+                "evaluation_backend": payload.get("evaluation_backend") or "local_subprocess",
+                "instance_id": payload.get("instance_id"),
+                "dataset_name": payload.get("dataset_name"),
+                "base_ref": str(payload.get("base_ref") or ""),
+                "head_ref": str(payload.get("head_ref") or ""),
+                "commit_pair_label": payload.get("commit_pair_label"),
+                "task_statement": task_statement,
+                "problem_statement": problem_statement,
+                "hints_text": payload.get("hints_text"),
+                "failing_tests": tuple(payload.get("failing_tests", ()) or ()),
+                "fail_to_pass_tests": tuple(payload.get("fail_to_pass_tests", ()) or ()),
+                "pass_to_pass_tests": tuple(payload.get("pass_to_pass_tests", ()) or ()),
+                "expected_changed_paths": expected_changed_paths,
+                "touched_paths": touched_paths,
+                "test_command": tuple(payload.get("test_command", ()) or ()),
+                "target_patch_digest": str(payload.get("target_patch_digest") or ""),
+                "gold_test_patch_digest": payload.get("gold_test_patch_digest"),
+                "memory_mode": payload.get("memory_mode") or "no_memory",
+                "top_k": int(payload.get("top_k") or 5),
+                "task_kind": payload.get("task_kind"),
+                "difficulty": payload.get("difficulty"),
+                "memory_context": memory_context,
+                "coding_executor": payload.get("coding_executor") or "external_command",
+            }
+        )
+
     def extract_patch(self, raw_output: str) -> str:
         fenced = re.search(
             r"```(?:diff|patch)?\n(?P<body>.*)```",
@@ -137,36 +235,32 @@ class LocalOpenAIPatcher:
             return fenced.group("body").strip() + "\n"
         return raw_output.strip() + ("\n" if raw_output.strip() else "")
 
-    def _candidate_paths(self, task: dict[str, Any]) -> tuple[str, ...]:
+    def _candidate_paths(self, task: HarnessTaskPack) -> tuple[str, ...]:
         selected: list[str] = []
         seen: set[str] = set()
-        for relative_path in task.get("expected_changed_paths", []):
-            path = str(relative_path)
-            if path not in seen:
-                seen.add(path)
-                selected.append(path)
-        for candidate in task.get("memory_context", []):
-            relative_path = candidate.get("relative_path")
-            if not isinstance(relative_path, str) or not relative_path:
+        for relative_path in task.expected_changed_paths:
+            if relative_path not in seen:
+                seen.add(relative_path)
+                selected.append(relative_path)
+        for candidate in task.memory_context:
+            candidate_path = candidate.relative_path
+            if not candidate_path:
                 continue
-            if relative_path in seen:
+            if candidate_path in seen:
                 continue
-            seen.add(relative_path)
-            selected.append(relative_path)
-            max_paths = (
-                len(task.get("expected_changed_paths", []))
-                + self._config.max_memory_context_paths
-            )
+            seen.add(candidate_path)
+            selected.append(candidate_path)
+            max_paths = len(task.expected_changed_paths) + self._config.max_memory_context_paths
             if len(selected) >= max_paths:
                 break
         return tuple(selected)
 
     def _request_patch(self, prompt: str) -> str:
-        payload = {
-            "model": self._config.model,
-            "temperature": self._config.temperature,
-            "max_tokens": self._config.max_output_tokens,
-            "messages": [
+        response_payload = self._client.create_chat_completion(
+            model=self._config.model,
+            temperature=self._config.temperature,
+            max_tokens=self._config.max_output_tokens,
+            messages=[
                 {
                     "role": "system",
                     "content": (
@@ -175,45 +269,8 @@ class LocalOpenAIPatcher:
                 },
                 {"role": "user", "content": prompt},
             ],
-        }
-        endpoint = self._chat_endpoint(self._config.base_url)
-        body = json.dumps(payload).encode("utf-8")
-        http_request = request.Request(
-            endpoint,
-            data=body,
-            headers={
-                "Authorization": f"Bearer {self._config.api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
         )
-        try:
-            with request.urlopen(http_request, timeout=self._config.timeout_seconds) as response:
-                response_payload = json.loads(response.read().decode("utf-8"))
-        except error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(
-                f"local model request failed with HTTP {exc.code}: {detail}"
-            ) from exc
-        content = response_payload["choices"][0]["message"]["content"]
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            collected = [
-                str(item.get("text", ""))
-                for item in content
-                if isinstance(item, dict) and item.get("type") in {None, "text"}
-            ]
-            return "".join(collected)
-        raise RuntimeError("local model response contained an unsupported content payload")
-
-    def _chat_endpoint(self, base_url: str) -> str:
-        normalized = base_url.rstrip("/")
-        if normalized.endswith("/chat/completions"):
-            return normalized
-        if normalized.endswith("/v1"):
-            return f"{normalized}/chat/completions"
-        return f"{normalized}/v1/chat/completions"
+        return self._client.extract_message_text(response_payload)
 
     def _apply_patch(self, *, workspace_root: Path, patch_text: str, artifact_dir: Path) -> None:
         patch_path = artifact_dir / "candidate.patch"

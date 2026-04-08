@@ -1,3 +1,5 @@
+"""Retriever wrapper that applies model-based reranking on top of lexical results."""
+
 from __future__ import annotations
 
 import hashlib
@@ -19,6 +21,8 @@ from vtm.stores.base import CacheStore
 
 
 class RLMRerankingRetriever:
+    """Wraps a base retriever and reranks its top lexical candidates."""
+
     def __init__(
         self,
         base_retriever: Retriever,
@@ -32,6 +36,7 @@ class RLMRerankingRetriever:
         env_collector: EnvFingerprintAdapter | None = None,
         tool_probes: Mapping[str, Sequence[str]] | None = None,
     ) -> None:
+        """Create a reranking wrapper with optional cache support."""
         if top_k_lexical <= 0:
             raise ValueError("top_k_lexical must be greater than zero")
         if top_k_final <= 0:
@@ -52,6 +57,7 @@ class RLMRerankingRetriever:
         }
 
     def retrieve(self, request: RetrieveRequest) -> RetrieveResult:
+        """Run lexical retrieval, rerank the top candidates, and merge results."""
         lexical_limit = max(request.limit, self._top_k_lexical)
         lexical_request = request.model_copy(update={"limit": lexical_limit})
         lexical_result = self._base_retriever.retrieve(lexical_request)
@@ -89,6 +95,7 @@ class RLMRerankingRetriever:
         )
 
     def expand(self, memory_id: str) -> tuple[EvidenceRef, ...]:
+        """Delegate evidence expansion to the base retriever."""
         return self._base_retriever.expand(memory_id)
 
     def _build_rank_request(

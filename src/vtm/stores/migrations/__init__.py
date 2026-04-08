@@ -1,3 +1,5 @@
+"""Ordered SQLite schema migrations for VTM stores."""
+
 from vtm.stores.migrations.artifact import (
     ARTIFACT_SCHEMA_VERSION,
     apply_artifact_migrations,

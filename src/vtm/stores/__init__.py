@@ -1,3 +1,5 @@
+"""Public storage protocols and concrete store implementations."""
+
 from vtm.stores.artifact_store import FilesystemArtifactStore
 from vtm.stores.base import (
     ArtifactStore,

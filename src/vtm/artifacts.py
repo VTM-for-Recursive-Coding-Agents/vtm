@@ -1,3 +1,5 @@
+"""Artifact capture records for durable tool-output storage."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -11,6 +13,8 @@ from vtm.ids import new_artifact_id
 
 
 class ArtifactRecord(VTMModel):
+    """Metadata describing a captured artifact blob."""
+
     artifact_id: str = Field(default_factory=new_artifact_id)
     sha256: str
     relative_path: str
@@ -29,6 +33,8 @@ class ArtifactRecord(VTMModel):
 
 
 class ArtifactIntegrityReport(VTMModel):
+    """Inspectable integrity issues found in the artifact store."""
+
     prepared_artifact_ids: tuple[str, ...] = Field(default_factory=tuple)
     committed_missing_blob_artifact_ids: tuple[str, ...] = Field(default_factory=tuple)
     orphaned_blob_paths: tuple[str, ...] = Field(default_factory=tuple)

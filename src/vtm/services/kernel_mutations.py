@@ -1,3 +1,5 @@
+"""Shared mutation runner that keeps metadata and event writes coordinated."""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -10,7 +12,10 @@ MutationResultT = TypeVar("MutationResultT")
 
 
 class MetadataMutationRunner:
+    """Runs metadata mutations and emits corresponding event rows."""
+
     def __init__(self, *, metadata_store: MetadataStore, event_store: EventStore) -> None:
+        """Create a mutation runner over the provided stores."""
         self._metadata_store = metadata_store
         self._event_store = event_store
 
@@ -20,6 +25,7 @@ class MetadataMutationRunner:
         *,
         build_events: Callable[[MutationResultT], tuple[MemoryEvent, ...]] | None = None,
     ) -> MutationResultT:
+        """Execute a mutation and write any derived events."""
         if cast(object, self._event_store) is cast(object, self._metadata_store):
 
             def wrapped() -> MutationResultT:

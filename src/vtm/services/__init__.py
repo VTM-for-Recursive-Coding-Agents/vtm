@@ -1,3 +1,5 @@
+"""Public service-layer exports for kernel orchestration."""
+
 from vtm.services.consolidator import Consolidator, DeterministicConsolidator, NoopConsolidator
 from vtm.services.embedding_retriever import EmbeddingRetriever
 from vtm.services.fingerprints import DependencyFingerprintBuilder

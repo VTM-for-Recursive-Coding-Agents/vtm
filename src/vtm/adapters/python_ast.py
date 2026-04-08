@@ -1,3 +1,5 @@
+"""Python AST-based anchor construction and relocation."""
+
 from __future__ import annotations
 
 import ast
@@ -70,9 +72,12 @@ class _QualifiedSymbolFinder(ast.NodeVisitor):
 
 
 class PythonAstSyntaxAdapter:
+    """Pure-Python anchor adapter based on the builtin `ast` module."""
+
     language = "python"
 
     def build_anchor(self, source_path: str, symbol: str) -> CodeAnchor:
+        """Build a code anchor for a qualified Python symbol."""
         path = Path(source_path)
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(path))
@@ -106,6 +111,7 @@ class PythonAstSyntaxAdapter:
         )
 
     def relocate(self, anchor: CodeAnchor) -> AnchorRelocation | None:
+        """Relocate an anchor by rebuilding the same qualified symbol."""
         if anchor.language != "python" or anchor.symbol is None:
             return None
         try:
@@ -158,12 +164,18 @@ class PythonAstSyntaxAdapter:
 
 
 class PythonAstAnchorAdapter(PythonAstSyntaxAdapter):
+    """Compatibility alias for the AST anchor builder."""
+
     pass
 
 
 class PythonAstAnchorRelocator:
+    """Compatibility wrapper exposing only relocation behavior."""
+
     def __init__(self, *, builder: PythonAstSyntaxAdapter | None = None) -> None:
+        """Create a relocator backed by a Python AST anchor builder."""
         self._builder = builder or PythonAstSyntaxAdapter()
 
     def relocate(self, anchor: CodeAnchor) -> AnchorRelocation | None:
+        """Relocate the provided code anchor using the configured builder."""
         return self._builder.relocate(anchor)

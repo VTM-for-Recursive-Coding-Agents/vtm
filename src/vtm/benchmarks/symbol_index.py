@@ -1,3 +1,5 @@
+"""Source symbol extraction and case-generation helpers for benchmarks."""
+
 from __future__ import annotations
 
 import ast
@@ -41,6 +43,8 @@ STOPWORDS = frozenset(
 
 @dataclass(frozen=True)
 class SymbolSnapshot:
+    """Normalized summary of a Python symbol extracted from source."""
+
     relative_path: str
     qualname: str
     kind: str
@@ -53,11 +57,15 @@ class SymbolSnapshot:
 
     @property
     def key(self) -> tuple[str, str]:
+        """Return the unique key used for matching symbol snapshots."""
         return (self.relative_path, self.qualname)
 
 
 class SymbolIndexer:
+    """Extracts Python symbols and converts them into benchmark cases."""
+
     def extract_symbols(self, repo_root: Path) -> dict[tuple[str, str], SymbolSnapshot]:
+        """Index all non-test Python symbols in a repository tree."""
         snapshots: dict[tuple[str, str], SymbolSnapshot] = {}
         for source_path in sorted(repo_root.rglob("*.py")):
             if ".git" in source_path.parts:
@@ -77,6 +85,7 @@ class SymbolIndexer:
         pair: CommitPair,
         symbols: dict[tuple[str, str], SymbolSnapshot],
     ) -> list[RetrievalCase]:
+        """Generate retrieval benchmark cases for indexed symbols."""
         cases: list[RetrievalCase] = []
         sorted_symbols = sorted(
             symbols.values(),
@@ -138,6 +147,7 @@ class SymbolIndexer:
         base_symbols: dict[tuple[str, str], SymbolSnapshot],
         head_symbols: dict[tuple[str, str], SymbolSnapshot],
     ) -> list[DriftCase]:
+        """Generate drift cases by comparing base and head symbol snapshots."""
         cases: list[DriftCase] = []
         sorted_symbols = sorted(
             base_symbols.values(),
@@ -186,6 +196,7 @@ class SymbolIndexer:
         relative_path: str,
         qualname: str,
     ) -> str:
+        """Return the deterministic benchmark memory id for a symbol."""
         digest = hashlib.sha256(
             f"{repo_name}:{pair_id}:{relative_path}:{qualname}".encode()
         ).hexdigest()

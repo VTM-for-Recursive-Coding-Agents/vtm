@@ -1,3 +1,5 @@
+"""Embedding adapter contracts and a deterministic local implementation."""
+
 from __future__ import annotations
 
 import hashlib
@@ -6,6 +8,8 @@ from typing import Protocol
 
 
 class EmbeddingAdapter(Protocol):
+    """Interface for text-to-vector adapters used by retrieval."""
+
     @property
     def adapter_id(self) -> str: ...
 
@@ -13,16 +17,21 @@ class EmbeddingAdapter(Protocol):
 
 
 class DeterministicHashEmbeddingAdapter:
+    """Cheap deterministic embedding adapter for local testing and benchmarks."""
+
     def __init__(self, *, dimensions: int = 64) -> None:
+        """Create a deterministic embedding adapter with a fixed vector width."""
         if dimensions <= 0:
             raise ValueError("Deterministic hash embedding adapter requires dimensions > 0")
         self._dimensions = dimensions
 
     @property
     def adapter_id(self) -> str:
+        """Stable adapter identifier used by the embedding index."""
         return f"deterministic_hash:{self._dimensions}"
 
     def embed_text(self, text: str) -> tuple[float, ...]:
+        """Project text into a normalized hashed feature vector."""
         normalized = text.strip().lower()
         if not normalized:
             return tuple(0.0 for _ in range(self._dimensions))

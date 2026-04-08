@@ -1,23 +1,26 @@
 # src/vtm/benchmarks
 
-Purpose: benchmark harness for measuring retrieval quality, verification drift behavior, and optional coding-task workflows against pinned repositories.
+Purpose: manifest-driven benchmark orchestration and reporting.
 
-Current retrieval evaluation writes both `taskish_behavior` and `smoke_identity` slices so the same run can separate harder prompt-style lookup from exact identity smoke coverage.
-
-Current coding evaluation supports both local deterministic synthetic tasks and harness-backed SWE-bench Lite tasks. Task packs now carry base/head refs, expected changed paths, target patch digests, memory mode metadata, richer retrieval context, and optional SWE-bench dataset metadata, while coding summaries prioritize pass rate and resolved-rate style comparisons.
+Start here
+- `models.py`: manifest, config, and result records.
+- `runner.py`: the public `BenchmarkRunner` entrypoint.
+- `suite_execution.py`: how retrieval, drift, and coding suites are dispatched.
 
 Contents
-- `__init__.py`: Re-exports the public benchmark models and `BenchmarkRunner`.
-- `executor.py`: Internal executor protocol plus the subprocess-backed implementation used for `--executor-command`.
-- `models.py`: Manifest, repo, commit-pair, case, config, and run-result records for the harness.
-- `local_patcher.py`: Reusable single-shot OpenAI-compatible patcher used by the checked-in script wrapper.
-- `repo_materialization.py`: Clones, fetches, checks out, and diffs benchmark repositories or synthetic corpora.
-- `reporting.py`: Aggregates suite metrics and writes human-readable and JSONL benchmark summaries.
-- `prepare_swebench_lite.py`: CLI entrypoint for generating SWE-bench Lite manifests backed by local repo caches.
-- `run.py`: CLI entrypoint that parses arguments and launches a benchmark run, including optional repo/pair filters plus embedding and RLM adapter wiring.
-- `runner.py`: High-level benchmark orchestration that writes lockfiles, cases, results, and summaries.
-- `suite_execution.py`: Core retrieval, drift, and coding-task execution logic, including benchmark-local kernel setup, case filtering, coding task-pack generation, changed-path scoring, embedding mode, and executor artifact capture.
-- `swebench.py`: SWE-bench Lite dataset normalization, repo-cache preparation, synthetic gold-ref creation, and manifest generation helpers.
-- `swebench_harness.py`: Official SWE-bench harness prediction writing, invocation, and result normalization.
-- `symbol_index.py`: Extracts Python symbols and derives deterministic retrieval and drift cases from them, including harder taskish queries and smoke identity queries.
-- `synthetic.py`: Builds the synthetic Python smoke corpus used by tests and local smoke runs, including a multi-task coding benchmark suite.
+- `models.py`: Manifest, case, config, and result records.
+- `runner.py`: Public `BenchmarkRunner`.
+- `suite_execution.py`: High-level suite dispatcher.
+- `retrieval_suite.py`, `drift_suite.py`, `coding_suite.py`: Suite-specific execution logic.
+- `kernel_factory.py`: Benchmark-local kernel setup and seeding helpers.
+- `reporting.py`: Aggregate metrics and summary rendering.
+- `repo_materialization.py`, `symbol_index.py`, `synthetic.py`, `swebench.py`, `swebench_harness.py`: corpus preparation and evaluation helpers.
+- `executor.py`: Compatibility shim re-exporting the public harness executor surface.
+- `local_patcher.py`: Local patch generator that consumes typed harness task packs.
+
+Current benchmark credibility surface
+- `benchmarks/manifests/synthetic-smoke.json`: small regression-friendly smoke corpus.
+- `benchmarks/manifests/terminal-smoke.json`: harder local terminal-style coding corpus.
+- `BenchmarkRunConfig.attempt_count` and `pass_k_values`: repeated-attempt coding controls.
+- `results.jsonl`: one aggregate row per case.
+- `attempts.jsonl`: one row per attempt for coding suites.

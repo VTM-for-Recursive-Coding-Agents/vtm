@@ -1,3 +1,5 @@
+"""Storage protocols implemented by the concrete VTM stores."""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
@@ -16,6 +18,8 @@ ResultT = TypeVar("ResultT")
 
 
 class MetadataStore(Protocol):
+    """Persists durable memory, lineage, transaction, and staging state."""
+
     def save_memory_item(self, item: MemoryItem) -> None: ...
 
     def get_memory_item(self, memory_id: str) -> MemoryItem | None: ...
@@ -56,6 +60,8 @@ class MetadataStore(Protocol):
 
 
 class EventStore(Protocol):
+    """Append-only event ledger for memory-side mutations."""
+
     def save_event(self, event: MemoryEvent) -> None: ...
 
     def get_event(self, event_id: str) -> MemoryEvent | None: ...
@@ -64,6 +70,8 @@ class EventStore(Protocol):
 
 
 class ArtifactStore(Protocol):
+    """Captures immutable blobs plus lifecycle metadata."""
+
     def prepare_bytes(
         self,
         data: bytes,
@@ -120,6 +128,8 @@ class ArtifactStore(Protocol):
 
 
 class CacheStore(Protocol):
+    """Persists deterministic cache entries keyed by repo and env state."""
+
     def save_cache_entry(self, entry: CacheEntry) -> None: ...
 
     def get_cache_entry(
@@ -135,6 +145,8 @@ class CacheStore(Protocol):
 
 
 class EmbeddingIndexStore(Protocol):
+    """Stores derived embedding vectors for retrieval adapters."""
+
     def save_entry(self, entry: EmbeddingIndexEntry) -> None: ...
 
     def get_entry(self, memory_id: str, adapter_id: str) -> EmbeddingIndexEntry | None: ...

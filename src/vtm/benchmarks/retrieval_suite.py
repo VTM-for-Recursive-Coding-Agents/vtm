@@ -1,0 +1,144 @@
+"""Retrieval benchmark suite execution helpers."""
+
+from __future__ import annotations
+
+import math
+import time
+from pathlib import Path
+
+from vtm.benchmarks.kernel_factory import BenchmarkKernelFactory
+from vtm.benchmarks.models import (
+    BenchmarkCaseResult,
+    BenchmarkMode,
+    CommitPair,
+    RepoSpec,
+    RetrievalCase,
+)
+from vtm.benchmarks.repo_materialization import RepoWorkspaceManager
+from vtm.benchmarks.symbol_index import SymbolIndexer
+from vtm.enums import EvidenceBudget
+from vtm.retrieval import RetrieveRequest, RetrieveResult
+
+
+def run_retrieval_suite(
+    *,
+    output_dir: Path,
+    selected_repo_pairs: list[tuple[RepoSpec, CommitPair]],
+    repo_manager: RepoWorkspaceManager,
+    symbol_indexer: SymbolIndexer,
+    kernel_factory: BenchmarkKernelFactory,
+    top_k: int,
+    mode: BenchmarkMode,
+) -> tuple[list[RetrievalCase], list[BenchmarkCaseResult]]:
+    """Run retrieval evaluation for the selected repo and commit pairs."""
+    cases: list[RetrievalCase] = []
+    results: list[BenchmarkCaseResult] = []
+    for repo_spec, pair in selected_repo_pairs:
+        repo_root = repo_manager.materialize_repo(repo_spec, output_dir / "corpus")
+        repo_manager.git_checkout(repo_root, pair.base_ref)
+        base_symbols = symbol_indexer.extract_symbols(repo_root)
+        pair_cases = symbol_indexer.build_retrieval_cases(repo_spec.repo_name, pair, base_symbols)
+        if mode == "no_memory":
+            no_memory_results = [
+                BenchmarkCaseResult(
+                    suite="retrieval",
+                    mode=mode,
+                    case_id=case.case_id,
+                    repo_name=case.repo_name,
+                    commit_pair_id=case.commit_pair_id,
+                    metrics={
+                        "rank": None,
+                        "recall_at_1": 0.0,
+                        "recall_at_3": 0.0,
+                        "recall_at_5": 0.0,
+                        "mrr": 0.0,
+                        "ndcg": 0.0,
+                        "latency_ms": 0.0,
+                        "artifact_bytes_per_memory": 0.0,
+                    },
+                )
+                for case in pair_cases
+            ]
+            cases.extend(pair_cases)
+            results.extend(no_memory_results)
+            continue
+
+        kernel, metadata, artifacts, cache, embedding_index, scope = kernel_factory.open_kernel(
+            repo_root=repo_root,
+            repo_name=repo_spec.repo_name,
+            pair=pair,
+            output_dir=output_dir,
+        )
+        try:
+            kernel_factory.seed_memories(
+                kernel,
+                repo_root,
+                repo_spec.repo_name,
+                pair,
+                base_symbols,
+                scope,
+            )
+            artifact_bytes_per_memory = kernel_factory.artifact_bytes_per_memory(
+                artifacts,
+                len(base_symbols),
+            )
+            pair_results: list[BenchmarkCaseResult] = []
+            for case in pair_cases:
+                started = time.perf_counter()
+                retrieve_result = kernel.retrieve(
+                    RetrieveRequest(
+                        query=case.query,
+                        scopes=(scope,),
+                        evidence_budget=EvidenceBudget.SUMMARY_ONLY,
+                        limit=top_k,
+                    )
+                )
+                latency_ms = (time.perf_counter() - started) * 1000
+                rank = rank_for_expected(case.expected_memory_ids, retrieve_result)
+                pair_results.append(
+                    BenchmarkCaseResult(
+                        suite="retrieval",
+                        mode=mode,
+                        case_id=case.case_id,
+                        repo_name=case.repo_name,
+                        commit_pair_id=case.commit_pair_id,
+                        metrics={
+                            "rank": rank,
+                            "recall_at_1": 1.0 if rank is not None and rank <= 1 else 0.0,
+                            "recall_at_3": 1.0 if rank is not None and rank <= 3 else 0.0,
+                            "recall_at_5": 1.0 if rank is not None and rank <= 5 else 0.0,
+                            "mrr": 0.0 if rank is None else 1.0 / rank,
+                            "ndcg": 0.0 if rank is None else 1.0 / math.log2(rank + 1),
+                            "latency_ms": latency_ms,
+                            "artifact_bytes_per_memory": artifact_bytes_per_memory,
+                        },
+                        metadata={
+                            "slice_name": case.slice_name,
+                            "relative_path": case.relative_path,
+                            "symbol": case.symbol,
+                            "returned_memory_ids": [
+                                candidate.memory.memory_id
+                                for candidate in retrieve_result.candidates
+                            ],
+                        },
+                    )
+                )
+            cases.extend(pair_cases)
+            results.extend(pair_results)
+        finally:
+            kernel_factory.close_kernel_stores(metadata, artifacts, cache, embedding_index)
+    return cases, results
+
+
+def rank_for_expected(
+    expected_memory_ids: tuple[str, ...],
+    retrieve_result: RetrieveResult,
+) -> int | None:
+    """Return the first rank at which any expected memory appears."""
+    for index, candidate in enumerate(retrieve_result.candidates, start=1):
+        if candidate.memory.memory_id in expected_memory_ids:
+            return index
+    return None
+
+
+__all__ = ["run_retrieval_suite"]

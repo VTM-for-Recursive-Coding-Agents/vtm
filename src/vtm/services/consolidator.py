@@ -1,3 +1,5 @@
+"""Consolidation services for superseding duplicate verified memories."""
+
 from __future__ import annotations
 
 import hashlib
@@ -23,11 +25,16 @@ WORD_RE = re.compile(r"\s+")
 
 
 class Consolidator(Protocol):
+    """Contract for batch consolidation over stored memory."""
+
     def run(self) -> ConsolidationRunResult: ...
 
 
 class NoopConsolidator:
+    """Consolidator implementation that performs no changes."""
+
     def run(self) -> ConsolidationRunResult:
+        """Return an empty consolidation result."""
         now = utc_now()
         return ConsolidationRunResult(
             scanned_memory_count=0,
@@ -40,6 +47,8 @@ class NoopConsolidator:
 
 
 class DeterministicConsolidator:
+    """Supersedes duplicate active memories using deterministic ordering."""
+
     def __init__(
         self,
         *,
@@ -47,6 +56,7 @@ class DeterministicConsolidator:
         event_store: EventStore,
         create_summary_cards: bool = False,
     ) -> None:
+        """Create a consolidator over the provided stores."""
         self._metadata_store = metadata_store
         self._mutations = MetadataMutationRunner(
             metadata_store=metadata_store,
@@ -55,6 +65,7 @@ class DeterministicConsolidator:
         self._create_summary_cards = create_summary_cards
 
     def run(self) -> ConsolidationRunResult:
+        """Scan memory, consolidate duplicate groups, and emit events."""
         started_at = utc_now()
         memories = tuple(self._metadata_store.list_memory_items())
         groups = self._candidate_groups(memories)

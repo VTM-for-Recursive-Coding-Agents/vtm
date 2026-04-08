@@ -1,43 +1,118 @@
 # VTM
 
-VTM is a typed kernel for verified, transactional memory aimed at coding agents that operate in mutable repositories. The current implementation ships explicit record schemas, SQLite-backed metadata and cache storage, a derived SQLite-backed embedding index, recoverable filesystem artifact capture, lexical retrieval, embedding retrieval, optional RLM reranking, deterministic consolidation, and a benchmark harness for retrieval, drift, and coding-task evaluation.
+VTM is a typed memory kernel for coding agents that operate inside mutable repositories.
 
-## Status
+The repo now has four explicit public surfaces:
 
-This repository currently includes:
+- `vtm`: the stable kernel, records, stores, and retrieval/verification services
+- `vtm.harness`: typed task-pack, workspace, executor, and scoring contracts
+- `vtm.agents`: the native single-agent coding runtime
+- `vtm.benchmarks`: manifest models and the benchmark runner
 
-- frozen Pydantic v2 models for the public record layer
-- SQLite-backed metadata, transactions, staged state, events, cache storage, and embedding index storage
-- a filesystem artifact store with SHA-256 blob storage, prepared/committed capture states, integrity audits, and janitor recovery helpers
-- concrete Git and runtime environment fingerprint collectors
-- Python Tree-sitter anchor construction and relocation with Python AST fallback
-- deterministic lexical retrieval, embedding retrieval, and optional RLM reranking
-- deterministic duplicate consolidation with superseding and summary-card generation
-- explicit procedure promotion and local command-based validation
-- schema-tracked SQLite stores with future-version rejection and fixture-backed migration coverage for every supported revision
-- decomposed kernel and benchmark internals with stable public facades
-- benchmark manifests, a synthetic smoke corpus, pinned OSS corpus manifests, SWE-bench Lite manifest preparation, and a benchmark runner CLI with structured executor and harness artifacts
-- pytest coverage for core model invariants and service behavior
+Compatibility re-exports still exist for some older import paths, but new code should import from the subpackage that actually owns the behavior.
 
-Still intentionally limited:
+## Stable Today
 
-- JSONL export remains at-least-once, not exactly-once atomic with SQLite
-- filesystem artifact writes and SQLite metadata/events still do not share a single atomic boundary
-- procedure validation is bounded but still not sandboxed
-- coding evaluation remains single-shot and local; there is no multi-turn coding agent loop or pass@k orchestration
+- frozen Pydantic v2 records for the durable memory and storage layer
+- SQLite metadata/events, cache storage, and derived embedding index storage
+- filesystem artifact capture with prepared/committed states and integrity audits
+- deterministic lexical retrieval, derived embedding retrieval, and optional RLM reranking
+- verification, procedure validation, and deterministic consolidation
+- typed harness task packs plus local workspace and executor contracts
+- native single-agent terminal runtime with built-in file, patch, terminal, and memory tools
+- retrieval, drift, coding-task, native-agent, and SWE-bench Lite benchmark workflows
+- checked-in `terminal-smoke` coding tasks for harder local terminal-style evaluation
+- repeated-attempt coding benchmarks with `attempts.jsonl`, `pass_at_k`, `resolved_at_k`, and `patch_applied_at_k`
+
+## Intentionally Limited
+
+- JSONL export is derived from SQLite, not in the same atomic commit boundary
+- filesystem artifact writes and SQLite writes are still separate failure domains
+- procedure validation is bounded but not sandboxed
+- the native runtime is still single-agent and local
+- the default workspace backend is local only; remote sandbox execution is future work
+- repeated attempts are only implemented for coding suites; shell-only task classes are still future work
+
+## Import Boundaries
+
+Kernel-first imports:
+
+```python
+from vtm import (
+    FilesystemArtifactStore,
+    LexicalRetriever,
+    SqliteMetadataStore,
+    TransactionalMemoryKernel,
+)
+```
+
+Harness imports:
+
+```python
+from vtm.harness import HarnessTaskPack, LocalWorkspaceBackend
+```
+
+Benchmark imports:
+
+```python
+from vtm.benchmarks import BenchmarkRunner
+```
+
+The main benchmark credibility entrypoint is now
+`benchmarks/manifests/terminal-smoke.json`, which exercises repeated attempts,
+memory retrieval, multi-file fixes, and terminal-style workflows.
+
+## Quick Start
+
+Minimal kernel wiring:
+
+```python
+from pathlib import Path
+
+from vtm import LexicalRetriever, TransactionalMemoryKernel
+from vtm.adapters import PythonAstSyntaxAdapter, PythonTreeSitterSyntaxAdapter
+from vtm.services import BasicVerifier
+from vtm.stores import FilesystemArtifactStore, SqliteCacheStore, SqliteMetadataStore
+
+repo_root = Path(".").resolve()
+metadata = SqliteMetadataStore(
+    repo_root / ".vtm" / "metadata.sqlite",
+    event_log_path=repo_root / ".vtm" / "events.jsonl",
+)
+artifacts = FilesystemArtifactStore(repo_root / ".vtm" / "artifacts")
+cache = SqliteCacheStore(repo_root / ".vtm" / "cache.sqlite", event_store=metadata)
+anchor_adapter = PythonTreeSitterSyntaxAdapter(fallback=PythonAstSyntaxAdapter())
+
+kernel = TransactionalMemoryKernel(
+    metadata_store=metadata,
+    event_store=metadata,
+    artifact_store=artifacts,
+    cache_store=cache,
+    verifier=BasicVerifier(relocator=anchor_adapter),
+    retriever=LexicalRetriever(metadata),
+    anchor_adapter=anchor_adapter,
+)
+```
+
+For a complete executable example that stages memory, captures artifacts, retrieves, and verifies drift, see [docs/runtime-example.md](docs/runtime-example.md).
+
+## Where To Start
+
+- Building against the kernel: start with [docs/api.md](docs/api.md) and [`src/vtm/__init__.py`](src/vtm/__init__.py).
+- Running coding tasks in isolated workspaces: read [docs/harness.md](docs/harness.md) and [`src/vtm/harness/README.md`](src/vtm/harness/README.md).
+- Using the native agent runtime: start in [`src/vtm/agents/README.md`](src/vtm/agents/README.md).
+- Running evaluations: start in [docs/benchmark-recipes.md](docs/benchmark-recipes.md) and [`src/vtm/benchmarks/README.md`](src/vtm/benchmarks/README.md).
 
 ## Layout
 
-- `src/vtm/`: public package modules, stores, services, adapters, and benchmark support
-- `docs/`: architecture, type-system, API notes, current-state audit, and ADRs
-- `tests/`: round-trip, storage, migration, transaction, verification, retrieval, consolidation, benchmark, and docs-parity tests
-- `benchmarks/manifests/`: synthetic and pinned OSS benchmark manifests
+- `src/vtm/`: kernel package plus harness, agents, benchmarks, adapters, services, and stores
+- `docs/`: source-of-truth architecture, API, harness, audit, recipes, and ADR docs
+- `tests/`: regression coverage for kernel, harness, agents, benchmarks, migrations, and docs parity
+- `benchmarks/manifests/`: checked-in synthetic and pinned OSS manifests
 
 ## Development
 
-Target runtime: Python 3.12. The current local environment may be newer; the code is kept 3.12-compatible.
-
-Typical commands:
+Target runtime: Python 3.12.
 
 ```bash
 uv sync --dev
@@ -46,160 +121,30 @@ uv run python -m ruff check .
 uv run python -m mypy src
 ```
 
-To enable the optional OpenAI adapters:
+Optional extras:
 
 ```bash
 uv sync --extra openai
-export OPENAI_API_KEY=...
-export VTM_OPENAI_MODEL=...
-export VTM_OPENAI_EMBEDDING_MODEL=...
-```
-
-To enable the optional SWE-bench Lite preparation and official harness integration:
-
-```bash
 uv sync --extra bench
 ```
 
-Documentation policy: update `README.md`, affected files under `docs/`, impacted package READMEs, and any relevant ADR in the same change that updates a durable behavior or public contract. Schema compatibility policy lives in [`docs/decisions/0005-schema-compatibility-policy.md`](docs/decisions/0005-schema-compatibility-policy.md).
+## Docs
 
-## Runtime Example
+- [docs/architecture.md](docs/architecture.md): system boundary and data-flow reference
+- [docs/api.md](docs/api.md): kernel API and stable root imports
+- [docs/harness.md](docs/harness.md): task packs, executors, workspace backends, and traces
+- [docs/current-state-audit.md](docs/current-state-audit.md): guarantees, gaps, and explicit limits
+- [docs/benchmark-recipes.md](docs/benchmark-recipes.md): repeatable benchmark commands
+- [docs/runtime-example.md](docs/runtime-example.md): executable end-to-end kernel example
+- [docs/decisions/README.md](docs/decisions/README.md): ADR index
 
-See [`docs/runtime-example.md`](docs/runtime-example.md) for a minimal end-to-end flow that:
+## Documentation Policy
 
-- collects repo and env fingerprints
-- captures a tool artifact
-- audits artifact integrity
-- builds artifact evidence
-- stages and commits a memory
-- retrieves it with summary-first behavior
-- re-verifies it after repository state changes
+Documentation moves in lockstep with behavior changes.
 
-Procedure-specific API notes live in [`docs/api.md`](docs/api.md). Current implementation status and remaining correctness gaps live in [`docs/current-state-audit.md`](docs/current-state-audit.md). Event/export and artifact lifecycle guarantees live in [`docs/decisions/0002-event-and-artifact-contracts.md`](docs/decisions/0002-event-and-artifact-contracts.md). Repeatable benchmark recipes live in [`docs/benchmark-recipes.md`](docs/benchmark-recipes.md).
+If a change affects a public contract, file layout, artifact layout, CLI surface, or durable example, update:
 
-## Benchmarks
-
-Synthetic smoke retrieval with lexical scoring:
-
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/synthetic-smoke.json \
-  --suite retrieval \
-  --mode lexical \
-  --output .benchmarks/smoke-retrieval \
-  --top-k 5
-```
-
-Pair-filtered synthetic drift:
-
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/synthetic-smoke.json \
-  --suite drift \
-  --mode lexical \
-  --output .benchmarks/smoke-drift-stable \
-  --pair stable
-```
-
-Synthetic smoke retrieval with deterministic embeddings:
-
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/synthetic-smoke.json \
-  --suite retrieval \
-  --mode embedding \
-  --output .benchmarks/smoke-embedding \
-  --top-k 5
-```
-
-Lexical plus OpenAI reranking:
-
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/oss-python.json \
-  --suite retrieval \
-  --mode lexical_rlm_rerank \
-  --output .benchmarks/oss-rerank \
-  --top-k 5 \
-  --repo click \
-  --pair flag_default_sentinel \
-  --rlm-model "$VTM_OPENAI_MODEL"
-```
-
-Embedding retrieval with an OpenAI embedding model:
-
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/oss-python.json \
-  --suite retrieval \
-  --mode embedding \
-  --output .benchmarks/oss-embedding \
-  --top-k 5 \
-  --repo click \
-  --pair flag_default_sentinel \
-  --embedding-model "$VTM_OPENAI_EMBEDDING_MODEL"
-```
-
-Coding-task benchmark dry run:
-
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/synthetic-smoke.json \
-  --suite coding \
-  --mode lexical \
-  --output .benchmarks/coding-dry-run
-```
-
-Coding benchmark comparison runs:
-
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/synthetic-smoke.json \
-  --suite coding \
-  --mode no_memory \
-  --output .benchmarks/coding-no-memory
-
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/synthetic-smoke.json \
-  --suite coding \
-  --mode lexical \
-  --output .benchmarks/coding-lexical
-
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/synthetic-smoke.json \
-  --suite coding \
-  --mode embedding \
-  --output .benchmarks/coding-embedding
-```
-
-Prepare a SWE-bench Lite manifest backed by local repo caches:
-
-```bash
-uv run python -m vtm.benchmarks.prepare_swebench_lite \
-  --output-manifest .benchmarks/generated/swebench-lite.json \
-  --cache-root .benchmarks/swebench-lite
-```
-
-Run a targeted SWE-bench Lite coding benchmark with a local OpenAI-compatible patcher:
-
-```bash
-export VTM_LOCAL_LLM_BASE_URL=http://127.0.0.1:8000
-export VTM_LOCAL_LLM_MODEL=qwen3.5-35b-a3b
-export PATCHER_SCRIPT="$PWD/scripts/vtm_local_patcher.py"
-
-uv run python -m vtm.benchmarks.run \
-  --manifest .benchmarks/generated/swebench-lite.json \
-  --suite coding \
-  --mode lexical \
-  --output .benchmarks/swebench-lite-qwen-q4 \
-  --repo astropy__astropy \
-  --pair astropy__astropy-14182 \
-  --executor-command "python $PATCHER_SCRIPT --task-file {task_file} --workspace {workspace}" \
-  --swebench-dataset-name princeton-nlp/SWE-bench_Lite
-```
-
-Coding-task execution is optional. If you want the runner to invoke an external coding agent or script, pass `--executor-command` with `{task_file}` and `{workspace}` placeholders. The runner now writes benchmark-local executor stdout, stderr, and produced patch artifacts under the chosen output directory.
-
-Retrieval runs now emit both `taskish_behavior` and `smoke_identity` slices in `summary.json` / `summary.md`. Use `--repo` and `--pair` filters to keep targeted runs reproducible without depending on unsafe truncation.
-
-Coding task packs now include base/head refs, expected changed paths, target patch digests, memory mode metadata, richer retrieval context, and SWE-bench dataset metadata when applicable. Harness-backed coding runs additionally write `predictions.jsonl`, normalized SWE-bench harness results, and harness logs alongside the standard summaries.
+- `README.md` if the change is user-facing
+- the relevant source-of-truth doc in `docs/`
+- the affected package README
+- the relevant ADR if the boundary or policy is durable

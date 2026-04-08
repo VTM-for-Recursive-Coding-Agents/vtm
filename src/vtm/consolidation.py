@@ -1,3 +1,5 @@
+"""Result records produced by consolidation runs."""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -11,6 +13,8 @@ ConsolidationActionType = Literal["memory_superseded", "summary_card_created"]
 
 
 class ConsolidationAction(VTMModel):
+    """Single durable change emitted by a consolidator."""
+
     action_type: ConsolidationActionType
     canonical_memory_id: str
     affected_memory_ids: tuple[str, ...] = Field(default_factory=tuple)
@@ -19,6 +23,8 @@ class ConsolidationAction(VTMModel):
 
 
 class ConsolidationRunResult(VTMModel):
+    """Aggregate outcome for one consolidation pass."""
+
     scanned_memory_count: int = Field(ge=0)
     candidate_group_count: int = Field(ge=0)
     action_count: int = Field(ge=0)

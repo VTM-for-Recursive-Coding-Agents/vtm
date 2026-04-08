@@ -1,4 +1,8 @@
+"""Kernel-side verification, procedure validation, and promotion helpers."""
+
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 from vtm.adapters.git import GitRepoFingerprintCollector
 from vtm.adapters.runtime import RuntimeEnvFingerprintCollector
@@ -22,7 +26,17 @@ COMMITTED_PROCEDURE_EVIDENCE_STATUSES = {
 }
 
 
+@dataclass(frozen=True)
+class ProcedureDependencyFingerprintRefresh:
+    """Outcome of refreshing the dependency fingerprint for a procedure."""
+
+    fingerprint: DependencyFingerprint | None
+    error: str | None = None
+
+
 class ValidationKernelOps:
+    """Owns verification, procedure validation, and promotion writeback."""
+
     def __init__(
         self,
         *,
@@ -32,6 +46,7 @@ class ValidationKernelOps:
         procedure_validator: ProcedureValidator,
         mutations: MetadataMutationRunner,
     ) -> None:
+        """Create validation helpers around stores and validators."""
         self._metadata_store = metadata_store
         self._artifact_store = artifact_store
         self._verifier = verifier
@@ -43,6 +58,7 @@ class ValidationKernelOps:
         memory_id: str,
         current_dependency: DependencyFingerprint,
     ) -> tuple[MemoryItem, VerificationResult]:
+        """Verify a stored memory item and persist the updated validity state."""
         item = self._metadata_store.get_memory_item(memory_id)
         if item is None:
             raise KeyError(f"unknown memory item: {memory_id}")
@@ -78,23 +94,43 @@ class ValidationKernelOps:
         *,
         repo_root: str | None = None,
     ) -> ProcedureValidationResult:
+        """Run a procedure validator and persist evidence plus validity updates."""
         item = self._metadata_store.get_memory_item(memory_id)
         if item is None:
             raise KeyError(f"unknown memory item: {memory_id}")
         self._require_procedure_payload(item)
 
         result = self._procedure_validator.validate(item, repo_root=repo_root)
-        dependency_fingerprint = self._procedure_dependency_fingerprint(item, repo_root=repo_root)
+        fingerprint_refresh = self._procedure_dependency_fingerprint(item, repo_root=repo_root)
+        dependency_fingerprint = fingerprint_refresh.fingerprint
+        if fingerprint_refresh.error is not None:
+            metadata = {
+                **result.metadata,
+                "dependency_fingerprint_refresh_failed": True,
+                "dependency_fingerprint_error": fingerprint_refresh.error,
+            }
+            if result.status is ValidityStatus.VERIFIED:
+                result = result.model_copy(
+                    update={
+                        "success": False,
+                        "status": ValidityStatus.UNKNOWN,
+                        "reason": (
+                            "procedure validator command succeeded but "
+                            "dependency fingerprint refresh failed"
+                        ),
+                        "metadata": metadata,
+                    }
+                )
+            else:
+                result = result.model_copy(update={"metadata": metadata})
         if dependency_fingerprint is None and result.status is ValidityStatus.VERIFIED:
             raise ValueError(
                 "successful procedure validation requires repo_root or "
                 "an existing dependency fingerprint"
             )
 
-        stdout_record = self._artifact_store.get_artifact_record_by_id(result.stdout_artifact_id)
-        stderr_record = self._artifact_store.get_artifact_record_by_id(result.stderr_artifact_id)
-        if stdout_record is None or stderr_record is None:
-            raise KeyError("procedure validator returned unknown artifact records")
+        stdout_record = self._require_artifact_record(result.stdout_artifact_id)
+        stderr_record = self._require_artifact_record(result.stderr_artifact_id)
         validation_evidence = (
             self._artifact_evidence(
                 stdout_record,
@@ -143,8 +179,6 @@ class ValidationKernelOps:
                 ),
             ),
         )
-        self._artifact_store.commit_artifact(result.stdout_artifact_id)
-        self._artifact_store.commit_artifact(result.stderr_artifact_id)
         return result
 
     def promote_to_procedure(
@@ -152,6 +186,7 @@ class ValidationKernelOps:
         source_memory_ids: tuple[str, ...],
         procedure: MemoryItem,
     ) -> MemoryItem:
+        """Promote source memories into a derived procedure memory."""
         if not source_memory_ids:
             raise ValueError("procedure promotion requires at least one source memory")
 
@@ -224,6 +259,7 @@ class ValidationKernelOps:
         )
 
     def validate_committable_item(self, item: MemoryItem) -> None:
+        """Reject invalid procedure commits before transaction commit."""
         if item.kind is not MemoryKind.PROCEDURE:
             return
         payload = self._require_procedure_payload(item)
@@ -274,7 +310,7 @@ class ValidationKernelOps:
         item: MemoryItem,
         *,
         repo_root: str | None,
-    ) -> DependencyFingerprint | None:
+    ) -> ProcedureDependencyFingerprintRefresh:
         existing = item.validity.dependency_fingerprint
         repo_candidate = repo_root
         if repo_candidate is None and existing is not None:
@@ -286,20 +322,25 @@ class ValidationKernelOps:
                 if isinstance(raw_cwd, str):
                     repo_candidate = raw_cwd
         if repo_candidate is None:
-            return existing
+            return ProcedureDependencyFingerprintRefresh(fingerprint=existing)
 
         builder = DependencyFingerprintBuilder(
             repo_collector=GitRepoFingerprintCollector(),
             env_collector=RuntimeEnvFingerprintCollector(),
         )
         try:
-            return builder.build(
-                repo_candidate,
-                dependency_ids=existing.dependency_ids if existing is not None else (),
-                input_digests=existing.input_digests if existing is not None else (),
+            return ProcedureDependencyFingerprintRefresh(
+                fingerprint=builder.build(
+                    repo_candidate,
+                    dependency_ids=existing.dependency_ids if existing is not None else (),
+                    input_digests=existing.input_digests if existing is not None else (),
+                )
             )
-        except Exception:
-            return existing
+        except Exception as exc:
+            return ProcedureDependencyFingerprintRefresh(
+                fingerprint=existing,
+                error=str(exc),
+            )
 
     def _persist_verified_memory(self, updated_item: MemoryItem) -> MemoryItem:
         self._metadata_store.save_memory_item(updated_item)

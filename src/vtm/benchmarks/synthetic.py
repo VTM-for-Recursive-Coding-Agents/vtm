@@ -1,3 +1,5 @@
+"""Synthetic Python corpus used for local benchmark smoke coverage."""
+
 from __future__ import annotations
 
 import shutil
@@ -6,7 +8,10 @@ from pathlib import Path
 
 
 class SyntheticPythonSmokeCorpus:
+    """Builds a small git repo with retrieval, drift, and coding benchmark cases."""
+
     def materialize(self, repo_root: Path) -> None:
+        """Create the synthetic corpus repository and all benchmark commits."""
         if repo_root.exists():
             shutil.rmtree(repo_root)
         repo_root.mkdir(parents=True, exist_ok=True)

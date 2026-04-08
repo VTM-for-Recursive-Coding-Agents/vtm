@@ -1,3 +1,5 @@
+"""Default policy constants shared across retrieval and caching."""
+
 from __future__ import annotations
 
 from vtm.enums import FreshnessMode, ScopeKind, ValidityStatus
@@ -20,4 +22,5 @@ SCOPE_ORDER: tuple[ScopeKind, ...] = (
 
 
 def is_default_retrievable(status: ValidityStatus) -> bool:
+    """Return whether a validity status is retrievable by default."""
     return status in DEFAULT_RETRIEVAL_STATUSES

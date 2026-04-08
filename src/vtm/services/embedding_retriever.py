@@ -1,3 +1,5 @@
+"""Embedding-backed retrieval implementation."""
+
 from __future__ import annotations
 
 import hashlib
@@ -21,21 +23,26 @@ from vtm.stores.base import EmbeddingIndexStore, MetadataStore
 
 
 class EmbeddingRetriever:
+    """Retrieves memories by vector similarity over a derived embedding index."""
+
     def __init__(
         self,
         metadata_store: MetadataStore,
         index_store: EmbeddingIndexStore,
         embedding_adapter: EmbeddingAdapter,
     ) -> None:
+        """Create an embedding retriever over the provided stores."""
         self._metadata_store = metadata_store
         self._index_store = index_store
         self._embedding_adapter = embedding_adapter
 
     @property
     def adapter_id(self) -> str:
+        """Return the active embedding adapter identifier."""
         return self._embedding_adapter.adapter_id
 
     def retrieve(self, request: RetrieveRequest) -> RetrieveResult:
+        """Retrieve candidates using embedding similarity with lexical tiebreaks."""
         statuses = request.statuses or DEFAULT_RETRIEVAL_STATUSES
         memories = self._metadata_store.query_memory_items(
             request.scopes,
@@ -92,6 +99,7 @@ class EmbeddingRetriever:
         return RetrieveResult(request=request, candidates=limited, total_candidates=len(candidates))
 
     def expand(self, memory_id: str) -> tuple[EvidenceRef, ...]:
+        """Return all evidence attached to the given memory item."""
         memory = self._metadata_store.get_memory_item(memory_id)
         if memory is None:
             return ()

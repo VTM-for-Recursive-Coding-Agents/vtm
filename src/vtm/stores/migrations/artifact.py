@@ -1,3 +1,5 @@
+"""Artifact-store schema migrations."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -8,6 +10,7 @@ ARTIFACT_SCHEMA_VERSION = 2
 
 
 def apply_artifact_migrations(conn: sqlite3.Connection, current_version: int) -> None:
+    """Apply all pending artifact-store migrations in order."""
     for version in range(current_version + 1, ARTIFACT_SCHEMA_VERSION + 1):
         if version == 1:
             _apply_schema_v1(conn)
