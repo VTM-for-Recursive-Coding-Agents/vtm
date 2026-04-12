@@ -30,7 +30,7 @@ scripts/chpc/submit_livecodebench_local_model.sh \
 ### Example:
 
 ```bash
-scripts/chpc/submit_livecodebench_local_model.sh --storage-root /scratch/general/vast/u1406806/vtm --python-bin /scratch/general/vast/u1406806/vtm/venvs/livecodebench/bin/python --model Qwen/Qwen2.5-Coder-32B-Instruct --account soc-gpu-np --partition soc-gpu-np --time 12:00:00 --queue-tag chpc_full_benchmark_20260407a
+scripts/chpc/submit_livecodebench_local_model.sh --storage-root /scratch/general/vast/u1406806/vtm --python-bin /scratch/general/vast/u1406806/vtm/venvs/livecodebench/bin/python --model Qwen/Qwen2.5-Coder-32B-Instruct --account soc-gpu-np --partition soc-gpu-np --time 6:00:00 --queue-tag chpc_full_benchmark_20260407a
 ```
 
 - Adjust `--model`, `--time`, and other arguments as needed.

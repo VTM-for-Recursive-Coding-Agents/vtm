@@ -104,6 +104,11 @@ scripts/chpc/submit_livecodebench_local_model.sh \
 	--rlm-max-iterations 2
 ```
 
+For longer production runs, you can keep a shared `--time` or override individual
+providers with `--time-baseline`, `--time-rag`, `--time-rlm`, and `--time-rlm-rag`.
+That is useful when `rlm` and `rlm_rag` need substantially more walltime than
+`baseline` and `rag`.
+
 If you target a Granite class partition ending in `-grn`, the helper will default
 to `--cluster granite` automatically. You can also pass `--cluster granite`
 explicitly for clarity.

@@ -16,8 +16,13 @@ TEMPERATURE="0.2"
 EVALUATE="true"
 MAX_TOKENS=""
 MAX_INSTANCES=""
+TENSOR_PARALLEL_SIZE=""
+VLLM_MAX_MODEL_LEN=""
+VLLM_GPU_MEMORY_UTILIZATION=""
 RAG_TOP_K=""
 RAG_MAX_CHARS_PER_CHUNK=""
+RLM_BACKEND=""
+RLM_BACKEND_URL=""
 RLM_MAX_DEPTH=""
 RLM_MAX_ITERATIONS=""
 RLM_MAX_TIMEOUT=""
@@ -43,8 +48,14 @@ Options:
   --evaluate <true|false>        Run evaluation after generation (default: true)
   --max-tokens <int>             Max output tokens per response (optional)
   --max-instances <int>          Limit dataset instances for smoke runs (optional)
+  --tensor-parallel-size <int>   vLLM tensor parallel size for generated commands (optional)
+  --vllm-max-model-len <int>     Local vLLM max model length exported into generated jobs (optional)
+  --vllm-gpu-memory-utilization <float>
+                                 Local vLLM gpu_memory_utilization exported into generated jobs (optional)
   --rag-top-k <int>              Retrieval chunk count for rag/rlm_rag (optional)
   --rag-max-chars-per-chunk <n>  Max chars per retrieved chunk for rag/rlm_rag (optional)
+  --rlm-backend <name>           RLM backend override for generated commands (optional)
+  --rlm-backend-url <url>        RLM backend base URL for generated commands (optional)
   --rlm-max-depth <int>          Max recursion depth for rlm/rlm_rag (optional)
   --rlm-max-iterations <int>     Max iterations for rlm/rlm_rag (optional)
   --rlm-max-timeout <seconds>    Max wall-clock time for rlm/rlm_rag (optional)
@@ -100,12 +111,32 @@ while [[ $# -gt 0 ]]; do
       MAX_INSTANCES="$2"
       shift 2
       ;;
+    --tensor-parallel-size)
+      TENSOR_PARALLEL_SIZE="$2"
+      shift 2
+      ;;
+    --vllm-max-model-len)
+      VLLM_MAX_MODEL_LEN="$2"
+      shift 2
+      ;;
+    --vllm-gpu-memory-utilization)
+      VLLM_GPU_MEMORY_UTILIZATION="$2"
+      shift 2
+      ;;
     --rag-top-k)
       RAG_TOP_K="$2"
       shift 2
       ;;
     --rag-max-chars-per-chunk)
       RAG_MAX_CHARS_PER_CHUNK="$2"
+      shift 2
+      ;;
+    --rlm-backend)
+      RLM_BACKEND="$2"
+      shift 2
+      ;;
+    --rlm-backend-url)
+      RLM_BACKEND_URL="$2"
       shift 2
       ;;
     --rlm-max-depth)
@@ -224,11 +255,16 @@ write_manifest_entry() {
   printf '    "evaluate": "%s",\n' "$EVALUATE"
   json_optional_line "max_tokens" "$MAX_TOKENS"
   json_optional_line "max_instances" "$MAX_INSTANCES"
+  json_optional_line "tensor_parallel_size" "$TENSOR_PARALLEL_SIZE"
+  json_optional_line "vllm_max_model_len" "$VLLM_MAX_MODEL_LEN"
+  json_optional_line "vllm_gpu_memory_utilization" "$VLLM_GPU_MEMORY_UTILIZATION"
   if [[ "$provider" == "rag" || "$provider" == "rlm_rag" ]]; then
     json_optional_line "rag_top_k" "$RAG_TOP_K"
     json_optional_line "rag_max_chars_per_chunk" "$RAG_MAX_CHARS_PER_CHUNK"
   fi
   if [[ "$provider" == "rlm" || "$provider" == "rlm_rag" ]]; then
+    json_optional_line "rlm_backend" "$RLM_BACKEND"
+    json_optional_line "rlm_backend_url" "$RLM_BACKEND_URL"
     json_optional_line "rlm_max_depth" "$RLM_MAX_DEPTH"
     json_optional_line "rlm_max_iterations" "$RLM_MAX_ITERATIONS"
     json_optional_line "rlm_max_timeout" "$RLM_MAX_TIMEOUT"
@@ -244,6 +280,7 @@ write_job_script() {
   local run_id="lcb_${MODEL_TAG}_${provider}_${QUEUE_TAG}_a"
   local job_script="$QUEUE_DIR/${order}_${provider}.sbatch"
   local method_example="$VTM_CHPC_LCB_VENV_DIR/bin/python $PROJECT_ROOT/scripts/livecodebench_${provider}_driver.py --provider ${provider} --run-id ${run_id} --model ${MODEL} --scenario ${SCENARIO} --n ${N} --temperature ${TEMPERATURE} --evaluate ${EVALUATE}"
+  local wait_for_serve="false"
 
   if [[ -n "$LM_STUDIO_MODEL_ID" ]]; then
     method_example+=" --lm-studio-model-id ${LM_STUDIO_MODEL_ID}"
@@ -254,6 +291,9 @@ write_job_script() {
   if [[ -n "$MAX_INSTANCES" ]]; then
     method_example+=" --max-instances ${MAX_INSTANCES}"
   fi
+  if [[ -n "$TENSOR_PARALLEL_SIZE" ]]; then
+    method_example+=" --tensor-parallel-size ${TENSOR_PARALLEL_SIZE}"
+  fi
   if [[ "$provider" == "rag" || "$provider" == "rlm_rag" ]]; then
     if [[ -n "$RAG_TOP_K" ]]; then
       method_example+=" --rag-top-k ${RAG_TOP_K}"
@@ -263,6 +303,13 @@ write_job_script() {
     fi
   fi
   if [[ "$provider" == "rlm" || "$provider" == "rlm_rag" ]]; then
+    wait_for_serve="true"
+    if [[ -n "$RLM_BACKEND" ]]; then
+      method_example+=" --rlm-backend ${RLM_BACKEND}"
+    fi
+    if [[ -n "$RLM_BACKEND_URL" ]]; then
+      method_example+=" --rlm-backend-url ${RLM_BACKEND_URL}"
+    fi
     if [[ -n "$RLM_MAX_DEPTH" ]]; then
       method_example+=" --rlm-max-depth ${RLM_MAX_DEPTH}"
     fi
@@ -285,6 +332,8 @@ PYTHON_MODULE="$PYTHON_MODULE"
 CUDA_MODULE="$CUDA_MODULE"
 EXTRA_MODULES="$EXTRA_MODULES"
 SKIP_MODULES="$SKIP_MODULES"
+LOCAL_VLLM_MAX_MODEL_LEN="$VLLM_MAX_MODEL_LEN"
+LOCAL_VLLM_GPU_MEMORY_UTILIZATION="$VLLM_GPU_MEMORY_UTILIZATION"
 
 # shellcheck disable=SC1091
 source "$PROJECT_ROOT/scripts/chpc/chpc_env.sh"
@@ -301,9 +350,69 @@ fi
 if [[ "$SKIP_MODULES" == "true" ]]; then
   export VTM_CHPC_SKIP_MODULES=true
 fi
+if [[ -n "\$LOCAL_VLLM_MAX_MODEL_LEN" ]]; then
+  export VLLM_MAX_MODEL_LEN="\$LOCAL_VLLM_MAX_MODEL_LEN"
+fi
+if [[ -n "\$LOCAL_VLLM_GPU_MEMORY_UTILIZATION" ]]; then
+  export VLLM_GPU_MEMORY_UTILIZATION="\$LOCAL_VLLM_GPU_MEMORY_UTILIZATION"
+fi
 
 vtm_chpc_setup_environment "$STORAGE_ROOT"
 vtm_chpc_load_requested_modules
+
+wait_for_rlm_serve() {
+  local status_file=""
+  local deadline
+  local wait_seconds
+  local poll_seconds
+  local state
+  local endpoint_file
+  local endpoint_value
+
+  read_status_value() {
+    local key="\$1"
+    local file_path="\$2"
+    sed -n "s/^\${key}=//p" "\$file_path" | head -n 1 | tr -d '\r'
+  }
+
+  status_file="\${VTM_RLM_SERVE_STATUS_FILE:-$PROJECT_ROOT/logs/slurm/serve_status.txt}"
+  wait_seconds="\${VTM_RLM_SERVE_WAIT_SECONDS:-900}"
+  poll_seconds="\${VTM_RLM_SERVE_WAIT_POLL_SECONDS:-2}"
+  deadline=\$((SECONDS + wait_seconds))
+
+  while (( SECONDS <= deadline )); do
+    if [[ -f "\$status_file" ]]; then
+      state="\$(read_status_value "state" "\$status_file")"
+      endpoint_file="\$(read_status_value "endpoint_file" "\$status_file")"
+
+      if [[ "\$state" == "failed" || "\$state" == "error" || "\$state" == "cancelled" || "\$state" == "exited" ]]; then
+        echo "[chpc] Serve status reports state=\$state; aborting \${PROVIDER} launch." >&2
+        return 1
+      fi
+
+      if [[ -n "\$endpoint_file" && -f "\$endpoint_file" ]]; then
+        endpoint_value="\$(sed -n '1p' "\$endpoint_file" | tr -d '\r')"
+        if [[ -n "\$endpoint_value" ]]; then
+          echo "[chpc] Found ready RLM endpoint: \$endpoint_value"
+          return 0
+        fi
+      fi
+    fi
+
+    if [[ ! -f "\$status_file" && -f "$PROJECT_ROOT/logs/slurm/serve_node.txt" ]]; then
+      endpoint_value="\$(sed -n '1p' "$PROJECT_ROOT/logs/slurm/serve_node.txt" | tr -d '\r')"
+      if [[ -n "\$endpoint_value" ]]; then
+        echo "[chpc] Found ready RLM endpoint from default endpoint file: \$endpoint_value"
+        return 0
+      fi
+    fi
+
+    sleep "\$poll_seconds"
+  done
+
+  echo "[chpc] Timed out waiting for ready RLM serve status at \$status_file" >&2
+  return 1
+}
 
 RUN_ID="$run_id"
 PROVIDER="$provider"
@@ -315,6 +424,7 @@ TEMPERATURE="$TEMPERATURE"
 EVALUATE="$EVALUATE"
 MAX_TOKENS="$MAX_TOKENS"
 MAX_INSTANCES="$MAX_INSTANCES"
+TENSOR_PARALLEL_SIZE="$TENSOR_PARALLEL_SIZE"
 RAG_TOP_K="$RAG_TOP_K"
 RAG_MAX_CHARS_PER_CHUNK="$RAG_MAX_CHARS_PER_CHUNK"
 RLM_MAX_DEPTH="$RLM_MAX_DEPTH"
@@ -334,6 +444,10 @@ if [[ ! -d "\$PROJECT_ROOT" ]]; then
 fi
 
 vtm_chpc_print_summary
+
+if [[ "$wait_for_serve" == "true" ]]; then
+  wait_for_rlm_serve
+fi
 
 cd "\$PROJECT_ROOT"
 echo "[chpc] Running \${RUN_ID} (\${PROVIDER})"

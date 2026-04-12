@@ -16,8 +16,25 @@ venv/
 #Sensitive files
 .env
 
+#SLURM and generic run logs
+slurm-*.out
+slurm-*.err
+*.out
+*.err
+
+#Generated launcher bundles
+launchers/chpc/livecodebench*/
+launchers/local/livecodebench*/
+
+#Keep launcher docs and stable helper content tracked
+!launchers/README.md
+!launchers/chpc/README.md
+!launchers/local/README.md
+!launchers/chpc/*.md
+!launchers/chpc/*.sh
+
+#Generated benchmark/run outputs
+results/raw/*/
 results/visualizations/*
-results/raw/swebench/*
-results/raw/livecodebench/*
 results/metrics/*
 /logs/*
