@@ -74,6 +74,7 @@ class MethodArgs:
     rlm_max_depth: int
     rlm_max_iterations: int
     rlm_max_timeout: float | None
+    rlm_backend_timeout: float | None
     rlm_backend: str | None
     rlm_backend_url: str | None
     rlm_api_key: str | None
@@ -193,6 +194,7 @@ def _parse_args(provider: str) -> MethodArgs:
     parser.add_argument("--rlm-max-depth", type=int, default=1)
     parser.add_argument("--rlm-max-iterations", type=int, default=12)
     parser.add_argument("--rlm-max-timeout", type=float, default=None)
+    parser.add_argument("--rlm-backend-timeout", type=float, default=None, help="Backend request timeout in seconds (default: 900s for non-RAG, 1800s for RAG)")
     parser.add_argument("--rlm-backend", default=_env("RLM_BACKEND", ""))
     parser.add_argument("--rlm-backend-url", default=_env("RLM_BACKEND_URL", ""))
     parser.add_argument("--rlm-api-key", default=_env("RLM_API_KEY", ""))
@@ -253,6 +255,7 @@ def _parse_args(provider: str) -> MethodArgs:
         rlm_max_depth=raw.rlm_max_depth,
         rlm_max_iterations=raw.rlm_max_iterations,
         rlm_max_timeout=raw.rlm_max_timeout,
+        rlm_backend_timeout=raw.rlm_backend_timeout,
         rlm_backend=_empty_to_none(raw.rlm_backend),
         rlm_backend_url=_empty_to_none(raw.rlm_backend_url),
         rlm_api_key=_empty_to_none(raw.rlm_api_key),
@@ -804,9 +807,21 @@ def _health_check_rlm_backend(backend_meta: dict[str, Any], timeout_seconds: int
 
 
 def _resolve_rlm_backend_timeout(args: MethodArgs) -> float:
+    # If explicitly set, use that
+    if args.rlm_backend_timeout is not None:
+        return max(float(args.rlm_backend_timeout), 1.0)
+    
+    # Otherwise compute from openai_timeout and provider
     timeout = max(float(args.openai_timeout), DEFAULT_RLM_BACKEND_TIMEOUT)
+    
+    # RAG requires more time due to retrieval context
+    if args.provider in ("rag", "rlm_rag"):
+        timeout = max(timeout, 1800.0)  # 30 minutes for RAG
+    
+    # Use rlm_max_timeout as upper bound if set
     if args.rlm_max_timeout is not None:
         timeout = min(timeout, float(args.rlm_max_timeout))
+    
     return max(timeout, 1.0)
 
 
