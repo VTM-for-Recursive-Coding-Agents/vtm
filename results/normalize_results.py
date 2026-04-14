@@ -226,11 +226,19 @@ def parse_livecodebench_run(run_dir: Path) -> RunRecord:
     if metadata_path.exists():
         source_files.append(str(metadata_path))
 
+    # Detect chunk runs (index-range slices written by --start-index/--end-index).
+    # Chunk runs are not evaluated individually; they must be merged before eval.
+    is_chunk = (
+        "chunk_start_index" in metadata or "chunk_end_index" in metadata
+    )
+
     eval_json = _pick_lcb_eval_json(run_dir, metadata)
     if eval_json is not None:
         pass1, pass5, score, metric_warnings = _parse_lcb_metrics(eval_json)
         warnings.extend(metric_warnings)
         source_files.append(str(eval_json))
+    elif is_chunk:
+        warnings.append("lcb_chunk_run_no_eval_expected")
     else:
         warnings.append("lcb_eval_json_not_found")
 
@@ -245,7 +253,10 @@ def parse_livecodebench_run(run_dir: Path) -> RunRecord:
         text = command_log.read_text(encoding="utf-8", errors="replace")
         runtime_seconds = _extract_first_float(r"runtime[^0-9]*([0-9]+(?:\.[0-9]+)?)", text)
 
-    status = "success" if (pass1 is not None or pass5 is not None) else "partial"
+    if is_chunk:
+        status = "chunk"
+    else:
+        status = "success" if (pass1 is not None or pass5 is not None) else "partial"
 
     return RunRecord(
         benchmark="livecodebench",

@@ -32,7 +32,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LCB_ROOT = PROJECT_ROOT / "benchmarks" / "LiveCodeBench"
 RLM_ROOT = PROJECT_ROOT / "rlm"
 DEFAULT_RLM_SERVE_STATUS_FILE = PROJECT_ROOT / "logs" / "slurm" / "serve_status.txt"
-DEFAULT_RLM_CONTEXT_LIMIT = 32_768
+DEFAULT_RLM_CONTEXT_LIMIT = 28_672  # must match --max-model-len in scripts/slurm/serve_model.sh
 DEFAULT_RLM_COMPLETION_TOKEN_RESERVE = 2_048
 DEFAULT_RLM_BACKEND_TIMEOUT = 900.0
 DEFAULT_RLM_BACKEND_MAX_RETRIES = 2
@@ -81,6 +81,9 @@ class MethodArgs:
     rlm_context_limit: int
     rlm_prompt_token_budget: int | None
     rlm_completion_token_reserve: int
+    start_index: int | None
+    end_index: int | None
+    resume_checkpoint_path: Path | None
 
 
 def _env(name: str, default: str = "") -> str:
@@ -218,6 +221,24 @@ def _parse_args(provider: str) -> MethodArgs:
             )
         ),
     )
+    parser.add_argument(
+        "--start-index",
+        type=int,
+        default=None,
+        help="Inclusive 0-based start index for benchmark slicing (chunking).",
+    )
+    parser.add_argument(
+        "--end-index",
+        type=int,
+        default=None,
+        help="Exclusive 0-based end index for benchmark slicing (chunking).",
+    )
+    parser.add_argument(
+        "--resume-checkpoint-path",
+        type=Path,
+        default=None,
+        help="Path to a prior run's rlm_progress.jsonl checkpoint to resume from.",
+    )
 
     raw = parser.parse_args()
 
@@ -262,6 +283,9 @@ def _parse_args(provider: str) -> MethodArgs:
         rlm_context_limit=max(raw.rlm_context_limit, MIN_RLM_PROMPT_TOKEN_BUDGET),
         rlm_prompt_token_budget=raw.rlm_prompt_token_budget,
         rlm_completion_token_reserve=max(raw.rlm_completion_token_reserve, 0),
+        start_index=raw.start_index,
+        end_index=raw.end_index,
+        resume_checkpoint_path=raw.resume_checkpoint_path,
     )
 
 
@@ -349,6 +373,8 @@ def _runner_args(args: MethodArgs) -> SimpleNamespace:
         dtype="bfloat16",
         start_date=args.start_date,
         end_date=args.end_date,
+        start_index=args.start_index,
+        end_index=args.end_index,
     )
 
 
@@ -864,7 +890,7 @@ def _write_rlm_failure_diagnostics(
     response_meta: dict[str, Any],
     failure_type: str = "all_empty_samples",
 ) -> Path:
-    diagnostics_path = run_dir / "rlm_failure_diagnostics.json"
+    diagnostics_path = run_dir / f"rlm_failure_diagnostics_{prompt_index:04d}.json"
     payload = {
         "failure_type": failure_type,
         "prompt_index": prompt_index,
@@ -915,11 +941,51 @@ def _build_rlm(model: Any, args: MethodArgs):
     )
 
 
+def _load_rlm_checkpoint(path: Path) -> dict[int, dict[str, Any]]:
+    """Load existing JSONL checkpoint; returns {prompt_index: entry} or {} if missing."""
+    done: dict[int, dict[str, Any]] = {}
+    if not path.is_file():
+        return done
+    with path.open(encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+                done[int(entry["i"])] = entry
+            except Exception:  # noqa: BLE001
+                pass
+    return done
+
+
+def _append_rlm_checkpoint(
+    path: Path,
+    prompt_index: int,
+    question_id: str | None,
+    outputs: list[str],
+    meta: dict[str, Any],
+) -> None:
+    """Append one completed problem to the JSONL checkpoint file.
+
+    Skips writing if all outputs are empty — preserving the checkpoint as a
+    reliable record of genuinely-completed problems so a resumed run retries
+    anything that failed (e.g. due to a dead serve job).
+    """
+    if not outputs or all(not o.strip() for o in outputs):
+        return  # don't checkpoint failed/empty results; let next resume retry them
+    entry = {"i": prompt_index, "question_id": question_id, "outputs": outputs, "meta": meta}
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
 def _run_rlm_generation(
     model: Any,
     args: MethodArgs,
     prompts: list[str | list[dict[str, str]]],
     run_dir: Path,
+    *,
+    benchmark: list[Any] | None = None,
 ) -> tuple[list[list[str]], list[dict[str, Any]]]:
     rlm, backend_meta = _build_rlm(model, args)
     tokenizer_model_name = str(backend_meta.get("model_name") or _rlm_tokenizer_model_name(model, args))
@@ -929,8 +995,22 @@ def _run_rlm_generation(
         backend_meta = {**backend_meta, "healthcheck": healthcheck}
     all_outputs: list[list[str]] = []
     metadata: list[dict[str, Any]] = []
+    checkpoint_path = args.resume_checkpoint_path or (run_dir / "rlm_progress.jsonl")
+    done_map = _load_rlm_checkpoint(checkpoint_path)
+    _consecutive_empty = 0  # cascade-failure detector
+    if done_map:
+        print(
+            f"[rlm] Resuming from checkpoint: {len(done_map)}/{len(prompts)} already done ({checkpoint_path})",
+            flush=True,
+        )
 
     for prompt_index, prompt in enumerate(prompts):
+        if prompt_index in done_map:
+            entry = done_map[prompt_index]
+            all_outputs.append(entry["outputs"])
+            metadata.append(entry["meta"])
+            print(f"[rlm] {prompt_index + 1}/{len(prompts)} (resumed from checkpoint)", flush=True)
+            continue
         prompt_text = _prompt_to_text(prompt)
         prompt_tokens = _count_prompt_tokens(prompt, tokenizer_model_name)
         outputs: list[str] = []
@@ -1008,6 +1088,7 @@ def _run_rlm_generation(
                 response_meta["samples"].append(sample_meta)
 
         if outputs and all(not output.strip() for output in outputs):
+            _consecutive_empty += 1
             response_meta["failed_samples_count"] = len(outputs)
             response_meta["total_n_requested"] = args.n
             sample_errors = [
@@ -1030,14 +1111,33 @@ def _run_rlm_generation(
                 response_meta,
                 failure_type=failure_type,
             )
-            raise RuntimeError(
-                f"RLM returned empty responses for all {len(outputs)} sample(s) on prompt index {prompt_index}. "
-                f"backend={backend_meta.get('backend')} base_url={backend_meta.get('base_url', '<default>')} "
-                f"diagnostics={diagnostics_path}"
+            print(
+                f"[rlm] WARNING: empty responses for all {len(outputs)} sample(s) on prompt index {prompt_index} "
+                f"(failure_type={failure_type}). Skipping prompt; it will score 0. "
+                f"backend={backend_meta.get('backend')} diagnostics={diagnostics_path}",
+                flush=True,
             )
+            # Cascade-failure detection: 3+ consecutive empty problems almost always
+            # means the vLLM backend is dead. Exit without writing output_files.txt so
+            # the watch-cycle can re-submit after the next serve job comes up.
+            # The rlm_progress.jsonl checkpoint preserves all successfully-completed
+            # problems so this run can be resumed cleanly.
+            if _consecutive_empty >= 3:
+                print(
+                    f"[rlm] ERROR: {_consecutive_empty} consecutive empty responses "
+                    f"(last failure_type={failure_type}). Backend appears dead — "
+                    "exiting so the watch-cycle can re-submit with a fresh serve job.",
+                    flush=True,
+                )
+                sys.exit(1)
+        else:
+            _consecutive_empty = 0  # reset on any successful problem
 
         all_outputs.append(outputs)
         metadata.append(response_meta)
+        question_id = str(getattr(benchmark[prompt_index], "question_id", "")) if benchmark else None
+        _append_rlm_checkpoint(checkpoint_path, prompt_index, question_id, outputs, response_meta)
+        print(f"[rlm] {prompt_index + 1}/{len(prompts)} done", flush=True)
 
     return all_outputs, metadata
 
@@ -1077,6 +1177,10 @@ def _write_metadata_file(
         metadata["rlm_backend"] = args.rlm_backend
     if args.rlm_backend_url:
         metadata["rlm_backend_url"] = args.rlm_backend_url
+    if args.start_index is not None:
+        metadata["chunk_start_index"] = str(args.start_index)
+    if args.end_index is not None:
+        metadata["chunk_end_index"] = str(args.end_index)
 
     lines = [f"{key}={value}" for key, value in metadata.items()]
     (run_dir / "metadata.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -1192,6 +1296,20 @@ def run_provider(provider: str) -> None:
                 benchmark = benchmark[:15]
             if args.max_instances is not None:
                 benchmark = benchmark[: args.max_instances]
+            if args.start_index is not None or args.end_index is not None:
+                if args.max_instances is not None:
+                    raise SystemExit(
+                        "Cannot use --start-index/--end-index together with --max-instances; use one or the other."
+                    )
+                _chunk_start = args.start_index if args.start_index is not None else 0
+                _chunk_end = args.end_index if args.end_index is not None else len(benchmark)
+                if _chunk_start < 0:
+                    raise SystemExit(f"--start-index must be >= 0, got {_chunk_start}.")
+                if _chunk_end <= _chunk_start:
+                    raise SystemExit(
+                        f"--end-index ({_chunk_end}) must be greater than --start-index ({_chunk_start})."
+                    )
+                benchmark = benchmark[_chunk_start : min(_chunk_end, len(benchmark))]
 
             prompts: list[str | list[dict[str, str]]] = [
                 format_prompt(problem, prompt_model.model_style) for problem in benchmark
@@ -1230,9 +1348,9 @@ def run_provider(provider: str) -> None:
                 results = _run_standard_generation(runner_args, model, prompts)
                 provider_eval_meta = None
             elif provider == "rlm":
-                results, provider_eval_meta = _run_rlm_generation(model, args, prompts, run_dir)
+                results, provider_eval_meta = _run_rlm_generation(model, args, prompts, run_dir, benchmark=benchmark)
             elif provider == "rlm_rag":
-                results, rlm_meta = _run_rlm_generation(model, args, prompts, run_dir)
+                results, rlm_meta = _run_rlm_generation(model, args, prompts, run_dir, benchmark=benchmark)
                 provider_eval_meta = []
                 for idx in range(len(results)):
                     merged = {
@@ -1257,6 +1375,9 @@ def run_provider(provider: str) -> None:
                 combined_results,
                 provider_eval_meta,
             )
+            if provider in ("rlm", "rlm_rag"):
+                checkpoint_path = args.resume_checkpoint_path or (run_dir / "rlm_progress.jsonl")
+                checkpoint_path.unlink(missing_ok=True)
     except Exception as exc:
         _append_failure_log(run_dir, exc)
         raise

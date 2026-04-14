@@ -94,7 +94,7 @@ infer_tensor_parallel_size() {
 
 await_readiness() {
   local url="$1"
-  local attempts="${VLLM_READY_ATTEMPTS:-360}"
+  local attempts="${VLLM_READY_ATTEMPTS:-750}"
   local delay="${VLLM_READY_DELAY_SECONDS:-2}"
   local attempt
 

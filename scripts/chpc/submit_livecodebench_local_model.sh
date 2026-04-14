@@ -19,6 +19,8 @@ TEMPERATURE="0.2"
 EVALUATE="false"
 MAX_TOKENS=""
 MAX_INSTANCES=""
+START_INDEX=""
+END_INDEX=""
 RAG_TOP_K=""
 RAG_MAX_CHARS_PER_CHUNK=""
 RLM_BACKEND=""
@@ -62,6 +64,10 @@ SKIP_MODULES="false"
 SKIP_PROVIDERS=""
 REQUIRED_MODULES=(datasets openai torch vllm)
 AUTO_SUBMIT_RLM_SERVE="true"
+SERVE_ONLY="false"
+EXISTING_SERVE_JOB_ID=""
+EXISTING_SERVE_STATUS_FILE=""
+EXISTING_SERVE_ENDPOINT_FILE=""
 SERVE_STATUS_FILE=""
 SERVE_ENDPOINT_FILE=""
 
@@ -106,6 +112,8 @@ Benchmark options:
   --evaluate <true|false>        Run evaluation after generation (default: false)
   --max-tokens <int>             Max output tokens per response (optional)
   --max-instances <int>          Limit instances for smoke runs (default: full dataset)
+  --start-index <int>            Inclusive 0-based start index for benchmark chunking (mutually exclusive with --max-instances)
+  --end-index <int>              Exclusive 0-based end index for benchmark chunking (mutually exclusive with --max-instances)
   --tensor-parallel-size <int>   vLLM tensor parallel size (default: inferred from --gres)
   --vllm-max-model-len <int>     Override local vLLM max model length for CHPC jobs (optional)
   --vllm-gpu-memory-utilization <float>
@@ -118,6 +126,16 @@ Benchmark options:
   --rlm-max-iterations <int>     Max iterations for rlm/rlm_rag (default: 12)
   --rlm-max-timeout <seconds>    Max wall-clock time for rlm/rlm_rag (default: inferred from --time)
   --no-auto-rlm-serve            Do not submit a dedicated local vLLM serve job for rlm providers
+  --serve-only                   Submit only the vLLM serve job and print its job ID (use with --use-existing-serve-job-id for subsequent chunks)
+  --use-existing-serve-job-id <id>
+                                 Slurm job ID of an already-submitted serve job; rlm/rlm_rag chunk jobs
+                                 will depend on it (after:<id>) instead of spawning a new serve job.
+                                 Use this to share one serve job across multiple chunk batch submissions.
+  --use-existing-serve-status-file <path>
+                                 Explicit path to shared serve_status.txt for reused serve jobs.
+                                 Required when chunk submissions use different queue tags.
+  --use-existing-serve-endpoint-file <path>
+                                 Explicit path to shared serve_endpoint.txt for reused serve jobs (optional).
   --skip-providers <list>        Comma-separated providers to skip e.g. 'baseline,rag'
   --queue-tag <tag>              Queue label/date suffix (default: YYYYMMDD)
   --queue-dir <path>             Output launcher bundle directory
@@ -270,6 +288,14 @@ while [[ $# -gt 0 ]]; do
       MAX_INSTANCES="$2"
       shift 2
       ;;
+    --start-index)
+      START_INDEX="$2"
+      shift 2
+      ;;
+    --end-index)
+      END_INDEX="$2"
+      shift 2
+      ;;
     --tensor-parallel-size)
       TENSOR_PARALLEL_SIZE="$2"
       shift 2
@@ -313,6 +339,23 @@ while [[ $# -gt 0 ]]; do
     --no-auto-rlm-serve)
       AUTO_SUBMIT_RLM_SERVE="false"
       shift
+      ;;
+    --serve-only)
+      SERVE_ONLY="true"
+      shift
+      ;;
+    --use-existing-serve-job-id)
+      EXISTING_SERVE_JOB_ID="$2"
+      AUTO_SUBMIT_RLM_SERVE="false"
+      shift 2
+      ;;
+    --use-existing-serve-status-file)
+      EXISTING_SERVE_STATUS_FILE="$2"
+      shift 2
+      ;;
+    --use-existing-serve-endpoint-file)
+      EXISTING_SERVE_ENDPOINT_FILE="$2"
+      shift 2
       ;;
     --skip-providers)
       SKIP_PROVIDERS="$2"
@@ -379,6 +422,13 @@ fi
 
 SERVE_STATUS_FILE="$QUEUE_DIR/serve_status.txt"
 SERVE_ENDPOINT_FILE="$QUEUE_DIR/serve_endpoint.txt"
+
+if [[ -n "$EXISTING_SERVE_STATUS_FILE" ]]; then
+  SERVE_STATUS_FILE="$EXISTING_SERVE_STATUS_FILE"
+fi
+if [[ -n "$EXISTING_SERVE_ENDPOINT_FILE" ]]; then
+  SERVE_ENDPOINT_FILE="$EXISTING_SERVE_ENDPOINT_FILE"
+fi
 
 resolve_default_python_bin() {
   local candidate
@@ -528,7 +578,9 @@ status_file_value() {
 }
 
 resolve_default_rlm_backend_url() {
-  local status_file="$PROJECT_ROOT/logs/slurm/serve_status.txt"
+  # Prefer the explicitly provided serve status file (from --use-existing-serve-status-file),
+  # then fall back to the legacy default path.
+  local status_file="${SERVE_STATUS_FILE:-$PROJECT_ROOT/logs/slurm/serve_status.txt}"
   local endpoint_file=""
   local endpoint_value=""
   local state=""
@@ -672,6 +724,16 @@ should_auto_submit_rlm_serve() {
     return 1
   fi
 
+  # --serve-only always needs a serve job
+  if [[ "$SERVE_ONLY" == "true" ]]; then
+    return 0
+  fi
+
+  # Don't submit a serve job if both rlm and rlm_rag are skipped
+  if ! should_submit_provider rlm && ! should_submit_provider rlm_rag; then
+    return 1
+  fi
+
   if [[ -n "$RLM_BACKEND_URL" ]]; then
     return 1
   fi
@@ -739,6 +801,18 @@ normalize_submit_configuration() {
     echo "--max-instances must be a positive integer" >&2
     exit 1
   fi
+  if [[ -n "$START_INDEX" && ! "$START_INDEX" =~ ^(0|[1-9][0-9]*)$ ]]; then
+    echo "--start-index must be a non-negative integer" >&2
+    exit 1
+  fi
+  if [[ -n "$END_INDEX" && ! "$END_INDEX" =~ ^[1-9][0-9]*$ ]]; then
+    echo "--end-index must be a positive integer" >&2
+    exit 1
+  fi
+  if [[ -n "$START_INDEX" && -n "$MAX_INSTANCES" ]] || [[ -n "$END_INDEX" && -n "$MAX_INSTANCES" ]]; then
+    echo "--start-index/--end-index and --max-instances are mutually exclusive" >&2
+    exit 1
+  fi
   if [[ -n "$RLM_MAX_ITERATIONS" && ! "$RLM_MAX_ITERATIONS" =~ ^[1-9][0-9]*$ ]]; then
     echo "--rlm-max-iterations must be a positive integer" >&2
     exit 1
@@ -746,6 +820,26 @@ normalize_submit_configuration() {
   if [[ -n "$TENSOR_PARALLEL_SIZE" && ! "$TENSOR_PARALLEL_SIZE" =~ ^[1-9][0-9]*$ ]]; then
     echo "--tensor-parallel-size must be a positive integer" >&2
     exit 1
+  fi
+  if [[ -n "$EXISTING_SERVE_JOB_ID" && ! "$EXISTING_SERVE_JOB_ID" =~ ^[1-9][0-9]*$ ]]; then
+    echo "--use-existing-serve-job-id must be a positive integer Slurm job ID" >&2
+    exit 1
+  fi
+  if [[ -n "$EXISTING_SERVE_JOB_ID" && -z "$EXISTING_SERVE_STATUS_FILE" ]]; then
+    echo "--use-existing-serve-job-id requires --use-existing-serve-status-file when queue tags differ." >&2
+    exit 1
+  fi
+  if [[ -n "$EXISTING_SERVE_STATUS_FILE" ]]; then
+    if [[ ! -d "$(dirname "$EXISTING_SERVE_STATUS_FILE")" ]]; then
+      echo "Directory for --use-existing-serve-status-file does not exist: $(dirname "$EXISTING_SERVE_STATUS_FILE")" >&2
+      exit 1
+    fi
+  fi
+  if [[ -n "$EXISTING_SERVE_ENDPOINT_FILE" ]]; then
+    if [[ ! -d "$(dirname "$EXISTING_SERVE_ENDPOINT_FILE")" ]]; then
+      echo "Directory for --use-existing-serve-endpoint-file does not exist: $(dirname "$EXISTING_SERVE_ENDPOINT_FILE")" >&2
+      exit 1
+    fi
   fi
   if [[ -n "$RLM_MAX_TIMEOUT" && ! "$RLM_MAX_TIMEOUT" =~ ^[1-9][0-9]*$ ]]; then
     echo "--rlm-max-timeout must be a positive integer number of seconds" >&2
@@ -1100,6 +1194,12 @@ build_method_command() {
   if [[ -n "$MAX_INSTANCES" ]]; then
     cmd+=(--max-instances "$MAX_INSTANCES")
   fi
+  if [[ -n "$START_INDEX" ]]; then
+    cmd+=(--start-index "$START_INDEX")
+  fi
+  if [[ -n "$END_INDEX" ]]; then
+    cmd+=(--end-index "$END_INDEX")
+  fi
   effective_tensor_parallel="$(effective_tensor_parallel_size)"
   if [[ -n "$effective_tensor_parallel" ]]; then
     cmd+=(--tensor-parallel-size "$effective_tensor_parallel")
@@ -1370,6 +1470,9 @@ if [[ "$DRY_RUN" == "true" ]]; then
   if should_auto_submit_rlm_serve; then
     mapfile -t RLM_SBATCH_ARGS < <(build_sbatch_args rlm 'after:<serve_job_id>' "$RLM_COMMAND")
     mapfile -t RLM_RAG_SBATCH_ARGS < <(build_sbatch_args rlm_rag 'after:<serve_job_id>' "$RLM_RAG_COMMAND")
+  elif [[ -n "$EXISTING_SERVE_JOB_ID" ]]; then
+    mapfile -t RLM_SBATCH_ARGS < <(build_sbatch_args rlm "after:$EXISTING_SERVE_JOB_ID" "$RLM_COMMAND")
+    mapfile -t RLM_RAG_SBATCH_ARGS < <(build_sbatch_args rlm_rag "after:$EXISTING_SERVE_JOB_ID" "$RLM_RAG_COMMAND")
   else
     mapfile -t RLM_SBATCH_ARGS < <(build_sbatch_args rlm "" "$RLM_COMMAND")
     mapfile -t RLM_RAG_SBATCH_ARGS < <(build_sbatch_args rlm_rag "" "$RLM_RAG_COMMAND")
@@ -1399,12 +1502,21 @@ if [[ "$DRY_RUN" == "true" ]]; then
 fi
 
 SERVE_JOB_ID=""
-if should_auto_submit_rlm_serve; then
+if [[ -n "$EXISTING_SERVE_JOB_ID" ]]; then
+  SERVE_JOB_ID="$EXISTING_SERVE_JOB_ID"
+  echo "[submit] Re-using existing serve job: $SERVE_JOB_ID"
+elif should_auto_submit_rlm_serve; then
   SERVE_JOB_SCRIPT="$(write_serve_job_script)"
   mapfile -t SERVE_SBATCH_ARGS < <(build_serve_sbatch_args)
   echo "[submit] Submitting serve"
   submit_sbatch_job SERVE_JOB_ID sbatch "${SERVE_SBATCH_ARGS[@]}" "$SERVE_JOB_SCRIPT"
   echo "[submit] Serve job id: $SERVE_JOB_ID"
+fi
+
+if [[ "$SERVE_ONLY" == "true" ]]; then
+  echo "[submit] --serve-only: serve job submitted, exiting."
+  echo "[submit] Use --use-existing-serve-job-id $SERVE_JOB_ID for chunk submissions."
+  exit 0
 fi
 
 echo "[submit] Submitting baseline"
