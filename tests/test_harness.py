@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from vtm.agents.workspace import LocalWorkspaceDriver as AgentWorkspaceDriver
 from vtm.benchmarks.executor import (
     ExecutorResult as BenchmarkExecutorResult,
 )
@@ -19,10 +18,8 @@ from vtm.harness.models import (
     ExecutorResult,
     HarnessTaskPack,
     TaskMemoryContextItem,
-    TraceManifest,
 )
-from vtm.harness.workspace import LocalWorkspaceBackend
-from vtm.harness.workspace import LocalWorkspaceDriver
+from vtm.harness.workspace import LocalWorkspaceBackend, LocalWorkspaceDriver
 from vtm.harness.workspace_docker import DockerWorkspaceBackend, DockerWorkspaceDriver
 
 
@@ -96,7 +93,7 @@ def test_harness_models_round_trip() -> None:
         task_file=".benchmarks/task.json",
         workspace=".benchmarks/workspace",
         artifact_root=".benchmarks/artifacts",
-        coding_executor="native_agent",
+        coding_executor="rlm",
         attempt_index=2,
         command=("python", "worker.py"),
         test_command=("python", "-m", "pytest"),
@@ -105,7 +102,7 @@ def test_harness_models_round_trip() -> None:
     assert restored_request == executor_request
 
     executor_result = ExecutorResult(
-        command=("native_agent",),
+        command=("rlm",),
         command_exit_code=0,
         command_stdout_path=None,
         command_stderr_path=None,
@@ -120,20 +117,12 @@ def test_harness_models_round_trip() -> None:
         docker_container_name="fake-name",
         docker_network="none",
         produced_patch_text="diff --git a/a b/a\n",
-        trace_manifest=TraceManifest(
-            session="session.json",
-            turns_jsonl="turns.jsonl",
-            tool_calls_jsonl="tool_calls.jsonl",
-            compactions_jsonl="compactions.jsonl",
-            tool_results_dir="tool-results",
-        ),
     )
     restored_result = ExecutorResult.from_json(executor_result.to_json())
     assert restored_result == executor_result
 
 
 def test_harness_shims_reexport_new_modules() -> None:
-    assert AgentWorkspaceDriver is LocalWorkspaceDriver
     assert BenchmarkSubprocessExecutor is SubprocessBenchmarkExecutor
     assert BenchmarkExecutorResult is ExecutorResult
 

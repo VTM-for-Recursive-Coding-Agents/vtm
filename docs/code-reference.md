@@ -5,10 +5,10 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 
 ## Coverage
 
-- Total Python files: `126`
-- `src/`: `94`
-- `tests/`: `30`
-- `scripts/`: `2`
+- Total Python files: `120`
+- `src/`: `88`
+- `tests/`: `29`
+- `scripts/`: `3`
 
 ## File Inventory
 
@@ -37,6 +37,14 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `function build_parser()`: Build the CLI parser for one local patching attempt.
   - `function main()`: Run the patcher from parsed CLI arguments.
 
+#### `scripts/vtm_scaffold_bridge.py`
+
+- Purpose: Build a scaffold-facing task bundle and optionally delegate to an external agent.
+- Module docstring: `yes`
+- Top-level symbols:
+  - `function build_parser()`: Build the CLI parser for one scaffold-bridge invocation.
+  - `function main()`: Build the bundle, then optionally run a delegate command.
+
 ### `src/`
 
 #### `src/vtm/__init__.py`
@@ -51,13 +59,6 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Purpose: Provider and environment integration exports.
 - Module docstring: `yes`
 - Top-level symbols: none
-
-#### `src/vtm/adapters/agent_model.py`
-
-- Purpose: Provider-neutral model-turn contract for the native agent runtime.
-- Module docstring: `yes`
-- Top-level symbols:
-  - `class AgentModelAdapter`: Minimal interface required to drive `TerminalCodingAgent`.
 
 #### `src/vtm/adapters/embeddings.py`
 
@@ -74,13 +75,6 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Top-level symbols:
   - `class GitFingerprintAdapter`: Interface for collecting repository fingerprints.
   - `class GitRepoFingerprintCollector`: Collects repo identity plus dirty-state digests from git.
-
-#### `src/vtm/adapters/openai_agent.py`
-
-- Purpose: Optional OpenAI-compatible model adapter for the native agent runtime.
-- Module docstring: `yes`
-- Top-level symbols:
-  - `class OpenAICompatibleAgentModelAdapter`: Drives the native agent using a chat-completions compatible endpoint.
 
 #### `src/vtm/adapters/openai_chat.py`
 
@@ -136,7 +130,6 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Top-level symbols:
   - `class EnvFingerprintAdapter`: Interface for collecting environment fingerprints.
   - `class RuntimeEnvFingerprintCollector`: Captures Python, platform, and probed tool versions.
-  - `function current_python_version()`: Return the current interpreter version as `major.minor.patch`.
 
 #### `src/vtm/adapters/tree_sitter.py`
 
@@ -148,127 +141,6 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `function _context_digest(source, start_line, end_line)`: Hash a small source window around an anchored symbol.
   - `class UnavailableTreeSitterAdapter`: Fallback adapter used when tree-sitter is unavailable.
   - `class PythonTreeSitterSyntaxAdapter`: Python anchor adapter backed by tree-sitter with optional fallback.
-
-#### `src/vtm/agents/__init__.py`
-
-- Purpose: Public exports for the native single-agent runtime.
-- Module docstring: `yes`
-- Top-level symbols: none
-
-#### `src/vtm/agents/compaction.py`
-
-- Purpose: Transcript compaction strategies for the native agent runtime.
-- Module docstring: `yes`
-- Top-level symbols:
-  - `class ContextCompactor`: Compacts long conversations into a smaller message window.
-  - `class DeterministicContextCompactor`: Simple compactor that keeps the head and tail with a synthetic summary.
-
-#### `src/vtm/agents/models.py`
-
-- Purpose: Records used by the native single-agent runtime.
-- Module docstring: `yes`
-- Top-level symbols:
-  - `class AgentMode`: Execution policy preset for the native agent runtime.
-  - `class AgentRunStatus`: Terminal outcome for an agent run.
-  - `class AgentConversationMessage`: One message in the model-visible conversation transcript.
-  - `class AgentToolSpec`: Tool schema exposed to the model.
-  - `class AgentToolCall`: Single tool invocation requested by the model.
-  - `class AgentModelTurnRequest`: Input passed to a model adapter for one agent turn.
-  - `class AgentModelTurnResponse`: Model response for one agent turn.
-  - `class AgentRunRequest`: Configuration and limits for a complete native-agent run.
-  - `class AgentSessionRecord`: Durable metadata written once per agent session.
-  - `class AgentTurnRecord`: Durable summary of one completed turn.
-  - `class ToolCallRecord`: Durable record of one tool invocation.
-  - `class CompactionRecord`: Durable record of a transcript compaction event.
-  - `class AgentRunResult`: Aggregate result and metrics for a completed agent run.
-  - `class AgentToolResult`: Normalized tool output returned to the runtime.
-  - `class PromptPack`: System instructions and custom rules for the native agent.
-
-#### `src/vtm/agents/permissions.py`
-
-- Purpose: Permission policies that gate native-agent tool execution.
-- Module docstring: `yes`
-- Top-level symbols:
-  - `class PermissionDecision`: Authorization result for one proposed tool call.
-  - `class ToolPermissionPolicy`: Policy interface used by the native runtime before executing tools.
-  - `class BenchmarkAutonomousPermissionPolicy`: Permissive policy used for benchmark-controlled autonomous runs.
-  - `class InteractiveGuardedPermissionPolicy`: Simple local guardrail policy for interactive runs.
-
-#### `src/vtm/agents/runtime.py`
-
-- Purpose: Native single-agent runtime for local coding tasks.
-- Module docstring: `yes`
-- Top-level symbols:
-  - `class AgentRuntimeContext`: Execution-time dependencies supplied to the native agent.
-  - `class TerminalCodingAgent`: Single-agent loop that alternates model turns with tool execution.
-
-#### `src/vtm/agents/tool_base.py`
-
-- Purpose: Shared tool abstractions for the native agent runtime.
-- Module docstring: `yes`
-- Top-level symbols:
-  - `class ToolExecutionContext`: Runtime context passed to built-in tool handlers.
-  - `class AgentTool`: Executable tool wrapper exposed to the runtime.
-  - `class ToolProvider`: Builds the tool registry for a runtime invocation.
-
-#### `src/vtm/agents/tool_files.py`
-
-- Purpose: Built-in file and patch tools for the native agent runtime.
-- Module docstring: `yes`
-- Top-level symbols:
-  - `function build_read_tool()`: Build the workspace file-read tool.
-  - `function build_search_tool()`: Build the workspace text-search tool.
-  - `function build_apply_patch_tool()`: Build the git-apply patch tool.
-  - `function _read(arguments, context, call_id)`: Read a workspace file slice and persist the rendered output as an artifact.
-  - `function _coerce_optional_int(value)`: Coerce an optional tool argument into an integer.
-  - `function _coerce_required_int(value, *, default)`: Coerce a required-or-default tool argument into an integer.
-  - `function _search(arguments, context, call_id)`: Run workspace text search and persist the raw search output.
-  - `function _apply_patch(arguments, context, call_id)`: Apply a unified patch inside the workspace and record the command result.
-
-#### `src/vtm/agents/tool_memory.py`
-
-- Purpose: Built-in memory tools that integrate the native agent with VTM.
-- Module docstring: `yes`
-- Top-level symbols:
-  - `function build_retrieve_memory_tool()`: Build the tool that retrieves task and durable memory.
-  - `function build_record_task_memory_tool()`: Build the tool that writes task-scoped memory items.
-  - `function build_promote_procedure_tool()`: Build the tool that promotes task memory into a durable procedure.
-  - `function _retrieve_memory(arguments, context, call_id)`: Query task and durable memory, then emit a compact JSON candidate list.
-  - `function _record_task_memory(arguments, context, call_id)`: Persist a verified task-scoped memory item captured from agent output.
-  - `function _promote_procedure(arguments, context, call_id)`: Promote selected source memories into a durable procedure record.
-  - `function _coerce_int(value, *, default)`: Coerce a tool argument into an integer, applying a default when missing.
-  - `function _items(value)`: Normalize list-like tool arguments into a tuple.
-  - `function _string_items(value)`: Normalize list-like tool arguments into a tuple of strings.
-
-#### `src/vtm/agents/tool_terminal.py`
-
-- Purpose: Built-in terminal tool for the native agent runtime.
-- Module docstring: `yes`
-- Top-level symbols:
-  - `function build_terminal_tool()`: Build the persistent terminal-session tool.
-  - `function _terminal(arguments, context, call_id)`: Run one terminal command in the persistent workspace session.
-
-#### `src/vtm/agents/tool_utils.py`
-
-- Purpose: Shared helpers for built-in agent tools.
-- Module docstring: `yes`
-- Top-level symbols:
-  - `function write_text_artifact(*, context, call_id, suffix, text, content_type, metadata)`: Write a text artifact locally and optionally capture it in the kernel.
-  - `function write_local_text_artifact(*, context, call_id, suffix, text)`: Write a text artifact locally without creating a kernel artifact.
-  - `function first_anchor_path(memory)`: Return the first code-anchor path attached to a memory item.
-
-#### `src/vtm/agents/tools.py`
-
-- Purpose: Built-in tool registry for the native agent runtime.
-- Module docstring: `yes`
-- Top-level symbols:
-  - `class BuiltInToolProvider`: Assembles the default built-in tool set for local coding tasks.
-
-#### `src/vtm/agents/workspace.py`
-
-- Purpose: Compatibility re-exports for the harness workspace surface.
-- Module docstring: `yes`
-- Top-level symbols: none
 
 #### `src/vtm/anchors.py`
 
@@ -288,6 +160,7 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Top-level symbols:
   - `class ArtifactRecord`: Metadata describing a captured artifact blob.
   - `class ArtifactIntegrityReport`: Inspectable integrity issues found in the artifact store.
+  - `class ArtifactRepairReport`: Outcome of applying safe repair actions to the artifact store.
 
 #### `src/vtm/base.py`
 
@@ -309,20 +182,30 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Module docstring: `yes`
 - Top-level symbols:
   - `class PreparedCodingTask`: Canonical task-pack payload written once and reused across attempts.
-  - `function run_coding_suite(*, output_dir, manifest, config, selected_repo_pairs, repo_manager, symbol_indexer, kernel_factory, agent_model_adapter, require_pair, swebench_harness_runner=...)`: Run all selected coding-task cases and emit per-attempt plus aggregate rows.
+  - `function run_coding_suite(*, output_dir, manifest, config, selected_repo_pairs, repo_manager, symbol_indexer, kernel_factory, require_pair, swebench_harness_runner=...)`: Run all selected coding-task cases and emit per-attempt plus aggregate rows.
   - `function prepare_coding_task(*, repo_root, repo_spec, pair, task, output_dir, config, repo_manager, symbol_indexer, kernel_factory)`: Build the canonical task pack for one coding case.
-  - `function evaluate_coding_attempt(*, repo_root, repo_spec, pair, task, prepared_task, output_dir, config, workspace_backend, kernel_factory, agent_model_adapter, attempt_index)`: Execute one concrete attempt for a coding task.
+  - `function evaluate_coding_attempt(*, repo_root, repo_spec, pair, task, prepared_task, output_dir, config, workspace_backend, kernel_factory, attempt_index)`: Execute one concrete attempt for a coding task.
   - `function merge_swebench_attempt_results(*, cases, attempt_results_by_case, config, output_dir, harness_runner)`: Overlay official SWE-bench harness outcomes onto attempt rows.
   - `function aggregate_attempt_results(*, task, attempts)`: Collapse many attempt rows into the single aggregate case row.
-  - `function attempt_task_payload(task_pack, *, attempt_index, artifact_root)`: Augment the canonical task-pack payload with attempt-local metadata.
   - `function build_workspace_backend(config)`: Construct the configured workspace backend for coding execution.
-  - `function tool_policy_for_task(task)`: Return the native-agent tool policy for the task's execution style.
-  - `function attempt_seed(config, attempt_index)`: Derive a stable per-attempt seed when configured.
   - `function harness_attempt_output_dir(*, output_dir, attempt_index, attempt_count)`: Keep single-attempt harness output stable while isolating repeated attempts.
   - `function select_best_attempt(attempts)`: Pick the best attempt, preferring resolved and earlier successful runs.
   - `function best_attempt_sort_key(attempt)`: Rank attempts by outcome quality and then by earliest attempt index.
   - `function memory_context_payload(memory, score, explanation_metadata)`: Convert a retrieved memory into the normalized task-pack context item.
   - `function first_anchor(memory)`: Return the first code-anchor evidence attached to a memory item.
+
+#### `src/vtm/benchmarks/compare.py`
+
+- Purpose: CLI entrypoint for comparing two completed benchmark runs.
+- Module docstring: `yes`
+- Top-level symbols:
+  - `function build_parser()`: Build the benchmark comparison CLI parser.
+  - `function main()`: Load two completed runs, compare them, and write comparison artifacts.
+  - `function compare_completed_runs(*, baseline_location, candidate_location, output_dir, bootstrap_samples=..., bootstrap_seed=...)`: Compare two completed run directories and write durable comparison artifacts.
+  - `function _load_run_bundle(location)`: No symbol docstring.
+  - `function _resolve_summary_path(location)`: No symbol docstring.
+  - `function _artifact_path(run_dir, artifact)`: No symbol docstring.
+  - `function _load_jsonl_models(path, model)`: No symbol docstring.
 
 #### `src/vtm/benchmarks/drift_suite.py`
 
@@ -352,6 +235,20 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `class LocalPatcherConfig`: Configuration for the local OpenAI-compatible patch generator.
   - `class LocalOpenAIPatcher`: Generates and applies a patch using a local OpenAI-compatible model.
 
+#### `src/vtm/benchmarks/matrix.py`
+
+- Purpose: CLI entrypoint for executing maintained benchmark mode matrices.
+- Module docstring: `yes`
+- Top-level symbols:
+  - `class MatrixPreset`: Maintained matrix preset that pins a manifest and suite.
+  - `function build_parser()`: Build the benchmark matrix CLI parser.
+  - `function main()`: Execute the configured matrix and print the durable JSON result.
+  - `function run_matrix_from_args(args)`: Execute one benchmark matrix from parsed CLI arguments.
+  - `function render_matrix_summary(result)`: Render a human-readable Markdown summary for a matrix run.
+  - `function _resolve_manifest_and_suite(args)`: No symbol docstring.
+  - `function _resolve_modes(requested_modes, *, baseline_mode)`: No symbol docstring.
+  - `function _resolve_pass_k_values(raw_values, *, attempts, suite)`: No symbol docstring.
+
 #### `src/vtm/benchmarks/models.py`
 
 - Purpose: Typed manifest, config, and result records for benchmark runs.
@@ -369,26 +266,6 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `class BenchmarkRunResult`: Aggregate benchmark run metadata, summary metrics, and artifacts.
   - `class BenchmarkComparisonResult`: Paired comparison metadata, metrics, and artifacts for two benchmark runs.
   - `class BenchmarkMatrixResult`: Aggregate result for one maintained benchmark matrix execution.
-
-#### `src/vtm/benchmarks/compare.py`
-
-- Purpose: CLI entrypoint for comparing two completed benchmark runs.
-- Module docstring: `yes`
-- Top-level symbols:
-  - `function build_parser()`: Build the benchmark comparison CLI parser.
-  - `function compare_completed_runs(*, baseline_location, candidate_location, output_dir, bootstrap_samples, bootstrap_seed)`: Compare two completed run directories and write durable comparison artifacts.
-  - `function main()`: Load two completed runs, compare them, and write comparison artifacts.
-
-#### `src/vtm/benchmarks/matrix.py`
-
-- Purpose: CLI entrypoint for executing maintained benchmark mode matrices.
-- Module docstring: `yes`
-- Top-level symbols:
-  - `class MatrixPreset`: Maintained matrix preset that pins a manifest and suite.
-  - `function build_parser()`: Build the benchmark matrix CLI parser.
-  - `function main()`: Execute the configured matrix and print the durable JSON result.
-  - `function run_matrix_from_args(args)`: Execute one benchmark matrix from parsed CLI arguments.
-  - `function render_matrix_summary(result)`: Render a human-readable Markdown summary for a matrix run.
 
 #### `src/vtm/benchmarks/prepare_swebench_lite.py`
 
@@ -426,8 +303,8 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Module docstring: `yes`
 - Top-level symbols:
   - `function build_parser()`: Build the benchmark runner CLI parser.
-  - `function execute_benchmark_run(manifest, config, *, rlm_model_name, embedding_model_name, agent_model_name, agent_base_url, agent_api_key)`: Execute one benchmark run with environment-aware optional adapters.
   - `function main()`: Parse CLI args, configure adapters, and execute a benchmark run.
+  - `function execute_benchmark_run(manifest, config, *, rlm_model_name=..., embedding_model_name=..., agent_model_name=..., agent_base_url=..., agent_api_key=...)`: Execute one benchmark run with environment-aware optional adapters.
 
 #### `src/vtm/benchmarks/runner.py`
 
@@ -435,6 +312,14 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Module docstring: `yes`
 - Top-level symbols:
   - `class BenchmarkRunner`: Orchestrates one benchmark run from manifest load to summary artifacts.
+
+#### `src/vtm/benchmarks/scaffold_bridge.py`
+
+- Purpose: Bridge VTM task packs into richer bundles for external coding scaffolds.
+- Module docstring: `yes`
+- Top-level symbols:
+  - `class ScaffoldBridgeConfig`: Controls how much task context is emitted for external scaffolds.
+  - `class ScaffoldBridge`: Builds a richer task bundle and optional delegate-command handoff.
 
 #### `src/vtm/benchmarks/suite_execution.py`
 
@@ -565,7 +450,10 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Top-level symbols:
   - `class BenchmarkExecutor`: Contract implemented by coding-task executors.
   - `class SubprocessBenchmarkExecutor`: Runs the configured command directly inside the prepared workspace.
-  - `class NativeAgentBenchmarkExecutor`: Runs a coding task through the native single-agent runtime.
+  - `class RLMBenchmarkExecutor`: Runs a coding task through the vendored upstream RLM runtime.
+  - `function _workspace_metadata(prepared_workspace, key)`: No symbol docstring.
+  - `function _workspace_backend(prepared_workspace)`: No symbol docstring.
+  - `function _docker_network(prepared_workspace)`: No symbol docstring.
 
 #### `src/vtm/harness/models.py`
 
@@ -575,7 +463,6 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `class TaskMemoryContextItem`: One retrieved memory entry embedded into a coding task pack.
   - `class HarnessTaskPack`: Self-contained task description consumed by coding executors.
   - `class ExecutorRequest`: Normalized executor input built from a harness task pack.
-  - `class TraceManifest`: Paths to native-agent trace artifacts emitted during execution.
   - `class ExecutorResult`: Normalized executor output used by coding-benchmark evaluation.
 
 #### `src/vtm/harness/scoring.py`
@@ -624,6 +511,7 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Module docstring: `yes`
 - Top-level symbols:
   - `class ProcedureStep`: One ordered instruction inside a procedure memory.
+  - `class CommandValidatorConfig`: Typed configuration for `ValidatorSpec(kind="command")`.
   - `class ValidatorSpec`: Validator configuration attached to a procedure payload.
   - `class ClaimPayload`: Payload for a claim memory item.
   - `class ProcedurePayload`: Payload for an executable or reviewable procedure.
@@ -638,10 +526,9 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 
 #### `src/vtm/policies.py`
 
-- Purpose: Default policy constants shared across retrieval and caching.
+- Purpose: Default retrieval policy constants.
 - Module docstring: `yes`
-- Top-level symbols:
-  - `function is_default_retrievable(status)`: Return whether a validity status is retrievable by default.
+- Top-level symbols: none
 
 #### `src/vtm/retrieval.py`
 
@@ -733,8 +620,10 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Purpose: Procedure-validation services backed by external commands.
 - Module docstring: `yes`
 - Top-level symbols:
+  - `class _CommandExecutionResult`: No symbol docstring.
   - `class ProcedureValidator`: Contract for validating a procedure memory item.
   - `class CommandProcedureValidator`: Runs a configured command and captures stdout/stderr as artifacts.
+  - `class DockerProcedureValidator`: Runs procedure validation commands inside a Docker-backed workspace sandbox.
 
 #### `src/vtm/services/reranking_retriever.py`
 
@@ -876,6 +765,58 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `class VerificationResult`: Outcome of checking a memory item against current dependencies.
   - `class ProcedureValidationResult`: Outcome of executing a procedure validator.
 
+#### `src/vtm_rlm/__init__.py`
+
+- Purpose: Integration helpers for running vendored RLM with VTM memory.
+- Module docstring: `yes`
+- Top-level symbols: none
+
+#### `src/vtm_rlm/_vendored.py`
+
+- Purpose: Helpers for importing the vendored upstream RLM runtime.
+- Module docstring: `yes`
+- Top-level symbols:
+  - `function vendored_rlm_root()`: Return the repository-local root for the vendored upstream RLM.
+  - `function ensure_vendored_rlm_on_path()`: Prepend the vendored upstream RLM root to `sys.path`.
+  - `function load_rlm_runtime()`: Load the vendored `RLM` and `RLMLogger` symbols with a clear dependency error.
+
+#### `src/vtm_rlm/context.py`
+
+- Purpose: Runtime context shared by the benchmark harness and vendored RLM integration.
+- Module docstring: `yes`
+- Top-level symbols:
+  - `class RLMRuntimeContext`: Execution-time dependencies needed by the vendored RLM bridge.
+
+#### `src/vtm_rlm/execution.py`
+
+- Purpose: Execution helpers for running the vendored upstream RLM against VTM tasks.
+- Module docstring: `yes`
+- Top-level symbols:
+  - `class VendoredRLMRunResult`: Normalized result returned by one vendored-RLM execution.
+  - `function run_vendored_rlm(*, task_pack, workspace_root, artifact_root, model_id, kernel, scopes, max_iterations, max_depth, max_timeout_seconds, base_url=..., api_key=...)`: Execute the vendored upstream RLM with VTM memory tools enabled.
+
+#### `src/vtm_rlm/memory_bridge.py`
+
+- Purpose: VTM memory helpers exposed into the vendored RLM runtime.
+- Module docstring: `yes`
+- Top-level symbols:
+  - `class VTMMemoryBridge`: Small bridge that exposes VTM retrieval and evidence expansion as Python tools.
+  - `function summarize_memory_context(items)`: Render pre-retrieved task memory into a compact prompt block.
+
+#### `src/vtm_rlm/prompting.py`
+
+- Purpose: Prompt helpers for phase-1 VTM plus vendored-RLM execution.
+- Module docstring: `yes`
+- Top-level symbols:
+  - `function build_phase1_task_prompt(task_pack, workspace_root)`: Build the initial task prompt passed to the vendored RLM runtime.
+
+#### `src/vtm_rlm/writeback.py`
+
+- Purpose: Writeback helpers for persisting successful vendored-RLM runs into VTM.
+- Module docstring: `yes`
+- Top-level symbols:
+  - `function write_success_memory(*, kernel, dependency_builder, workspace_root, task_statement, case_id, scope, produced_patch_text, run_result)`: Persist a verified decision memory for one successful RLM run.
+
 ### `tests/`
 
 #### `tests/conftest.py`
@@ -900,25 +841,6 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `function embedding_retriever(metadata_store, embedding_store)`: No symbol docstring.
   - `function fake_docker_binary(tmp_path, monkeypatch)`: No symbol docstring.
 
-#### `tests/test_agents.py`
-
-- Purpose: Tests covering agents behavior.
-- Module docstring: `no`
-- Top-level symbols:
-  - `function _run(repo, *args)`: No symbol docstring.
-  - `function _build_bugfix_repo(repo)`: No symbol docstring.
-  - `class FakeBugfixAgentModel`: No symbol docstring.
-  - `function _seed_repo_memory(kernel, repo_root, durable_scope)`: No symbol docstring.
-  - `function test_interactive_permission_policy_blocks_dangerous_terminal_command(tmp_path)`: No symbol docstring.
-  - `function test_deterministic_context_compactor_keeps_recent_messages()`: No symbol docstring.
-  - `function test_local_workspace_driver_enforces_timeout_and_recovers(tmp_path)`: No symbol docstring.
-  - `function test_local_workspace_driver_truncates_terminal_output(tmp_path)`: No symbol docstring.
-  - `class FakeWorkspaceDriver`: No symbol docstring.
-  - `class _FakeCommandResult`: No symbol docstring.
-  - `function test_built_in_tools_delegate_workspace_operations(tmp_path)`: No symbol docstring.
-  - `function test_built_in_tools_exclude_file_mutation_when_policy_disables_it(tmp_path)`: No symbol docstring.
-  - `function test_terminal_coding_agent_writes_task_memory_and_promotes_procedure(tmp_path, kernel, metadata_store)`: No symbol docstring.
-
 #### `tests/test_anchor_relocation.py`
 
 - Purpose: Tests covering anchor relocation behavior.
@@ -937,12 +859,15 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `function test_artifact_store_prepared_commit_abandon_and_cleanup(artifact_store)`: No symbol docstring.
   - `function test_artifact_store_janitor_abandons_prepared_records(artifact_store)`: No symbol docstring.
   - `function test_artifact_store_audit_reports_prepared_missing_and_orphaned_blobs(artifact_store)`: No symbol docstring.
+  - `function test_artifact_store_repair_integrity_applies_safe_repairs_and_reports_residuals(artifact_store)`: No symbol docstring.
 
 #### `tests/test_benchmark_cli.py`
 
 - Purpose: Tests covering benchmark cli behavior.
 - Module docstring: `no`
 - Top-level symbols:
+  - `function test_run_cli_parser_accepts_rlm_coding_executor()`: No symbol docstring.
+  - `function test_matrix_cli_parser_accepts_rlm_coding_executor()`: No symbol docstring.
   - `function test_benchmark_cli_runs_synthetic_retrieval(tmp_path)`: No symbol docstring.
   - `function test_benchmark_cli_runs_synthetic_embedding_retrieval(tmp_path)`: No symbol docstring.
   - `function test_benchmark_cli_filters_to_selected_pair(tmp_path)`: No symbol docstring.
@@ -952,6 +877,10 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `function test_benchmark_cli_rejects_local_backend_docker_flags(tmp_path)`: No symbol docstring.
   - `function test_benchmark_cli_rejects_docker_backend_without_image(tmp_path)`: No symbol docstring.
   - `function test_benchmark_cli_runs_shell_command_track_with_docker_backend(tmp_path, fake_docker_binary)`: No symbol docstring.
+  - `function test_benchmark_compare_cli_reports_retrieval_deltas(tmp_path)`: No symbol docstring.
+  - `function test_benchmark_compare_cli_reports_coding_attempt_metrics(tmp_path)`: No symbol docstring.
+  - `function test_benchmark_matrix_cli_runs_manual_retrieval_matrix(tmp_path)`: No symbol docstring.
+  - `function test_benchmark_matrix_cli_runs_terminal_smoke_preset(tmp_path)`: No symbol docstring.
 
 #### `tests/test_benchmarks.py`
 
@@ -963,14 +892,12 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `function _build_duplicate_symbol_repo(repo)`: No symbol docstring.
   - `class FakeBenchmarkRLMAdapter`: No symbol docstring.
   - `class FailingBenchmarkRLMAdapter`: No symbol docstring.
-  - `class FakeNativeBugfixAgentModel`: No symbol docstring.
   - `function test_manifest_lock_is_deterministic_for_identical_runs(tmp_path)`: No symbol docstring.
   - `function test_synthetic_benchmark_retrieval_and_drift_runs(tmp_path)`: No symbol docstring.
   - `function test_synthetic_benchmark_embedding_run(tmp_path)`: No symbol docstring.
   - `function test_git_repo_checkout_supports_local_remote(tmp_path)`: No symbol docstring.
   - `function test_coding_suite_dry_run_writes_task_pack(tmp_path)`: No symbol docstring.
   - `function test_coding_suite_executor_writes_benchmark_local_artifacts(tmp_path)`: No symbol docstring.
-  - `function test_coding_suite_native_agent_writes_agent_artifacts_and_metrics(tmp_path)`: No symbol docstring.
   - `function test_synthetic_coding_tasks_fail_on_base_and_pass_on_head(tmp_path)`: No symbol docstring.
   - `function test_coding_suite_reports_multiple_tasks_and_filtering(tmp_path)`: No symbol docstring.
   - `function test_coding_summary_compares_modes(tmp_path)`: No symbol docstring.
@@ -1035,6 +962,7 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Top-level symbols:
   - `function test_metadata_events_export_to_jsonl_in_deterministic_order(tmp_path)`: No symbol docstring.
   - `function test_event_export_is_at_least_once_and_rebuild_rewrites_deduped_log(tmp_path)`: No symbol docstring.
+  - `function test_event_export_truncates_partial_jsonl_tail_before_resuming(tmp_path)`: No symbol docstring.
 
 #### `tests/test_harness.py`
 
@@ -1043,10 +971,14 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Top-level symbols:
   - `function _run(repo, *args)`: No symbol docstring.
   - `function _build_repo(repo)`: No symbol docstring.
+  - `function _build_repo_with_second_commit(repo)`: No symbol docstring.
   - `function test_harness_models_round_trip()`: No symbol docstring.
   - `function test_harness_shims_reexport_new_modules()`: No symbol docstring.
   - `function test_local_workspace_driver_preserves_blank_lines(tmp_path)`: No symbol docstring.
   - `function test_docker_workspace_backend_prepares_isolated_workspace(tmp_path, fake_docker_binary)`: No symbol docstring.
+  - `function test_local_workspace_backend_fetches_missing_prepared_ref(tmp_path)`: No symbol docstring.
+  - `function test_docker_workspace_backend_prepares_existing_workspace(tmp_path, fake_docker_binary)`: No symbol docstring.
+  - `function test_docker_workspace_backend_persists_startup_failure_logs(tmp_path)`: No symbol docstring.
 
 #### `tests/test_kernel_topology.py`
 
@@ -1065,15 +997,6 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `function _run(repo, *args)`: No symbol docstring.
   - `function _init_repo(repo)`: No symbol docstring.
   - `function test_kernel_capture_artifact_and_runtime_verification_flow(tmp_path, kernel, metadata_store, scope)`: No symbol docstring.
-
-#### `tests/test_openai_agent.py`
-
-- Purpose: Tests covering openai agent behavior.
-- Module docstring: `no`
-- Top-level symbols:
-  - `class FakeChatClient`: No symbol docstring.
-  - `function test_openai_agent_adapter_forwards_sampling_controls()`: No symbol docstring.
-  - `function test_openai_chat_client_only_includes_seed_when_present(monkeypatch)`: No symbol docstring.
 
 #### `tests/test_openai_embedding.py`
 
@@ -1109,6 +1032,13 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `function test_command_validator_timeout_marks_unknown_and_records_metadata(tmp_path, artifact_store, procedure_factory)`: No symbol docstring.
   - `function test_command_validator_truncates_streams_and_records_metadata(tmp_path, artifact_store, procedure_factory)`: No symbol docstring.
   - `function test_command_validator_applies_env_allowlist_and_denylist(tmp_path, artifact_store, procedure_factory, monkeypatch)`: No symbol docstring.
+  - `function test_command_validator_can_drop_parent_environment(tmp_path, artifact_store, procedure_factory, monkeypatch)`: No symbol docstring.
+  - `function test_command_validator_can_restrict_cwd_to_repo_root(tmp_path, artifact_store, procedure_factory)`: No symbol docstring.
+  - `function test_command_validator_can_apply_file_size_limit(tmp_path, artifact_store, procedure_factory)`: No symbol docstring.
+  - `function test_docker_procedure_validator_runs_in_sandbox_and_records_container_metadata(tmp_path, artifact_store, procedure_factory, fake_docker_binary, monkeypatch)`: No symbol docstring.
+  - `function test_docker_procedure_validator_snapshots_dirty_worktree_state(tmp_path, artifact_store, procedure_factory, fake_docker_binary)`: No symbol docstring.
+  - `function test_docker_procedure_validator_requires_repo_root(artifact_store, procedure_factory, fake_docker_binary)`: No symbol docstring.
+  - `function test_docker_procedure_validator_rejects_cwd_outside_repo(tmp_path, artifact_store, procedure_factory, fake_docker_binary)`: No symbol docstring.
   - `function test_command_validator_rejects_malformed_extended_config(artifact_store, procedure_factory, config, message)`: No symbol docstring.
   - `function test_validate_procedure_promotes_pending_procedure_and_attaches_evidence(tmp_path, kernel, metadata_store, artifact_store, procedure_factory)`: No symbol docstring.
   - `function test_validate_procedure_failure_modes_update_memory_status(tmp_path, kernel, metadata_store, procedure_factory)`: No symbol docstring.
@@ -1167,9 +1097,10 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `function _init_repo(repo)`: No symbol docstring.
   - `function _fail_event_type(monkeypatch, metadata_store, event_type)`: No symbol docstring.
   - `function test_verify_memory_rolls_back_when_event_persistence_fails(kernel, metadata_store, memory_factory, dep_fp, monkeypatch)`: No symbol docstring.
-  - `function test_validate_procedure_rolls_back_metadata_when_event_persistence_fails(tmp_path, kernel, metadata_store, procedure_factory, monkeypatch)`: No symbol docstring.
+  - `function test_validate_procedure_rolls_back_metadata_when_event_persistence_fails(tmp_path, kernel, metadata_store, artifact_store, procedure_factory, monkeypatch)`: No symbol docstring.
   - `function test_promote_to_procedure_rolls_back_when_event_persistence_fails(kernel, metadata_store, memory_factory, procedure_factory, monkeypatch)`: No symbol docstring.
   - `function test_retrieve_rolls_back_stats_when_event_persistence_fails(kernel, metadata_store, memory_factory, scope, monkeypatch)`: No symbol docstring.
+  - `function test_capture_artifact_abandons_record_when_event_writeback_fails(kernel, metadata_store, artifact_store, monkeypatch)`: No symbol docstring.
 
 #### `tests/test_store_migrations.py`
 
@@ -1207,7 +1138,11 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `function test_prepare_swebench_manifest_cli_generates_local_refs(tmp_path)`: No symbol docstring.
   - `function test_local_patcher_prompt_is_deterministic_and_script_applies_patch(tmp_path)`: No symbol docstring.
   - `function test_local_patcher_rejects_invalid_patch_without_mutating_workspace(tmp_path)`: No symbol docstring.
+  - `function test_scaffold_bridge_builds_bundle_with_memory_and_test_files(tmp_path)`: No symbol docstring.
+  - `function test_scaffold_bridge_cli_writes_bundle_and_runs_delegate(tmp_path)`: No symbol docstring.
+  - `function test_repo_materialization_fetches_missing_prepared_ref_on_checkout(tmp_path)`: No symbol docstring.
   - `function test_swebench_coding_suite_runs_fake_harness_and_writes_artifacts(tmp_path, monkeypatch)`: No symbol docstring.
+  - `function test_swebench_harness_uses_absolute_predictions_path(tmp_path, monkeypatch)`: No symbol docstring.
 
 #### `tests/test_terminal_benchmarking.py`
 
@@ -1215,15 +1150,11 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Module docstring: `no`
 - Top-level symbols:
   - `function _run(repo, *args)`: No symbol docstring.
-  - `class RecordingAttemptAgentModel`: No symbol docstring.
-  - `class RecordingShellCommandAgentModel`: No symbol docstring.
   - `function test_terminal_smoke_manifest_tasks_fail_on_base_and_pass_on_head(tmp_path)`: No symbol docstring.
   - `function test_terminal_shell_smoke_manifest_tasks_fail_on_base_and_pass_on_head(tmp_path)`: No symbol docstring.
   - `function test_attempt_rows_and_pass_at_k_aggregate_external_executor(tmp_path)`: No symbol docstring.
   - `function test_retrieval_query_overrides_default_query(tmp_path, monkeypatch)`: No symbol docstring.
   - `function test_shell_command_attempts_run_under_docker_workspace_external_executor(tmp_path, fake_docker_binary)`: No symbol docstring.
-  - `function test_shell_command_native_agent_uses_no_file_mutation_policy_under_docker(tmp_path, fake_docker_binary)`: No symbol docstring.
-  - `function test_native_agent_attempt_sampling_propagates(tmp_path)`: No symbol docstring.
 
 #### `tests/test_transactions.py`
 
@@ -1251,6 +1182,9 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `function test_package_import_smoke()`: No symbol docstring.
   - `function test_package_root_exports_core_implementations()`: No symbol docstring.
   - `function test_package_root_keeps_compatibility_exports_for_non_kernel_surfaces()`: No symbol docstring.
+  - `function test_validator_spec_coerces_command_config_through_typed_accessor()`: No symbol docstring.
+  - `function test_validator_spec_accepts_prebuilt_command_config()`: No symbol docstring.
+  - `function test_project_scripts_expose_supported_cli_entrypoints()`: No symbol docstring.
   - `function test_core_models_round_trip(repo_fp, env_fp, dep_fp, scope, artifact_evidence, memory_factory)`: No symbol docstring.
   - `function test_verified_memory_requires_dependency_fingerprint(scope, artifact_evidence)`: No symbol docstring.
   - `function test_verified_claim_requires_evidence(scope, dep_fp)`: No symbol docstring.
@@ -1276,3 +1210,22 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Module docstring: `no`
 - Top-level symbols:
   - `function test_siblings_cannot_see_each_other(kernel, memory_factory, scope)`: No symbol docstring.
+
+#### `tests/test_vtm_rlm.py`
+
+- Purpose: Tests covering vtm rlm behavior.
+- Module docstring: `no`
+- Top-level symbols:
+  - `function _commit_memory(kernel, scope, memory)`: No symbol docstring.
+  - `function test_vendored_rlm_root_exists()`: No symbol docstring.
+  - `function test_memory_bridge_search_and_expand(kernel, memory_factory, scope)`: No symbol docstring.
+  - `function test_build_phase1_task_prompt_includes_memory_context()`: No symbol docstring.
+  - `class _FakeUsage`: No symbol docstring.
+  - `class _FakeChoiceMessage`: No symbol docstring.
+  - `class _FakeChoice`: No symbol docstring.
+  - `class _FakeChatCompletion`: No symbol docstring.
+  - `class _FakeCompletions`: No symbol docstring.
+  - `class _FakeChat`: No symbol docstring.
+  - `class _FakeOpenAIClient`: No symbol docstring.
+  - `function _build_bugfix_repo(repo)`: No symbol docstring.
+  - `function test_rlm_executor_smoke_writes_patch_and_memory(tmp_path, monkeypatch, kernel, metadata_store)`: No symbol docstring.

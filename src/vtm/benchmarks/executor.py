@@ -2,7 +2,7 @@
 
 from vtm.harness.executors import (
     BenchmarkExecutor,
-    NativeAgentBenchmarkExecutor,
+    RLMBenchmarkExecutor,
     SubprocessBenchmarkExecutor,
 )
 from vtm.harness.models import ExecutorRequest, ExecutorResult
@@ -11,6 +11,6 @@ __all__ = [
     "BenchmarkExecutor",
     "ExecutorRequest",
     "ExecutorResult",
-    "NativeAgentBenchmarkExecutor",
+    "RLMBenchmarkExecutor",
     "SubprocessBenchmarkExecutor",
 ]

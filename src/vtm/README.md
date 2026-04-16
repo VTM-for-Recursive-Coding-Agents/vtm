@@ -15,5 +15,4 @@ Contents
 - `stores/`: Metadata, cache, embedding, and artifact storage protocols plus concrete implementations.
 - `adapters/`: Git, runtime, syntax, embedding, and RLM integrations.
 - `harness/`: Typed task-pack, workspace, executor, and scoring boundary.
-- `agents/`: Native single-agent runtime, tool registry, and permission policies.
 - `benchmarks/`: Manifest-driven evaluation and reporting orchestration.

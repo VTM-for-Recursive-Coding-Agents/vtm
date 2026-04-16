@@ -13,6 +13,7 @@ IGNORED_MD_PARTS = {
     ".venv",
     "build",
     "dist",
+    "vendor",
     "__pycache__",
 }
 EXPECTED_CORE_DOCS = (
@@ -102,7 +103,7 @@ def test_harness_docs_exist_and_reference_public_contracts() -> None:
     assert "HarnessTaskPack" in harness_doc
     assert "ExecutorRequest" in harness_doc
     assert "ExecutorResult" in harness_doc
-    assert "TraceManifest" in harness_doc
+    assert "RLMBenchmarkExecutor" in harness_doc
 
 
 def test_code_reference_exists_and_covers_every_python_file() -> None:
@@ -149,7 +150,6 @@ def test_benchmark_docs_cover_terminal_smoke_attempts_and_pass_k() -> None:
     assert "attempts.jsonl" in harness_doc
     assert "artifact_root" in harness_doc
     assert "DockerWorkspaceBackend" in harness_doc
-    assert "no_file_mutation" in harness_doc
     assert "--read-only" in harness_doc
     assert "--pids-limit 256" in harness_doc
     assert "docker-run.stdout" in harness_doc

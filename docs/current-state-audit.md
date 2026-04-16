@@ -12,6 +12,7 @@ This document is the current maintainer-facing snapshot of guarantees, gaps, and
 - Artifact audits now summarize abandoned captures by reason and origin, and `repair_integrity()` applies the safe janitor actions in one pass.
 - JSONL event export reconciles complete on-disk lines before appending new rows, so cursor-write failures can resume without replaying already persisted complete events.
 - Deterministic lexical retrieval, derived embedding retrieval, optional RLM reranking, and deterministic consolidation are implemented and covered by tests.
+- Vendored upstream `rlm` is now present in-repo and a first-phase VTM-to-RLM executor path is available through the harness boundary.
 - The public benchmark runner now writes typed harness task packs and stable executor artifact layouts.
 - Coding benchmarks support repeated attempts with stable per-attempt workspaces, per-attempt artifact roots, `attempts.jsonl`, and aggregate `pass_at_k`/`resolved_at_k` reporting.
 - Completed benchmark runs can be compared offline with paired case-level numeric deltas, McNemar-style binary comparisons, bootstrap confidence intervals, and coding `pass_at_k` / `resolved_at_k` summaries derived from `attempts.jsonl`.
@@ -20,8 +21,7 @@ This document is the current maintainer-facing snapshot of guarantees, gaps, and
 - The checked-in `terminal-shell-smoke` manifest provides a shell-command track with explicit `execution_style="shell_command"` and deterministic generated-file tasks.
 - `docker_workspace` is implemented as a built-in sandbox backend with normalized container metadata, read-only rootfs defaults, resource limits, and startup logs recorded per attempt.
 - `DockerProcedureValidator` reuses the Docker workspace backend to validate procedures against a snapshot of the current repo working tree and records container metadata on the validation result.
-- Native-agent shell-command runs enforce `tool_policy="no_file_mutation"` so terminal execution is required while read/search and memory tools remain available.
-- Native-agent runs produce stable trace files through the harness boundary and remain benchmark-local, not kernel-persistent.
+- Vendored-RLM runs produce stable response and completion artifacts through the harness boundary and remain benchmark-local, not kernel-persistent.
 - Artifact capture and procedure-validation writeback now abandon their capture records best-effort with structured provenance when later event or metadata persistence fails, so cross-store fallout stays inspectable and easier to repair.
 - Docs parity checks cover the runtime example, markdown links, and manifest references.
 
@@ -37,7 +37,7 @@ This document is the current maintainer-facing snapshot of guarantees, gaps, and
 - The root `vtm` package is kernel-first; benchmark and provider-specific helpers are no longer the primary root import story.
 - `vtm.harness` ships local and Docker-backed workspace backends; Docker is the only built-in sandbox backend.
 - `CommandProcedureValidator` remains a restricted local-process path; `DockerProcedureValidator` is the only built-in sandboxed procedure-validation backend.
-- The native runtime remains single-agent only.
+- The vendored-RLM executor is first-phase only and currently focuses on retrieval-first VTM integration plus trace capture.
 - There is no built-in subagent orchestration or remote sandbox executor.
 - Repeated attempts and `pass@k` controls are currently supported only for coding suites.
 - Shell-command tasks still live under `suite="coding"`; there is no separate shell-only verification framework.

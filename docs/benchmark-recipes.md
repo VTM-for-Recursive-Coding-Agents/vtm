@@ -128,7 +128,7 @@ uv run python -m vtm.benchmarks.run \
   --executor-command "python3 scripts/build_daily_report.py"
 ```
 
-Native-agent executor:
+Vendored-RLM executor:
 
 ```bash
 export VTM_AGENT_BASE_URL=http://127.0.0.1:8000
@@ -138,15 +138,15 @@ uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/synthetic-smoke.json \
   --suite coding \
   --mode lexical \
-  --output .benchmarks/coding-native-agent \
+  --output .benchmarks/coding-rlm \
   --pair bugfix \
-  --coding-executor native_agent \
+  --coding-executor rlm \
   --agent-model "$VTM_AGENT_MODEL" \
   --agent-command-timeout-seconds 120 \
   --agent-max-output-chars 20000
 ```
 
-Attempt-aware native-agent run on the harder terminal track:
+Attempt-aware vendored-RLM run on the harder terminal track:
 
 ```bash
 export VTM_AGENT_BASE_URL=http://127.0.0.1:8000
@@ -156,17 +156,15 @@ uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/terminal-smoke.json \
   --suite coding \
   --mode lexical \
-  --output .benchmarks/terminal-smoke-native-agent \
-  --coding-executor native_agent \
+  --output .benchmarks/terminal-smoke-rlm \
+  --coding-executor rlm \
   --agent-model "$VTM_AGENT_MODEL" \
   --attempts 5 \
   --pass-k 1 \
-  --pass-k 5 \
-  --agent-temperature 0.3 \
-  --agent-seed-base 1000
+  --pass-k 5
 ```
 
-Attempt-aware native-agent run on the shell-command track under Docker:
+Attempt-aware vendored-RLM run on the shell-command track under Docker:
 
 ```bash
 export VTM_AGENT_BASE_URL=http://127.0.0.1:8000
@@ -176,16 +174,14 @@ uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/terminal-shell-smoke.json \
   --suite coding \
   --mode lexical \
-  --output .benchmarks/terminal-shell-native-agent \
-  --coding-executor native_agent \
+  --output .benchmarks/terminal-shell-rlm \
+  --coding-executor rlm \
   --agent-model "$VTM_AGENT_MODEL" \
   --workspace-backend docker_workspace \
   --docker-image python:3.12 \
   --attempts 5 \
   --pass-k 1 \
-  --pass-k 5 \
-  --agent-temperature 0.3 \
-  --agent-seed-base 1000
+  --pass-k 5
 ```
 
 Comparable memory-mode matrix for the terminal-smoke track:
@@ -354,5 +350,5 @@ uv run python -m vtm.benchmarks.matrix \
 - Shell-command tasks still use the coding suite, the standard `test_command` verifier, and diff-based scoring when they regenerate tracked files.
 - Native-agent shell-command tasks disable direct file-mutation tools through `tool_policy="no_file_mutation"`.
 - If `--attempts > 1` and no explicit `--pass-k` values are provided, the runner reports `pass_at_1` and `pass_at_<attempt_count>` by default.
-- For meaningful native-agent `pass@k` experiments, prefer a nonzero `--agent-temperature`.
+- Use repeated `--attempts` and `--pass-k` runs to compare memory modes under the same vendored-RLM execution engine.
 - Prefer `--repo` and `--pair` filters over ad hoc truncation when you want reproducible targeted runs.

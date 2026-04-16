@@ -9,7 +9,7 @@ from pydantic import Field
 from vtm.base import VTMModel
 
 HarnessMemoryMode = Literal["no_memory", "lexical", "lexical_rlm_rerank", "embedding"]
-HarnessCodingExecutor = Literal["external_command", "native_agent"]
+HarnessCodingExecutor = Literal["external_command", "rlm"]
 HarnessEvaluationBackend = Literal["local_subprocess", "swebench_harness"]
 HarnessExecutionStyle = Literal["mixed_patch", "shell_command"]
 HarnessWorkspaceBackend = Literal["local_workspace", "docker_workspace"]
@@ -76,16 +76,6 @@ class ExecutorRequest(VTMModel):
     test_command: tuple[str, ...] = Field(default_factory=tuple)
 
 
-class TraceManifest(VTMModel):
-    """Paths to native-agent trace artifacts emitted during execution."""
-
-    session: str
-    turns_jsonl: str
-    tool_calls_jsonl: str
-    compactions_jsonl: str
-    tool_results_dir: str
-
-
 class ExecutorResult(VTMModel):
     """Normalized executor output used by coding-benchmark evaluation."""
 
@@ -115,7 +105,6 @@ class ExecutorResult(VTMModel):
     docker_container_id: str | None = None
     docker_container_name: str | None = None
     docker_network: Literal["none", "bridge"] | None = None
-    trace_manifest: TraceManifest | None = None
     agent_metrics: dict[str, Any] = Field(default_factory=dict)
     agent_artifacts: dict[str, str] = Field(default_factory=dict)
     agent_metadata: dict[str, Any] = Field(default_factory=dict)

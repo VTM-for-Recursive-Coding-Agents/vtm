@@ -7,7 +7,6 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
-from vtm.adapters.agent_model import AgentModelAdapter
 from vtm.adapters.embeddings import EmbeddingAdapter
 from vtm.adapters.rlm import RLMAdapter
 from vtm.base import utc_now
@@ -37,7 +36,6 @@ class BenchmarkRunner:
         *,
         rlm_adapter: RLMAdapter | None = None,
         embedding_adapter: EmbeddingAdapter | None = None,
-        agent_model_adapter: AgentModelAdapter | None = None,
     ) -> None:
         """Bind the runner to a manifest, config, and optional adapters."""
         self._manifest = manifest
@@ -50,7 +48,6 @@ class BenchmarkRunner:
             symbol_indexer=SymbolIndexer(),
             rlm_adapter=rlm_adapter,
             embedding_adapter=embedding_adapter,
-            agent_model_adapter=agent_model_adapter,
         )
         self._reporter = BenchmarkReporter()
 
@@ -70,27 +67,20 @@ class BenchmarkRunner:
             manifest_lock["workspace_backend"] = self._config.workspace_backend
             manifest_lock["attempt_count"] = self._config.attempt_count
             manifest_lock["pass_k_values"] = list(self._config.pass_k_values)
-            manifest_lock["agent_temperature"] = self._config.agent_temperature
             if self._config.workspace_backend == "docker_workspace":
                 manifest_lock["docker_image"] = self._config.docker_image
                 manifest_lock["docker_binary"] = self._config.docker_binary
                 manifest_lock["docker_network"] = self._config.docker_network
-            if self._config.agent_seed_base is not None:
-                manifest_lock["agent_seed_base"] = self._config.agent_seed_base
         if self._config.repo_filters:
             manifest_lock["repo_filters"] = list(self._config.repo_filters)
         if self._config.pair_filters:
             manifest_lock["pair_filters"] = list(self._config.pair_filters)
         if self._config.executor_command:
             manifest_lock["executor_command"] = list(self._config.executor_command)
-        if self._config.coding_executor == "native_agent":
+        if self._config.coding_executor == "rlm":
             manifest_lock["agent_model_id"] = self._config.agent_model_id
-            manifest_lock["agent_mode"] = self._config.agent_mode.value
-            manifest_lock["agent_prompt_profile"] = self._config.agent_prompt_profile
             manifest_lock["agent_max_turns"] = self._config.agent_max_turns
-            manifest_lock["agent_max_tool_failures"] = self._config.agent_max_tool_failures
             manifest_lock["agent_max_runtime_seconds"] = self._config.agent_max_runtime_seconds
-            manifest_lock["agent_compaction_window"] = self._config.agent_compaction_window
             manifest_lock["agent_command_timeout_seconds"] = (
                 self._config.agent_command_timeout_seconds
             )

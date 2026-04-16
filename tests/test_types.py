@@ -1,219 +1,368 @@
-"""Tests for core types."""
+from __future__ import annotations
 
-from rlm.core.types import (
-    CodeBlock,
-    ModelUsageSummary,
-    QueryMetadata,
-    REPLResult,
-    RLMChatCompletion,
-    RLMIteration,
-    RLMMetadata,
-    UsageSummary,
-    _serialize_value,
+import importlib
+import tomllib
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
+from vtm.adapters.rlm import RLMRankedCandidate, RLMRankRequest, RLMRankResponse
+from vtm.artifacts import ArtifactRecord
+from vtm.benchmarks import (
+    BenchmarkManifest,
+    BenchmarkRunConfig,
+    CodingTaskCase,
+    CommitPair,
+    RepoSpec,
 )
+from vtm.cache import CacheEntry, CacheKey
+from vtm.consolidation import ConsolidationAction, ConsolidationRunResult
+from vtm.embeddings import EmbeddingIndexEntry
+from vtm.enums import (
+    DetailLevel,
+    EvidenceBudget,
+    EvidenceKind,
+    MemoryKind,
+    ValidityStatus,
+)
+from vtm.events import MemoryEvent
+from vtm.evidence import EvidenceRef
+from vtm.memory_items import (
+    ClaimPayload,
+    CommandValidatorConfig,
+    MemoryItem,
+    ProcedurePayload,
+    ProcedureStep,
+    SummaryCardPayload,
+    ValidatorSpec,
+    ValidityState,
+)
+from vtm.retrieval import RetrieveRequest
+from vtm.transactions import TransactionRecord
+from vtm.verification import ProcedureValidationResult, VerificationResult
 
 
-class TestSerializeValue:
-    """Tests for _serialize_value helper."""
-
-    def test_primitives(self):
-        assert _serialize_value(None) is None
-        assert _serialize_value(True) is True
-        assert _serialize_value(42) == 42
-        assert _serialize_value(3.14) == 3.14
-        assert _serialize_value("hello") == "hello"
-
-    def test_list(self):
-        result = _serialize_value([1, 2, "three"])
-        assert result == [1, 2, "three"]
-
-    def test_dict(self):
-        result = _serialize_value({"a": 1, "b": 2})
-        assert result == {"a": 1, "b": 2}
-
-    def test_callable(self):
-        def my_func():
-            pass
-
-        result = _serialize_value(my_func)
-        assert "function" in result.lower()
-        assert "my_func" in result
+def test_package_import_smoke() -> None:
+    module = importlib.import_module("vtm")
+    assert module.SCHEMA_VERSION == "1.0"
 
 
-class TestModelUsageSummary:
-    """Tests for ModelUsageSummary."""
+def test_package_root_exports_core_implementations() -> None:
+    from vtm import (
+        FilesystemArtifactStore,
+        LexicalRetriever,
+        SqliteMetadataStore,
+        TransactionalMemoryKernel,
+    )
 
-    def test_to_dict(self):
-        summary = ModelUsageSummary(
-            total_calls=10, total_input_tokens=1000, total_output_tokens=500
+    assert TransactionalMemoryKernel.__name__ == "TransactionalMemoryKernel"
+    assert LexicalRetriever.__name__ == "LexicalRetriever"
+    assert SqliteMetadataStore.__name__ == "SqliteMetadataStore"
+    assert FilesystemArtifactStore.__name__ == "FilesystemArtifactStore"
+
+
+def test_package_root_keeps_compatibility_exports_for_non_kernel_surfaces() -> None:
+    from vtm import BenchmarkRunner, OpenAIEmbeddingAdapter
+
+    assert BenchmarkRunner.__name__ == "BenchmarkRunner"
+    assert OpenAIEmbeddingAdapter.__name__ == "OpenAIEmbeddingAdapter"
+
+
+def test_validator_spec_coerces_command_config_through_typed_accessor() -> None:
+    validator = ValidatorSpec(
+        name="parser-check",
+        kind="command",
+        config={"command": ["python3", "-c", "print('ok')"], "timeout_seconds": 1},
+    )
+
+    config = validator.command_config()
+
+    assert isinstance(config, CommandValidatorConfig)
+    assert config.command == ("python3", "-c", "print('ok')")
+    assert config.timeout_seconds == 1.0
+
+
+def test_validator_spec_accepts_prebuilt_command_config() -> None:
+    config = CommandValidatorConfig(command=("python3", "-c", "print('ok')"))
+    validator = ValidatorSpec(name="parser-check", kind="command", config=config)
+
+    assert validator.command_config() == config
+
+
+def test_project_scripts_expose_supported_cli_entrypoints() -> None:
+    project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    scripts = project["project"]["scripts"]
+    assert scripts["vtm-bench"] == "vtm.benchmarks.run:main"
+    assert (
+        scripts["vtm-prepare-swebench-lite"]
+        == "vtm.benchmarks.prepare_swebench_lite:main"
+    )
+
+
+def test_core_models_round_trip(
+    repo_fp,
+    env_fp,
+    dep_fp,
+    scope,
+    artifact_evidence,
+    memory_factory,
+) -> None:
+    memory = memory_factory()
+    validator = ValidatorSpec(
+        name="parser-check",
+        kind="command",
+        config={"command": ["python3", "-c", "print('ok')"]},
+    )
+    models = [
+        repo_fp,
+        env_fp,
+        dep_fp,
+        scope,
+        artifact_evidence,
+        memory,
+        validator,
+        ProcedurePayload(
+            goal="Run parser check",
+            steps=(ProcedureStep(order=0, instruction="Run parser check"),),
+            validator=validator,
+        ),
+        ArtifactRecord(
+            sha256="deadbeef",
+            relative_path="sha256/deadbeef",
+            size_bytes=4,
+            content_type="text/plain",
+        ),
+        TransactionRecord(visibility=scope),
+        RetrieveRequest(
+            query="parser stable",
+            scopes=(scope,),
+            detail_level=DetailLevel.SUMMARY,
+            evidence_budget=EvidenceBudget.SUMMARY_FIRST,
+        ),
+        CacheKey.from_parts("tool", {"b": 2, "a": 1}, repo_fp, env_fp),
+        MemoryEvent(event_type="memory_staged", memory_id=memory.memory_id),
+        VerificationResult(
+            memory_id=memory.memory_id,
+            previous_status=ValidityStatus.VERIFIED,
+            current_status=ValidityStatus.VERIFIED,
+            dependency_changed=False,
+            updated_validity=ValidityState(
+                status=ValidityStatus.VERIFIED,
+                dependency_fingerprint=dep_fp,
+            ),
+            skipped=True,
+        ),
+        ProcedureValidationResult(
+            memory_id=memory.memory_id,
+            validator_spec=validator,
+            success=True,
+            exit_code=0,
+            stdout_artifact_id="art_stdout",
+            stderr_artifact_id="art_stderr",
+            status=ValidityStatus.VERIFIED,
+            reason="procedure validator exit code matched expected",
+        ),
+        RLMRankRequest(
+            query="parser",
+            candidates=(
+                RLMRankedCandidate(
+                    candidate_id=memory.memory_id,
+                    title=memory.title,
+                    summary=memory.summary,
+                    status=ValidityStatus.VERIFIED,
+                ),
+            ),
+        ),
+        RLMRankResponse(
+            candidates=(
+                RLMRankedCandidate(
+                    candidate_id=memory.memory_id,
+                    title=memory.title,
+                    summary=memory.summary,
+                    status=ValidityStatus.VERIFIED,
+                    rlm_score=0.8,
+                    final_score=0.8,
+                    reason="direct match",
+                ),
+            ),
+            model_name="fake-model",
+        ),
+        BenchmarkManifest(
+            manifest_id="synthetic",
+            repos=(
+                RepoSpec(
+                    repo_name="synthetic",
+                    source_kind="synthetic_python_smoke",
+                    commit_pairs=(CommitPair(pair_id="pair", base_ref="base", head_ref="head"),),
+                ),
+            ),
+            coding_tasks=(
+                CodingTaskCase(
+                    case_id="task",
+                    repo_name="synthetic",
+                    commit_pair_id="pair",
+                    task_statement="Fix the synthetic task.",
+                ),
+            ),
+        ),
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="retrieval",
+            output_dir=".benchmarks/synthetic",
+        ),
+        EmbeddingIndexEntry(
+            memory_id=memory.memory_id,
+            adapter_id="deterministic_hash:64",
+            content_digest="digest",
+            vector=(0.1, 0.2, 0.3),
+        ),
+        ConsolidationAction(
+            action_type="memory_superseded",
+            canonical_memory_id=memory.memory_id,
+            affected_memory_ids=("mem_old",),
+        ),
+        ConsolidationRunResult(
+            scanned_memory_count=2,
+            candidate_group_count=1,
+            action_count=1,
+            actions=(
+                ConsolidationAction(
+                    action_type="memory_superseded",
+                    canonical_memory_id=memory.memory_id,
+                    affected_memory_ids=("mem_old",),
+                ),
+            ),
+        ),
+    ]
+    cache_key = CacheKey.from_parts("tool", {"b": 2, "a": 1}, repo_fp, env_fp)
+    models.append(CacheEntry(key=cache_key, value={"answer": 42}))
+
+    for model in models:
+        restored = type(model).from_json(model.to_json())
+        assert restored == model
+
+
+def test_verified_memory_requires_dependency_fingerprint(scope, artifact_evidence) -> None:
+    with pytest.raises(ValidationError):
+        MemoryItem(
+            kind=MemoryKind.CLAIM,
+            title="Broken verified memory",
+            summary="Missing dependency fingerprint",
+            payload=ClaimPayload(claim="Missing dependency fingerprint"),
+            evidence=(artifact_evidence,),
+            visibility=scope,
+            validity=ValidityState(status=ValidityStatus.VERIFIED),
         )
-        d = summary.to_dict()
-        assert d["total_calls"] == 10
-        assert d["total_input_tokens"] == 1000
-        assert d["total_output_tokens"] == 500
-
-    def test_from_dict(self):
-        data = {
-            "total_calls": 5,
-            "total_input_tokens": 200,
-            "total_output_tokens": 100,
-        }
-        summary = ModelUsageSummary.from_dict(data)
-        assert summary.total_calls == 5
-        assert summary.total_input_tokens == 200
-        assert summary.total_output_tokens == 100
 
 
-class TestUsageSummary:
-    """Tests for UsageSummary."""
-
-    def test_to_dict(self):
-        model_summary = ModelUsageSummary(
-            total_calls=1, total_input_tokens=10, total_output_tokens=5
+def test_verified_claim_requires_evidence(scope, dep_fp) -> None:
+    with pytest.raises(ValidationError):
+        MemoryItem(
+            kind=MemoryKind.CLAIM,
+            title="Broken evidence",
+            summary="No evidence attached",
+            payload=ClaimPayload(claim="No evidence attached"),
+            evidence=(),
+            visibility=scope,
+            validity=ValidityState(
+                status=ValidityStatus.VERIFIED,
+                dependency_fingerprint=dep_fp,
+            ),
         )
-        summary = UsageSummary(model_usage_summaries={"gpt-4": model_summary})
-        d = summary.to_dict()
-        assert "gpt-4" in d["model_usage_summaries"]
-
-    def test_from_dict(self):
-        data = {
-            "model_usage_summaries": {
-                "gpt-4": {
-                    "total_calls": 2,
-                    "total_input_tokens": 50,
-                    "total_output_tokens": 25,
-                }
-            }
-        }
-        summary = UsageSummary.from_dict(data)
-        assert "gpt-4" in summary.model_usage_summaries
-        assert summary.model_usage_summaries["gpt-4"].total_calls == 2
 
 
-class TestREPLResult:
-    """Tests for REPLResult."""
-
-    def test_basic_creation(self):
-        result = REPLResult(stdout="output", stderr="", locals={"x": 1})
-        assert result.stdout == "output"
-        assert result.stderr == ""
-        assert result.locals == {"x": 1}
-
-    def test_to_dict(self):
-        result = REPLResult(stdout="hello", stderr="", locals={"num": 42}, execution_time=0.5)
-        d = result.to_dict()
-        assert d["stdout"] == "hello"
-        assert d["locals"]["num"] == 42
-        assert d["execution_time"] == 0.5
-
-    def test_str_representation(self):
-        result = REPLResult(stdout="test", stderr="", locals={})
-        s = str(result)
-        assert "REPLResult" in s
-        assert "stdout=test" in s
-
-
-class TestCodeBlock:
-    """Tests for CodeBlock."""
-
-    def test_to_dict(self):
-        result = REPLResult(stdout="3", stderr="", locals={"x": 3})
-        block = CodeBlock(code="x = 1 + 2", result=result)
-        d = block.to_dict()
-        assert d["code"] == "x = 1 + 2"
-        assert d["result"]["stdout"] == "3"
-
-
-class TestRLMIteration:
-    """Tests for RLMIteration."""
-
-    def test_basic_creation(self):
-        iteration = RLMIteration(prompt="test prompt", response="test response", code_blocks=[])
-        assert iteration.prompt == "test prompt"
-        assert iteration.final_answer is None
-
-    def test_with_final_answer(self):
-        iteration = RLMIteration(
-            prompt="test",
-            response="FINAL(42)",
-            code_blocks=[],
-            final_answer=("FINAL", "42"),
+def test_summary_card_requires_memory_or_artifact_evidence(scope, anchor_evidence) -> None:
+    with pytest.raises(ValidationError):
+        MemoryItem(
+            kind=MemoryKind.SUMMARY_CARD,
+            title="Broken summary card",
+            summary="Summary card with unsupported evidence",
+            payload=SummaryCardPayload(summary="Summary card"),
+            evidence=(anchor_evidence,),
+            visibility=scope,
         )
-        assert iteration.final_answer == ("FINAL", "42")
 
-    def test_to_dict(self):
-        result = REPLResult(stdout="", stderr="", locals={})
-        block = CodeBlock(code="pass", result=result)
-        iteration = RLMIteration(
-            prompt="p",
-            response="r",
-            code_blocks=[block],
-            iteration_time=1.5,
+
+def test_benchmark_run_config_validates_attempt_controls() -> None:
+    with pytest.raises(ValidationError):
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="coding",
+            output_dir=".benchmarks/synthetic",
+            attempt_count=2,
+            pass_k_values=(1, 3),
         )
-        d = iteration.to_dict()
-        assert d["prompt"] == "p"
-        assert d["response"] == "r"
-        assert len(d["code_blocks"]) == 1
-        assert d["iteration_time"] == 1.5
 
-
-class TestRLMChatCompletion:
-    """Tests for RLMChatCompletion."""
-
-    def test_metadata_default_none(self):
-        usage = UsageSummary(model_usage_summaries={})
-        c = RLMChatCompletion(
-            root_model="gpt-4",
-            prompt="hi",
-            response="hello",
-            usage_summary=usage,
-            execution_time=1.0,
+    with pytest.raises(ValidationError):
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="retrieval",
+            output_dir=".benchmarks/synthetic",
+            attempt_count=2,
         )
-        assert c.metadata is None
-        d = c.to_dict()
-        assert "metadata" not in d
 
-    def test_metadata_roundtrip(self):
-        usage = UsageSummary(model_usage_summaries={})
-        trajectory = {"run_metadata": {"root_model": "gpt-4"}, "iterations": []}
-        c = RLMChatCompletion(
-            root_model="gpt-4",
-            prompt="hi",
-            response="hello",
-            usage_summary=usage,
-            execution_time=1.0,
-            metadata=trajectory,
+    config = BenchmarkRunConfig(
+        manifest_path="benchmarks/manifests/synthetic-smoke.json",
+        suite="coding",
+        output_dir=".benchmarks/synthetic",
+        attempt_count=3,
+        pass_k_values=(3, 1, 2),
+    )
+
+    assert config.pass_k_values == (3, 1, 2)
+
+
+def test_benchmark_run_config_validates_docker_workspace_settings() -> None:
+    with pytest.raises(ValidationError):
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/terminal-shell-smoke.json",
+            suite="coding",
+            output_dir=".benchmarks/synthetic",
+            workspace_backend="docker_workspace",
         )
-        d = c.to_dict()
-        assert d["metadata"] == trajectory
-        c2 = RLMChatCompletion.from_dict(d)
-        assert c2.metadata == trajectory
 
-
-class TestQueryMetadata:
-    """Tests for QueryMetadata."""
-
-    def test_string_prompt(self):
-        meta = QueryMetadata("Hello, world!")
-        assert meta.context_type == "str"
-        assert meta.context_total_length == 13
-        assert meta.context_lengths == [13]
-
-
-class TestRLMMetadata:
-    """Tests for RLMMetadata."""
-
-    def test_to_dict(self):
-        meta = RLMMetadata(
-            root_model="gpt-4",
-            max_depth=2,
-            max_iterations=10,
-            backend="openai",
-            backend_kwargs={"api_key": "secret"},
-            environment_type="local",
-            environment_kwargs={},
+    with pytest.raises(ValidationError):
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/terminal-shell-smoke.json",
+            suite="coding",
+            output_dir=".benchmarks/synthetic",
+            workspace_backend="local_workspace",
+            docker_image="python:3.12",
         )
-        d = meta.to_dict()
-        assert d["root_model"] == "gpt-4"
-        assert d["max_depth"] == 2
-        assert d["backend"] == "openai"
+
+    config = BenchmarkRunConfig(
+        manifest_path="benchmarks/manifests/terminal-shell-smoke.json",
+        suite="coding",
+        output_dir=".benchmarks/synthetic",
+        workspace_backend="docker_workspace",
+        docker_image="python:3.12",
+        docker_binary="/tmp/fake-docker",
+        docker_network="bridge",
+    )
+
+    assert config.workspace_backend == "docker_workspace"
+    assert config.docker_image == "python:3.12"
+    assert config.docker_binary == "/tmp/fake-docker"
+    assert config.docker_network == "bridge"
+
+
+def test_evidence_kind_enforces_matching_target() -> None:
+    with pytest.raises(ValidationError):
+        EvidenceRef(kind=EvidenceKind.MEMORY, ref_id="memory:1")
+
+
+def test_kind_must_match_payload(scope, dep_fp, artifact_evidence) -> None:
+    with pytest.raises(ValidationError):
+        MemoryItem(
+            kind=MemoryKind.DECISION,
+            title="Mismatched payload",
+            summary="Claim payload under decision kind",
+            payload=ClaimPayload(claim="mismatch"),
+            evidence=(artifact_evidence,),
+            visibility=scope,
+            validity=ValidityState(
+                status=ValidityStatus.VERIFIED,
+                dependency_fingerprint=dep_fp,
+            ),
+        )

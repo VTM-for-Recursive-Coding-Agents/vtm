@@ -1,12 +1,10 @@
 """Provider and environment integration exports."""
 
-from vtm.adapters.agent_model import AgentModelAdapter
 from vtm.adapters.embeddings import (
     DeterministicHashEmbeddingAdapter,
     EmbeddingAdapter,
 )
 from vtm.adapters.git import GitFingerprintAdapter, GitRepoFingerprintCollector
-from vtm.adapters.openai_agent import OpenAICompatibleAgentModelAdapter
 from vtm.adapters.openai_chat import OpenAICompatibleChatClient, OpenAICompatibleChatConfig
 from vtm.adapters.openai_embedding import OpenAIEmbeddingAdapter
 from vtm.adapters.openai_rlm import OpenAIRLMAdapter
@@ -29,14 +27,12 @@ from vtm.adapters.tree_sitter import (
 )
 
 __all__ = [
-    "AgentModelAdapter",
     "DEFAULT_TOOL_PROBES",
     "DeterministicHashEmbeddingAdapter",
     "EmbeddingAdapter",
     "EnvFingerprintAdapter",
     "GitFingerprintAdapter",
     "GitRepoFingerprintCollector",
-    "OpenAICompatibleAgentModelAdapter",
     "OpenAICompatibleChatClient",
     "OpenAICompatibleChatConfig",
     "OpenAIEmbeddingAdapter",

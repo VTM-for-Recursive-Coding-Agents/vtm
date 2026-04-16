@@ -5,7 +5,6 @@ from vtm.harness.models import (
     ExecutorResult,
     HarnessTaskPack,
     TaskMemoryContextItem,
-    TraceManifest,
 )
 from vtm.harness.scoring import changed_path_metrics, patch_similarity
 from vtm.harness.workspace import (
@@ -28,11 +27,10 @@ __all__ = [
     "HarnessTaskPack",
     "LocalWorkspaceBackend",
     "LocalWorkspaceDriver",
-    "NativeAgentBenchmarkExecutor",
     "PreparedWorkspace",
+    "RLMBenchmarkExecutor",
     "SubprocessBenchmarkExecutor",
     "TaskMemoryContextItem",
-    "TraceManifest",
     "WorkspaceBackend",
     "WorkspaceDriver",
     "changed_path_metrics",
@@ -44,19 +42,19 @@ def __getattr__(name: str) -> object:
     """Lazily import executor implementations to keep base imports light."""
     if name not in {
         "BenchmarkExecutor",
-        "NativeAgentBenchmarkExecutor",
+        "RLMBenchmarkExecutor",
         "SubprocessBenchmarkExecutor",
     }:
         raise AttributeError(name)
     from vtm.harness.executors import (
         BenchmarkExecutor,
-        NativeAgentBenchmarkExecutor,
+        RLMBenchmarkExecutor,
         SubprocessBenchmarkExecutor,
     )
 
     mapping = {
         "BenchmarkExecutor": BenchmarkExecutor,
-        "NativeAgentBenchmarkExecutor": NativeAgentBenchmarkExecutor,
+        "RLMBenchmarkExecutor": RLMBenchmarkExecutor,
         "SubprocessBenchmarkExecutor": SubprocessBenchmarkExecutor,
     }
     return mapping[name]

@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TypeVar
 
-from vtm.adapters.agent_model import AgentModelAdapter
 from vtm.adapters.embeddings import EmbeddingAdapter
 from vtm.adapters.rlm import RLMAdapter
 from vtm.benchmarks.coding_suite import run_coding_suite
@@ -42,14 +41,12 @@ class BenchmarkSuiteExecutor:
         symbol_indexer: SymbolIndexer,
         rlm_adapter: RLMAdapter | None = None,
         embedding_adapter: EmbeddingAdapter | None = None,
-        agent_model_adapter: AgentModelAdapter | None = None,
     ) -> None:
         """Create a suite executor with shared repo and indexing utilities."""
         self._manifest = manifest
         self._config = config
         self._repo_manager = repo_manager
         self._symbol_indexer = symbol_indexer
-        self._agent_model_adapter = agent_model_adapter
         self._kernel_factory = BenchmarkKernelFactory(
             config=config,
             symbol_indexer=symbol_indexer,
@@ -101,7 +98,6 @@ class BenchmarkSuiteExecutor:
             repo_manager=self._repo_manager,
             symbol_indexer=self._symbol_indexer,
             kernel_factory=self._kernel_factory,
-            agent_model_adapter=self._agent_model_adapter,
             require_pair=self._require_pair,
             swebench_harness_runner=self._swebench_harness_runner(output_dir),
         )

@@ -6,7 +6,7 @@ For public contracts and examples, use the source-of-truth docs alongside this g
 
 - [`api.md`](api.md): stable kernel-facing API
 - [`architecture.md`](architecture.md): system boundaries and data flows
-- [`harness.md`](harness.md): task-pack, workspace, executor, and trace contracts
+- [`harness.md`](harness.md): task-pack, workspace, and executor contracts
 - [`type-system.md`](type-system.md): durable record and enum reference
 
 ## Top-level layout
@@ -29,7 +29,7 @@ Use this surface for:
 - store protocols and built-in SQLite/filesystem implementations
 - kernel orchestration via `TransactionalMemoryKernel`
 
-Avoid using the root package for new harness, agent-runtime, or benchmark imports. Those now live in their owning subpackages.
+Avoid using the root package for new harness, RLM-integration, or benchmark imports. Those now live in their owning subpackages.
 
 ### `vtm.harness`
 
@@ -37,21 +37,21 @@ Avoid using the root package for new harness, agent-runtime, or benchmark import
 
 Start here when working on:
 
-- `HarnessTaskPack`, `ExecutorRequest`, `ExecutorResult`, and `TraceManifest`
+- `HarnessTaskPack`, `ExecutorRequest`, and `ExecutorResult`
 - local and Docker-backed workspace preparation
-- subprocess and native-agent benchmark executors
+- subprocess and vendored-RLM benchmark executors
 - changed-path and patch-similarity scoring helpers
 
-### `vtm.agents`
+### `vtm_rlm`
 
-[`src/vtm/agents/`](../src/vtm/agents/) owns the native single-agent runtime.
+[`src/vtm_rlm/`](../src/vtm_rlm/) owns the vendored-RLM execution bridge.
 
 Start here when working on:
 
-- `TerminalCodingAgent`
-- prompt assembly, session/turn/trace records, and compaction
-- permission policies and built-in tool registration
-- terminal, file, patch, and memory tool implementations
+- vendored runtime loading and environment setup
+- prompt construction and task-context injection
+- memory bridge tools and execution-time retrieval
+- writeback of successful runs into durable VTM memory
 
 ### `vtm.benchmarks`
 
@@ -142,43 +142,38 @@ Key files:
 - [`python_ast.py`](../src/vtm/adapters/python_ast.py), [`tree_sitter.py`](../src/vtm/adapters/tree_sitter.py): syntax trees, code anchors, and relocation
 - [`embeddings.py`](../src/vtm/adapters/embeddings.py): embedding adapter contract and deterministic local implementation
 - [`rlm.py`](../src/vtm/adapters/rlm.py): provider-neutral reranking contract
-- [`agent_model.py`](../src/vtm/adapters/agent_model.py): provider-neutral agent model-turn contract
-- [`openai_embedding.py`](../src/vtm/adapters/openai_embedding.py), [`openai_rlm.py`](../src/vtm/adapters/openai_rlm.py), [`openai_chat.py`](../src/vtm/adapters/openai_chat.py), [`openai_agent.py`](../src/vtm/adapters/openai_agent.py): optional OpenAI-compatible implementations
+- [`openai_embedding.py`](../src/vtm/adapters/openai_embedding.py), [`openai_rlm.py`](../src/vtm/adapters/openai_rlm.py), [`openai_chat.py`](../src/vtm/adapters/openai_chat.py): optional OpenAI-compatible implementations
 
 If a change is optional-provider-specific, keep the stable kernel contracts in `vtm` unchanged unless the boundary itself is intentionally moving.
 
 ### `harness/`
 
-[`src/vtm/harness/`](../src/vtm/harness/) defines the public execution seam used by benchmarks and the native agent runtime.
+[`src/vtm/harness/`](../src/vtm/harness/) defines the public execution seam used by benchmarks and the vendored-RLM runtime.
 
 Key files:
 
-- [`models.py`](../src/vtm/harness/models.py): task-pack, executor, trace, and context records
+- [`models.py`](../src/vtm/harness/models.py): task-pack and executor records
 - [`workspace.py`](../src/vtm/harness/workspace.py): local workspace preparation and driver lifecycle
 - [`workspace_docker.py`](../src/vtm/harness/workspace_docker.py): Docker-backed workspace backend and driver
-- [`executors.py`](../src/vtm/harness/executors.py): subprocess and native-agent executor implementations
+- [`executors.py`](../src/vtm/harness/executors.py): subprocess and vendored-RLM executor implementations
 - [`scoring.py`](../src/vtm/harness/scoring.py): changed-path and patch-similarity metrics
 
 This package is the right place for work that must stay stable even if benchmark orchestration or prompt construction changes.
 
-### `agents/`
+### `vtm_rlm/`
 
-[`src/vtm/agents/`](../src/vtm/agents/) is the native runtime package.
+[`src/vtm_rlm/`](../src/vtm_rlm/) is the vendored execution bridge.
 
 Key files:
 
-- [`runtime.py`](../src/vtm/agents/runtime.py): `TerminalCodingAgent` loop and runtime context
-- [`models.py`](../src/vtm/agents/models.py): durable request, prompt, turn, tool-call, compaction, and result records
-- [`permissions.py`](../src/vtm/agents/permissions.py): interactive and benchmark-autonomous permission policies
-- [`tools.py`](../src/vtm/agents/tools.py): public tool-provider entrypoint
-- [`tool_terminal.py`](../src/vtm/agents/tool_terminal.py): terminal tool behavior
-- [`tool_files.py`](../src/vtm/agents/tool_files.py): file and patch tool behavior
-- [`tool_memory.py`](../src/vtm/agents/tool_memory.py): kernel-memory tool behavior
-- [`tool_base.py`](../src/vtm/agents/tool_base.py), [`tool_utils.py`](../src/vtm/agents/tool_utils.py): shared tool contracts and helpers
-- [`compaction.py`](../src/vtm/agents/compaction.py): context-compaction logic
-- [`workspace.py`](../src/vtm/agents/workspace.py): compatibility shim back to `vtm.harness`
+- [`_vendored.py`](../src/vtm_rlm/_vendored.py): vendored-RLM import and runtime loading
+- [`context.py`](../src/vtm_rlm/context.py): benchmark-time execution dependencies
+- [`execution.py`](../src/vtm_rlm/execution.py): vendored runtime execution and artifact capture
+- [`memory_bridge.py`](../src/vtm_rlm/memory_bridge.py): VTM retrieval and evidence expansion exposed as runtime tools
+- [`prompting.py`](../src/vtm_rlm/prompting.py): task prompt construction
+- [`writeback.py`](../src/vtm_rlm/writeback.py): successful-run memory persistence
 
-If a change affects tool availability or runtime traces, expect matching updates in `docs/harness.md`, the agent README, and tests such as `tests/test_agents.py`, `tests/test_openai_agent.py`, or `tests/test_memory_kernel_runtime.py`.
+If a change affects runtime integration or writeback behavior, expect matching updates in `docs/harness.md`, the benchmark recipes, and tests such as `tests/test_vtm_rlm.py` or `tests/test_memory_kernel_runtime.py`.
 
 ### `benchmarks/`
 
@@ -224,7 +219,7 @@ Useful entry points:
 - [`test_procedures.py`](../tests/test_procedures.py): procedure validation
 - [`test_consolidation.py`](../tests/test_consolidation.py): deterministic consolidation
 - [`test_harness.py`](../tests/test_harness.py): harness contracts, workspaces, and compatibility shims
-- [`test_agents.py`](../tests/test_agents.py): native runtime, tools, and permission policies
+- [`test_vtm_rlm.py`](../tests/test_vtm_rlm.py): vendored-RLM bridge, executor smoke, and memory writeback behavior
 - [`test_benchmarks.py`](../tests/test_benchmarks.py), [`test_benchmark_cli.py`](../tests/test_benchmark_cli.py): benchmark runner and CLI behavior
 - [`test_docs_parity.py`](../tests/test_docs_parity.py): executable examples, markdown links, and doc-boundary checks
 - [`fixtures/migrations/`](../tests/fixtures/migrations/README.md): schema fixtures used by migration tests
@@ -260,14 +255,13 @@ Touch:
 - `docs/benchmark-recipes.md` or benchmark READMEs if user-facing commands or outputs changed
 - `tests/test_harness.py`, `tests/test_benchmarks.py`, and `tests/test_docs_parity.py`
 
-### Changing native-agent tools or permissions
+### Changing vendored-RLM execution or memory writeback
 
 Touch:
 
-- the relevant file under `src/vtm/agents/`
-- `src/vtm/adapters/agent_model.py` or OpenAI adapter modules if the model-turn boundary changed
-- `src/vtm/agents/README.md` and `docs/harness.md` if the trace or executor contract moved
-- `tests/test_agents.py` and related agent/runtime tests
+- the relevant file under `src/vtm_rlm/`
+- `docs/harness.md` and `docs/benchmark-recipes.md` if the executor contract moved
+- `tests/test_vtm_rlm.py` and related benchmark/runtime tests
 
 ## Reading order for new contributors
 

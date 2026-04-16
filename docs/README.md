@@ -9,7 +9,7 @@ Contents
 - `code-reference.md`: Generated inventory of every Python code file and its top-level symbols.
 - `../flake.nix`: Nix flake providing the dev shell, package, and CLI apps.
 - `harness.md`: Public harness contracts for task packs, workspaces, executors, and traces.
-- `benchmark-recipes.md`: Maintained benchmark commands for retrieval, coding, native-agent, and SWE-bench workflows.
+- `benchmark-recipes.md`: Maintained benchmark commands for retrieval, coding, vendored-RLM, and SWE-bench workflows.
 - `benchmark-results-template.md`: Template for recording run results outside the tracked docs.
 - `current-state-audit.md`: Current guarantees, known gaps, and intentionally limited areas.
 - `runtime-example.md`: Executable end-to-end kernel example.
