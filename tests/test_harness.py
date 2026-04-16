@@ -76,7 +76,6 @@ def test_harness_models_round_trip() -> None:
                 raw_anchor_path="bug.py",
             ),
         ),
-        coding_executor="external_command",
     )
     restored_task_pack = HarnessTaskPack.from_json(task_pack.to_json())
     assert restored_task_pack == task_pack
@@ -86,9 +85,7 @@ def test_harness_models_round_trip() -> None:
         task_file=".benchmarks/task.json",
         workspace=".benchmarks/workspace",
         artifact_root=".benchmarks/artifacts",
-        coding_executor="rlm",
         attempt_index=2,
-        command=("python", "worker.py"),
         test_command=("python", "-m", "pytest"),
     )
     restored_request = ExecutorRequest.from_json(executor_request.to_json())

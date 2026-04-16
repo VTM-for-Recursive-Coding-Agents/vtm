@@ -29,7 +29,6 @@ __all__ = [
     "LocalWorkspaceDriver",
     "PreparedWorkspace",
     "RLMBenchmarkExecutor",
-    "SubprocessBenchmarkExecutor",
     "TaskMemoryContextItem",
     "WorkspaceBackend",
     "WorkspaceDriver",
@@ -43,18 +42,15 @@ def __getattr__(name: str) -> object:
     if name not in {
         "BenchmarkExecutor",
         "RLMBenchmarkExecutor",
-        "SubprocessBenchmarkExecutor",
     }:
         raise AttributeError(name)
     from vtm.harness.executors import (
         BenchmarkExecutor,
         RLMBenchmarkExecutor,
-        SubprocessBenchmarkExecutor,
     )
 
     mapping = {
         "BenchmarkExecutor": BenchmarkExecutor,
         "RLMBenchmarkExecutor": RLMBenchmarkExecutor,
-        "SubprocessBenchmarkExecutor": SubprocessBenchmarkExecutor,
     }
     return mapping[name]

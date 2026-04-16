@@ -14,7 +14,6 @@ BenchmarkSuite = Literal["retrieval", "drift", "coding"]
 BenchmarkMode = Literal["no_memory", "lexical", "lexical_rlm_rerank", "embedding"]
 RepoSourceKind = Literal["git", "synthetic_python_smoke", "synthetic_terminal_smoke"]
 CodingEvaluationBackend = Literal["local_subprocess", "swebench_harness"]
-CodingExecutor = Literal["external_command", "rlm"]
 CodingExecutionStyle = Literal["mixed_patch", "shell_command"]
 WorkspaceBackendName = Literal["local_workspace", "docker_workspace"]
 DockerNetworkMode = Literal["none", "bridge"]
@@ -161,15 +160,13 @@ class BenchmarkRunConfig(VTMModel):
     docker_image: str | None = None
     docker_binary: str = "docker"
     docker_network: DockerNetworkMode = "none"
-    coding_executor: CodingExecutor = "external_command"
-    executor_command: tuple[str, ...] = Field(default_factory=tuple)
     attempt_count: int = Field(default=1, ge=1, le=32)
     pass_k_values: tuple[int, ...] = (1,)
-    agent_model_id: str | None = None
-    agent_max_turns: int = Field(default=12, ge=1, le=128)
-    agent_max_runtime_seconds: int = Field(default=600, ge=1, le=7200)
-    agent_command_timeout_seconds: int = Field(default=120, ge=1, le=3600)
-    agent_max_output_chars: int = Field(default=20000, ge=256, le=200000)
+    rlm_model_id: str | None = None
+    rlm_max_iterations: int = Field(default=12, ge=1, le=128)
+    rlm_max_runtime_seconds: int = Field(default=600, ge=1, le=7200)
+    workspace_command_timeout_seconds: int = Field(default=120, ge=1, le=3600)
+    workspace_max_output_chars: int = Field(default=20000, ge=256, le=200000)
     swebench_dataset_name: str | None = None
     swebench_harness_workers: int = Field(default=4, ge=0)
     swebench_harness_cache_level: SWEbenchHarnessCacheLevel = "env"

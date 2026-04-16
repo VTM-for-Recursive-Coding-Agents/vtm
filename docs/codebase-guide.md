@@ -189,7 +189,6 @@ Key files:
 - [`reporting.py`](../src/vtm/benchmarks/reporting.py): aggregate metrics and summaries
 - [`synthetic.py`](../src/vtm/benchmarks/synthetic.py), [`swebench.py`](../src/vtm/benchmarks/swebench.py), [`swebench_harness.py`](../src/vtm/benchmarks/swebench_harness.py): corpus preparation and SWE-bench integration
 - [`repo_materialization.py`](../src/vtm/benchmarks/repo_materialization.py), [`symbol_index.py`](../src/vtm/benchmarks/symbol_index.py): repo prep and indexing helpers
-- [`local_patcher.py`](../src/vtm/benchmarks/local_patcher.py): patch generation from typed harness task packs
 
 ## `docs/` map
 

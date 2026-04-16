@@ -8,7 +8,7 @@ VTM is organized around a kernel-first boundary with explicit seams for executio
    - Owns durable record types, store protocols and implementations, and the public kernel/service API.
    - This is the stability center of the repository.
 2. `vtm.harness`
-   - Owns typed task packs, workspace preparation, executor contracts, local executor implementations, and coding-task scoring helpers.
+   - Owns typed task packs, workspace preparation, executor contracts, and coding-task scoring helpers.
    - This is the execution boundary between the kernel and higher-level evaluation workflows.
 3. `vtm.benchmarks`
    - Owns manifests, case generation, suite orchestration, reporting, and SWE-bench integration.
@@ -47,7 +47,7 @@ The attempt-aware coding benchmark contract now depends on a few specific fields
 - `ExecutorRequest.attempt_index`
   - canonical attempt number, starting at `1`
 - `ExecutorRequest.artifact_root`
-  - stable per-attempt artifact root used by both vendored-RLM and external executors
+  - stable per-attempt artifact root used by the vendored-RLM executor
 - `ExecutorResult.attempt_index`
   - propagated attempt identity for `attempts.jsonl`
 - `HarnessTaskPack.execution_style`
@@ -65,7 +65,6 @@ The built-in implementations are:
 - `LocalWorkspaceDriver`
 - `DockerWorkspaceBackend`
 - `DockerWorkspaceDriver`
-- `SubprocessBenchmarkExecutor`
 - `RLMBenchmarkExecutor`
 
 Docker-backed attempts are prepared with:
@@ -100,9 +99,7 @@ New code should import from `vtm.harness`.
 1. `vtm.benchmarks` selects coding cases from a manifest.
 2. Retrieval context is built from repo-scoped kernel memory and converted into a typed `HarnessTaskPack`.
 3. The task pack is written once per case under `task-packs/<case-id>.json`.
-4. `vtm.harness` prepares one isolated workspace per attempt and runs either:
-   - an external command executor, or
-   - the vendored-RLM executor
+4. `vtm.harness` prepares one isolated workspace per attempt and runs the vendored-RLM executor.
 5. Per-attempt workspace and artifact layout is stable:
    - `workspaces/<mode>/<case-id>/attempt-01`
    - `executor-artifacts/<case-id>/attempt-01`

@@ -1,19 +1,14 @@
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 
 from vtm.benchmarks import BenchmarkManifest, BenchmarkRunConfig, BenchmarkRunner
-from vtm.benchmarks.local_patcher import LocalOpenAIPatcher, LocalPatcherConfig
 from vtm.benchmarks.models import BenchmarkCaseResult, CodingTaskCase, CommitPair, RepoSpec
 from vtm.benchmarks.repo_materialization import RepoWorkspaceManager
-from vtm.benchmarks.scaffold_bridge import ScaffoldBridge
 from vtm.benchmarks.swebench_harness import (
     SWEbenchHarnessInstanceResult,
     SWEbenchHarnessRunArtifacts,
@@ -70,38 +65,6 @@ def _build_swebench_repo(repo: Path) -> tuple[str, str]:
 def _git_diff(repo: Path, base: str, head: str, *paths: str) -> str:
     command = ["git", "diff", "--binary", "--no-ext-diff", f"{base}..{head}", "--", *paths]
     return _run(repo, *command)
-
-
-def _start_fake_openai_server(response_text: str) -> tuple[ThreadingHTTPServer, str]:
-    class Handler(BaseHTTPRequestHandler):
-        def do_POST(self) -> None:  # noqa: N802
-            length = int(self.headers["Content-Length"])
-            self.server.requests.append(self.rfile.read(length).decode("utf-8"))  # type: ignore[attr-defined]
-            body = json.dumps(
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": response_text,
-                            }
-                        }
-                    ]
-                }
-            ).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, format: str, *args: object) -> None:
-            return
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    server.requests = []  # type: ignore[attr-defined]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    return server, f"http://127.0.0.1:{server.server_port}"
 
 
 def test_prepare_swebench_manifest_cli_generates_local_refs(tmp_path: Path) -> None:
@@ -167,214 +130,6 @@ def test_prepare_swebench_manifest_cli_generates_local_refs(tmp_path: Path) -> N
     )
 
 
-def test_local_patcher_prompt_is_deterministic_and_script_applies_patch(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    base, head = _build_swebench_repo(workspace)
-    expected_patch = _git_diff(workspace, base, head, "smoke_module.py")
-    _run(workspace, "git", "checkout", "--quiet", base)
-    task_file = tmp_path / "task.json"
-    task_payload = {
-        "case_id": "example__repo-1",
-        "problem_statement": "Fix buggy_increment so it adds one.",
-        "failing_tests": ["tests/test_smoke_module.py::SmokeModuleTests::test_buggy_increment"],
-        "expected_changed_paths": ["smoke_module.py"],
-        "memory_context": [
-            {
-                "title": "buggy_increment in smoke_module.py",
-                "summary": "Returns the input without incrementing.",
-                "relative_path": "smoke_module.py",
-                "symbol": "buggy_increment",
-                "score": 1.0,
-            }
-        ],
-    }
-    task_file.write_text(json.dumps(task_payload), encoding="utf-8")
-
-    patcher = LocalOpenAIPatcher(
-        LocalPatcherConfig(
-            base_url="http://unused",
-            api_key="test",
-            model="qwen-test",
-        )
-    )
-    first_prompt = patcher.build_prompt(task=task_payload, workspace_root=workspace)
-    second_prompt = patcher.build_prompt(task=task_payload, workspace_root=workspace)
-    assert first_prompt == second_prompt
-
-    server, base_url = _start_fake_openai_server(expected_patch)
-    try:
-        env = {
-            **os.environ,
-            "VTM_LOCAL_LLM_BASE_URL": base_url,
-            "VTM_LOCAL_LLM_API_KEY": "test",
-            "VTM_LOCAL_LLM_MODEL": "qwen-test",
-        }
-        subprocess.run(
-            [
-                sys.executable,
-                "scripts/vtm_local_patcher.py",
-                "--task-file",
-                str(task_file),
-                "--workspace",
-                str(workspace),
-            ],
-            cwd=Path.cwd(),
-            env=env,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    finally:
-        server.shutdown()
-
-    assert "return value + 1" in (workspace / "smoke_module.py").read_text(encoding="utf-8")
-    assert (workspace / ".vtm-local-patcher" / "response.txt").exists()
-
-
-def test_local_patcher_rejects_invalid_patch_without_mutating_workspace(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace-invalid"
-    _build_swebench_repo(workspace)
-    current = (workspace / "smoke_module.py").read_text(encoding="utf-8")
-    patcher = LocalOpenAIPatcher(
-        LocalPatcherConfig(
-            base_url="http://unused",
-            api_key="test",
-            model="qwen-test",
-        )
-    )
-
-    class InvalidPatcher(LocalOpenAIPatcher):
-        def _request_patch(self, prompt: str) -> str:
-            return "diff --git a/missing.py b/missing.py\n"
-
-    task_file = tmp_path / "task-invalid.json"
-    task_file.write_text(
-        json.dumps(
-            {
-                "case_id": "invalid",
-                "problem_statement": "Break it.",
-                "expected_changed_paths": ["smoke_module.py"],
-                "memory_context": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    try:
-        InvalidPatcher(patcher._config).run(task_file=task_file, workspace=workspace)
-    except RuntimeError:
-        pass
-    else:
-        raise AssertionError("expected invalid patch to fail")
-
-    assert (workspace / "smoke_module.py").read_text(encoding="utf-8") == current
-
-
-def test_scaffold_bridge_builds_bundle_with_memory_and_test_files(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace-bridge"
-    _build_swebench_repo(workspace)
-    task_payload = {
-        "case_id": "example__repo-1",
-        "repo_name": "example__repo",
-        "commit_pair_id": "example__repo-1",
-        "problem_statement": "Fix buggy_increment so it adds one.",
-        "failing_tests": ["tests/test_smoke_module.py::SmokeModuleTests::test_buggy_increment"],
-        "fail_to_pass_tests": [
-            "tests/test_smoke_module.py::SmokeModuleTests::test_buggy_increment"
-        ],
-        "expected_changed_paths": ["smoke_module.py"],
-        "memory_mode": "lexical_rlm_rerank",
-        "memory_context": [
-            {
-                "title": "buggy_increment in smoke_module.py",
-                "summary": "Returns the input without incrementing.",
-                "relative_path": "smoke_module.py",
-                "symbol": "buggy_increment",
-                "score": 1.0,
-                "status": "verified",
-            }
-        ],
-    }
-
-    bridge = ScaffoldBridge()
-    bundle = bridge.build_bundle(task=task_payload, workspace_root=workspace)
-    brief = bridge.build_brief(bundle)
-
-    assert bundle["task"]["memory_mode"] == "lexical_rlm_rerank"
-    assert bundle["memory_context"][0]["title"] == "buggy_increment in smoke_module.py"
-    paths = {item["path"] for item in bundle["relevant_files"]}
-    assert "smoke_module.py" in paths
-    assert "tests/test_smoke_module.py" in paths
-    assert "Memory Context" in brief
-    assert "Relevant Files" in brief
-
-
-def test_scaffold_bridge_cli_writes_bundle_and_runs_delegate(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace-bridge-cli"
-    _build_swebench_repo(workspace)
-    task_file = tmp_path / "task-bridge.json"
-    artifact_root = tmp_path / "artifacts"
-    delegate_script = tmp_path / "delegate.py"
-    task_file.write_text(
-        json.dumps(
-            {
-                "case_id": "example__repo-1",
-                "repo_name": "example__repo",
-                "commit_pair_id": "example__repo-1",
-                "problem_statement": "Fix buggy_increment so it adds one.",
-                "failing_tests": [
-                    "tests/test_smoke_module.py::SmokeModuleTests::test_buggy_increment"
-                ],
-                "expected_changed_paths": ["smoke_module.py"],
-                "memory_context": [],
-            }
-        ),
-        encoding="utf-8",
-    )
-    delegate_script.write_text(
-        "from pathlib import Path\n"
-        "import argparse\n"
-        "parser = argparse.ArgumentParser()\n"
-        "parser.add_argument('--bundle', required=True)\n"
-        "parser.add_argument('--brief', required=True)\n"
-        "args = parser.parse_args()\n"
-        "bundle = Path(args.bundle)\n"
-        "brief = Path(args.brief)\n"
-        "assert bundle.exists()\n"
-        "assert brief.exists()\n"
-        "print(bundle.name)\n",
-        encoding="utf-8",
-    )
-
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "scripts/vtm_scaffold_bridge.py",
-            "--task-file",
-            str(task_file),
-            "--workspace",
-            str(workspace),
-            "--artifact-root",
-            str(artifact_root),
-            "--delegate-command",
-            (
-                f"{sys.executable} {delegate_script} "
-                "--bundle {scaffold_bundle} --brief {brief_file}"
-            ),
-        ],
-        cwd=Path.cwd(),
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    assert completed.returncode == 0
-    assert (artifact_root / "scaffold-bundle.json").exists()
-    assert (artifact_root / "scaffold-brief.md").exists()
-    assert (artifact_root / "delegate.stdout").read_text(encoding="utf-8").strip() == (
-        "scaffold-bundle.json"
-    )
-
-
 def test_repo_materialization_fetches_missing_prepared_ref_on_checkout(tmp_path: Path) -> None:
     remote_repo = tmp_path / "remote-repo"
     base, head = _build_swebench_repo(remote_repo)
@@ -414,7 +169,9 @@ def test_repo_materialization_fetches_missing_prepared_ref_on_checkout(tmp_path:
 def test_swebench_coding_suite_runs_fake_harness_and_writes_artifacts(
     tmp_path: Path,
     monkeypatch,
+    install_fake_vendored_rlm,
 ) -> None:
+    install_fake_vendored_rlm()
     remote_repo = tmp_path / "remote-harness"
     base, head = _build_swebench_repo(remote_repo)
     manifest = BenchmarkManifest(
@@ -452,17 +209,6 @@ def test_swebench_coding_suite_runs_fake_harness_and_writes_artifacts(
             ),
         ),
     )
-    executor_command = (
-        "python3",
-        "-c",
-        (
-            "from pathlib import Path; "
-            "Path('smoke_module.py').write_text("
-            "\"def buggy_increment(value: int) -> int:\\n"
-            "    return value + 1\\n\", encoding='utf-8')"
-        ),
-    )
-
     class FakeHarnessRunner:
         def evaluate_predictions(self, *, cases, results, config, output_dir):
             from vtm.benchmarks.swebench_harness import SWEbenchHarnessRunner
@@ -523,7 +269,7 @@ def test_swebench_coding_suite_runs_fake_harness_and_writes_artifacts(
             suite="coding",
             mode="lexical",
             output_dir=str(tmp_path / "swebench-run"),
-            executor_command=executor_command,
+            rlm_model_id="fake-model",
             swebench_dataset_name="princeton-nlp/SWE-bench_Lite",
         ),
     ).run()

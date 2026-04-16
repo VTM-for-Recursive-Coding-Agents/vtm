@@ -63,10 +63,19 @@ class BenchmarkRunner:
             "seed": self._config.seed,
         }
         if self._config.suite == "coding":
-            manifest_lock["coding_executor"] = self._config.coding_executor
+            manifest_lock["execution_engine"] = "vendored_rlm_vtm"
             manifest_lock["workspace_backend"] = self._config.workspace_backend
             manifest_lock["attempt_count"] = self._config.attempt_count
             manifest_lock["pass_k_values"] = list(self._config.pass_k_values)
+            manifest_lock["rlm_model_id"] = self._config.rlm_model_id
+            manifest_lock["rlm_max_iterations"] = self._config.rlm_max_iterations
+            manifest_lock["rlm_max_runtime_seconds"] = self._config.rlm_max_runtime_seconds
+            manifest_lock["workspace_command_timeout_seconds"] = (
+                self._config.workspace_command_timeout_seconds
+            )
+            manifest_lock["workspace_max_output_chars"] = (
+                self._config.workspace_max_output_chars
+            )
             if self._config.workspace_backend == "docker_workspace":
                 manifest_lock["docker_image"] = self._config.docker_image
                 manifest_lock["docker_binary"] = self._config.docker_binary
@@ -75,16 +84,6 @@ class BenchmarkRunner:
             manifest_lock["repo_filters"] = list(self._config.repo_filters)
         if self._config.pair_filters:
             manifest_lock["pair_filters"] = list(self._config.pair_filters)
-        if self._config.executor_command:
-            manifest_lock["executor_command"] = list(self._config.executor_command)
-        if self._config.coding_executor == "rlm":
-            manifest_lock["agent_model_id"] = self._config.agent_model_id
-            manifest_lock["agent_max_turns"] = self._config.agent_max_turns
-            manifest_lock["agent_max_runtime_seconds"] = self._config.agent_max_runtime_seconds
-            manifest_lock["agent_command_timeout_seconds"] = (
-                self._config.agent_command_timeout_seconds
-            )
-            manifest_lock["agent_max_output_chars"] = self._config.agent_max_output_chars
         if self._config.swebench_dataset_name:
             manifest_lock["swebench_dataset_name"] = self._config.swebench_dataset_name
         manifest_lock["swebench_harness_workers"] = self._config.swebench_harness_workers

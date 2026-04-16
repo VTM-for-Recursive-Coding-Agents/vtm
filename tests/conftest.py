@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from textwrap import dedent
+from typing import Any
 
 import pytest
 
@@ -32,6 +35,7 @@ from vtm.stores.artifact_store import FilesystemArtifactStore
 from vtm.stores.cache_store import SqliteCacheStore
 from vtm.stores.embedding_store import SqliteEmbeddingIndexStore
 from vtm.stores.sqlite_store import SqliteMetadataStore
+from vtm_rlm.execution import VendoredRLMRunResult
 
 DEFAULT_PROCEDURE_VALIDATOR = object()
 
@@ -281,6 +285,89 @@ def embedding_retriever(
         embedding_store,
         DeterministicHashEmbeddingAdapter(),
     )
+
+
+@pytest.fixture
+def install_fake_vendored_rlm(monkeypatch: pytest.MonkeyPatch):
+    def _install(
+        *,
+        apply_workspace_update: Callable[[Any, Path, Path], None] | None = None,
+        response: str = "FINAL(Applied synthetic vendored-RLM update.)",
+    ) -> None:
+        def fake_run_vendored_rlm(
+            *,
+            task_pack,
+            workspace_root: Path,
+            artifact_root: Path,
+            model_id: str,
+            kernel,
+            scopes,
+            max_iterations: int,
+            max_depth: int,
+            max_timeout_seconds: int,
+            base_url: str | None = None,
+            api_key: str | None = None,
+        ) -> VendoredRLMRunResult:
+            del kernel, scopes, max_iterations, max_depth, max_timeout_seconds, base_url, api_key
+            artifact_root.mkdir(parents=True, exist_ok=True)
+            trajectory_dir = artifact_root / "trajectory"
+            trajectory_dir.mkdir(parents=True, exist_ok=True)
+            if apply_workspace_update is None:
+                diff_result = subprocess.run(
+                    [
+                        "git",
+                        "diff",
+                        "--binary",
+                        "--no-ext-diff",
+                        f"{task_pack.base_ref}..{task_pack.head_ref}",
+                    ],
+                    cwd=workspace_root,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                if diff_result.stdout.strip():
+                    subprocess.run(
+                        ["git", "apply", "--whitespace=nowarn"],
+                        cwd=workspace_root,
+                        input=diff_result.stdout,
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                    )
+            else:
+                apply_workspace_update(task_pack, workspace_root, artifact_root)
+
+            response_path = artifact_root / "response.txt"
+            response_path.write_text(response, encoding="utf-8")
+            completion_json_path = artifact_root / "completion.json"
+            completion_json_path.write_text(
+                json.dumps({"response": response, "model_id": model_id}, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+            metadata_json_path = artifact_root / "trajectory.json"
+            metadata_json_path.write_text(
+                json.dumps({"model_id": model_id, "mode": "fake_vendored_rlm"}, indent=2),
+                encoding="utf-8",
+            )
+            return VendoredRLMRunResult(
+                response=response,
+                runtime_ms=25.0,
+                response_path=str(response_path),
+                completion_json_path=str(completion_json_path),
+                metadata_json_path=str(metadata_json_path),
+                trajectory_dir=str(trajectory_dir),
+                usage_summary={
+                    "total_input_tokens": 10,
+                    "total_output_tokens": 5,
+                    "total_cost": 0.0,
+                },
+                metadata={"mode": "fake_vendored_rlm"},
+            )
+
+        monkeypatch.setattr("vtm.harness.executors.run_vendored_rlm", fake_run_vendored_rlm)
+
+    return _install
 
 
 @pytest.fixture

@@ -7,7 +7,7 @@ It owns the contracts that should stay stable even when benchmark orchestration,
 ## Public contracts
 
 - `HarnessTaskPack`
-  - typed on-disk task definition used by coding executors and local patchers
+  - typed on-disk task definition used by the vendored-RLM coding executor
   - includes optional `retrieval_query` when the benchmark author wants explicit retrieval phrasing
   - includes `execution_style` so patch-oriented and shell-command tasks can share the same suite
 - `TaskMemoryContextItem`
@@ -53,12 +53,11 @@ Docker-backed attempts run one long-lived container per attempt with:
 
 ## Executor contracts
 
-- `SubprocessBenchmarkExecutor`
-  - runs a caller-provided external command against a prepared workspace
 - `RLMBenchmarkExecutor`
-  - runs the vendored upstream `rlm` runtime against the same workspace contract
+  - runs the vendored upstream `rlm` runtime against the workspace contract
+  - is the only built-in coding executor
 
-Both executors currently produce the same case-local artifact backbone:
+The RLM executor produces the stable case-local artifact backbone:
 
 - `command-events.jsonl`
 - `final-git-status.txt`
@@ -81,13 +80,6 @@ When coding benchmarks run repeated attempts, the layout is stable:
 - aggregate results: `results.jsonl`
 - per-attempt results: `attempts.jsonl`
 
-External executor templates may reference:
-
-- `{task_file}`
-- `{workspace}`
-- `{attempt}`
-- `{artifact_root}`
-
 ## Task-pack contract
 
 `HarnessTaskPack` is the canonical coding-task file shape written under `task-packs/<case-id>.json`.
@@ -99,7 +91,7 @@ Important fields:
 - task statement: `task_statement`, optional `problem_statement`, optional `hints_text`
 - evaluation metadata: `evaluation_backend`, `dataset_name`, `instance_id`
 - scoring inputs: `expected_changed_paths`, `target_patch_digest`, optional `gold_test_patch_digest`
-- execution settings: `memory_mode`, `top_k`, `coding_executor`
+- execution settings: `memory_mode`, `top_k`
 - execution style: `execution_style`
 - retrieval override: optional `retrieval_query`
 - retrieval context: `memory_context`

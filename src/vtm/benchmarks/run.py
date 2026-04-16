@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import shlex
 
 from vtm.adapters import (
     DeterministicHashEmbeddingAdapter,
@@ -71,20 +70,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Docker network mode for docker_workspace runs.",
     )
     parser.add_argument(
-        "--coding-executor",
-        choices=("external_command", "rlm"),
-        default="external_command",
-        help="Coding-task execution path to use.",
-    )
-    parser.add_argument(
-        "--executor-command",
-        default="",
-        help=(
-            "Optional command template for coding tasks. Supports {task_file}, {workspace}, "
-            "{attempt}, and {artifact_root}."
-        ),
-    )
-    parser.add_argument(
         "--attempts",
         type=int,
         default=1,
@@ -97,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Additional pass@k checkpoints to report for coding tasks. Repeat to add more.",
     )
     parser.add_argument(
-        "--agent-model",
+        "--rlm-model-id",
         default="",
         help=(
             "Model id for vendored-RLM coding runs. Falls back to "
@@ -105,25 +90,25 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--agent-max-turns",
+        "--rlm-max-iterations",
         type=int,
         default=12,
         help="Maximum number of vendored-RLM iterations.",
     )
     parser.add_argument(
-        "--agent-max-runtime-seconds",
+        "--rlm-max-runtime-seconds",
         type=int,
         default=600,
         help="Maximum runtime budget for vendored RLM.",
     )
     parser.add_argument(
-        "--agent-command-timeout-seconds",
+        "--workspace-command-timeout-seconds",
         type=int,
         default=120,
         help="Per-command timeout for workspace operations.",
     )
     parser.add_argument(
-        "--agent-max-output-chars",
+        "--workspace-max-output-chars",
         type=int,
         default=20000,
         help="Maximum characters captured from a single workspace command.",
@@ -210,15 +195,13 @@ def main() -> int:
         docker_image=args.docker_image or None,
         docker_binary=args.docker_binary,
         docker_network=args.docker_network,
-        coding_executor=args.coding_executor,
-        executor_command=tuple(shlex.split(args.executor_command)),
         attempt_count=args.attempts,
         pass_k_values=pass_k_values,
-        agent_model_id=args.agent_model or None,
-        agent_max_turns=args.agent_max_turns,
-        agent_max_runtime_seconds=args.agent_max_runtime_seconds,
-        agent_command_timeout_seconds=args.agent_command_timeout_seconds,
-        agent_max_output_chars=args.agent_max_output_chars,
+        rlm_model_id=args.rlm_model_id or None,
+        rlm_max_iterations=args.rlm_max_iterations,
+        rlm_max_runtime_seconds=args.rlm_max_runtime_seconds,
+        workspace_command_timeout_seconds=args.workspace_command_timeout_seconds,
+        workspace_max_output_chars=args.workspace_max_output_chars,
         swebench_dataset_name=args.swebench_dataset_name or None,
         swebench_harness_workers=args.swebench_harness_workers,
         swebench_harness_cache_level=args.swebench_cache_level,
@@ -230,7 +213,7 @@ def main() -> int:
             config,
             rlm_model_name=args.rlm_model or None,
             embedding_model_name=args.embedding_model or None,
-            agent_model_name=args.agent_model or None,
+            execution_model_name=args.rlm_model_id or None,
         )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
@@ -244,7 +227,7 @@ def execute_benchmark_run(
     *,
     rlm_model_name: str | None = None,
     embedding_model_name: str | None = None,
-    agent_model_name: str | None = None,
+    execution_model_name: str | None = None,
 ) -> BenchmarkRunResult:
     """Execute one benchmark run with environment-aware optional adapters."""
     rlm_adapter = None
@@ -264,21 +247,21 @@ def execute_benchmark_run(
             embedding_adapter = OpenAIEmbeddingAdapter(model=resolved_embedding_model)
         else:
             embedding_adapter = DeterministicHashEmbeddingAdapter()
-    if config.suite == "coding" and config.coding_executor == "rlm":
-        resolved_agent_model = (
-            agent_model_name
-            or config.agent_model_id
+    if config.suite == "coding":
+        resolved_rlm_model = (
+            execution_model_name
+            or config.rlm_model_id
             or os.getenv("VTM_AGENT_MODEL")
             or os.getenv("VTM_LOCAL_LLM_MODEL")
         )
-        if not resolved_agent_model:
+        if not resolved_rlm_model:
             raise ValueError(
-                f"{config.coding_executor} coding runs require --agent-model, "
+                "coding runs require --rlm-model-id, "
                 "VTM_AGENT_MODEL, or "
                 "VTM_LOCAL_LLM_MODEL"
             )
         resolved_config = resolved_config.model_copy(
-            update={"agent_model_id": resolved_agent_model}
+            update={"rlm_model_id": resolved_rlm_model}
         )
 
     return BenchmarkRunner(
