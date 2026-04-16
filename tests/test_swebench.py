@@ -7,10 +7,14 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 
 from vtm.benchmarks import BenchmarkManifest, BenchmarkRunConfig, BenchmarkRunner
 from vtm.benchmarks.local_patcher import LocalOpenAIPatcher, LocalPatcherConfig
-from vtm.benchmarks.models import CodingTaskCase, CommitPair, RepoSpec
+from vtm.benchmarks.models import BenchmarkCaseResult, CodingTaskCase, CommitPair, RepoSpec
+from vtm.benchmarks.repo_materialization import RepoWorkspaceManager
+from vtm.benchmarks.scaffold_bridge import ScaffoldBridge
+from vtm.benchmarks.swebench_harness import SWEbenchHarnessRunner
 from vtm.benchmarks.swebench_harness import (
     SWEbenchHarnessInstanceResult,
     SWEbenchHarnessRunArtifacts,
@@ -265,6 +269,145 @@ def test_local_patcher_rejects_invalid_patch_without_mutating_workspace(tmp_path
     assert (workspace / "smoke_module.py").read_text(encoding="utf-8") == current
 
 
+def test_scaffold_bridge_builds_bundle_with_memory_and_test_files(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace-bridge"
+    _build_swebench_repo(workspace)
+    task_payload = {
+        "case_id": "example__repo-1",
+        "repo_name": "example__repo",
+        "commit_pair_id": "example__repo-1",
+        "problem_statement": "Fix buggy_increment so it adds one.",
+        "failing_tests": ["tests/test_smoke_module.py::SmokeModuleTests::test_buggy_increment"],
+        "fail_to_pass_tests": [
+            "tests/test_smoke_module.py::SmokeModuleTests::test_buggy_increment"
+        ],
+        "expected_changed_paths": ["smoke_module.py"],
+        "memory_mode": "lexical_rlm_rerank",
+        "memory_context": [
+            {
+                "title": "buggy_increment in smoke_module.py",
+                "summary": "Returns the input without incrementing.",
+                "relative_path": "smoke_module.py",
+                "symbol": "buggy_increment",
+                "score": 1.0,
+                "status": "verified",
+            }
+        ],
+    }
+
+    bridge = ScaffoldBridge()
+    bundle = bridge.build_bundle(task=task_payload, workspace_root=workspace)
+    brief = bridge.build_brief(bundle)
+
+    assert bundle["task"]["memory_mode"] == "lexical_rlm_rerank"
+    assert bundle["memory_context"][0]["title"] == "buggy_increment in smoke_module.py"
+    paths = {item["path"] for item in bundle["relevant_files"]}
+    assert "smoke_module.py" in paths
+    assert "tests/test_smoke_module.py" in paths
+    assert "Memory Context" in brief
+    assert "Relevant Files" in brief
+
+
+def test_scaffold_bridge_cli_writes_bundle_and_runs_delegate(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace-bridge-cli"
+    _build_swebench_repo(workspace)
+    task_file = tmp_path / "task-bridge.json"
+    artifact_root = tmp_path / "artifacts"
+    delegate_script = tmp_path / "delegate.py"
+    task_file.write_text(
+        json.dumps(
+            {
+                "case_id": "example__repo-1",
+                "repo_name": "example__repo",
+                "commit_pair_id": "example__repo-1",
+                "problem_statement": "Fix buggy_increment so it adds one.",
+                "failing_tests": [
+                    "tests/test_smoke_module.py::SmokeModuleTests::test_buggy_increment"
+                ],
+                "expected_changed_paths": ["smoke_module.py"],
+                "memory_context": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    delegate_script.write_text(
+        "from pathlib import Path\n"
+        "import argparse\n"
+        "parser = argparse.ArgumentParser()\n"
+        "parser.add_argument('--bundle', required=True)\n"
+        "parser.add_argument('--brief', required=True)\n"
+        "args = parser.parse_args()\n"
+        "bundle = Path(args.bundle)\n"
+        "brief = Path(args.brief)\n"
+        "assert bundle.exists()\n"
+        "assert brief.exists()\n"
+        "print(bundle.name)\n",
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/vtm_scaffold_bridge.py",
+            "--task-file",
+            str(task_file),
+            "--workspace",
+            str(workspace),
+            "--artifact-root",
+            str(artifact_root),
+            "--delegate-command",
+            f"{sys.executable} {delegate_script} --bundle {{scaffold_bundle}} --brief {{brief_file}}",
+        ],
+        cwd=Path.cwd(),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0
+    assert (artifact_root / "scaffold-bundle.json").exists()
+    assert (artifact_root / "scaffold-brief.md").exists()
+    assert (artifact_root / "delegate.stdout").read_text(encoding="utf-8").strip() == (
+        "scaffold-bundle.json"
+    )
+
+
+def test_repo_materialization_fetches_missing_prepared_ref_on_checkout(tmp_path: Path) -> None:
+    remote_repo = tmp_path / "remote-repo"
+    base, head = _build_swebench_repo(remote_repo)
+    prepared_ref = "refs/vtm-swebench/example__repo-1/base"
+    _run(remote_repo, "git", "update-ref", prepared_ref, base)
+
+    repo_spec = RepoSpec(
+        repo_name="example__repo",
+        source_kind="git",
+        remote_url=str(remote_repo),
+        branch="main",
+        commit_pairs=(
+            CommitPair(
+                pair_id="example__repo-1",
+                base_ref=prepared_ref,
+                head_ref=head,
+            ),
+        ),
+    )
+    manager = RepoWorkspaceManager()
+    materialized = manager.materialize_repo(repo_spec, tmp_path / "corpus")
+
+    missing_ref = subprocess.run(
+        ["git", "rev-parse", prepared_ref],
+        cwd=materialized,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert missing_ref.returncode != 0
+
+    manager.git_checkout(materialized, prepared_ref)
+
+    assert _run(materialized, "git", "rev-parse", "HEAD") == base
+
+
 def test_swebench_coding_suite_runs_fake_harness_and_writes_artifacts(
     tmp_path: Path,
     monkeypatch,
@@ -394,3 +537,72 @@ def test_swebench_coding_suite_runs_fake_harness_and_writes_artifacts(
     assert row["metadata"]["harness_status"] == "resolved"
     assert "predictions_jsonl" in result.artifacts
     assert "swebench_harness_results_json" in result.artifacts
+
+
+def test_swebench_harness_uses_absolute_predictions_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = SWEbenchHarnessRunner()
+    captured: dict[str, object] = {}
+
+    def fake_run(command, cwd, check, capture_output, text):
+        del check, capture_output, text
+        captured["command"] = list(command)
+        captured["cwd"] = cwd
+        report_path = Path(cwd) / "fake-report.json"
+        report_path.write_text(
+            json.dumps(
+                {
+                    "resolved_ids": ["example__repo-1"],
+                    "unresolved_ids": [],
+                    "applied_ids": ["example__repo-1"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("vtm.benchmarks.swebench_harness.subprocess.run", fake_run)
+
+    cases = [
+        CodingTaskCase(
+            case_id="example__repo-1",
+            repo_name="example__repo",
+            commit_pair_id="example__repo-1",
+            evaluation_backend="swebench_harness",
+            instance_id="example__repo-1",
+            dataset_name="princeton-nlp/SWE-bench_Lite",
+            task_statement="Fix buggy_increment so it adds one.",
+            problem_statement="Fix buggy_increment so it adds one.",
+        )
+    ]
+    results = [
+        BenchmarkCaseResult(
+            suite="coding",
+            mode="lexical",
+            case_id="example__repo-1",
+            repo_name="example__repo",
+            commit_pair_id="example__repo-1",
+            metadata={"produced_patch_text": "diff --git a/foo b/foo\n"},
+        )
+    ]
+    normalized, artifacts = runner.evaluate_predictions(
+        cases=cases,
+        results=results,
+        config=BenchmarkRunConfig(
+            manifest_path="swebench-harness.json",
+            suite="coding",
+            mode="lexical",
+            output_dir=str(tmp_path / "run"),
+            swebench_dataset_name="princeton-nlp/SWE-bench_Lite",
+            swebench_harness_workers=1,
+        ),
+        output_dir=tmp_path / "run",
+    )
+    assert normalized["example__repo-1"].resolved is True
+    command = captured["command"]
+    assert isinstance(command, list)
+    predictions_path = command[command.index("--predictions_path") + 1]
+    assert Path(predictions_path).is_absolute()
+    assert artifacts.predictions_path == predictions_path

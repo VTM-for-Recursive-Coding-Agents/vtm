@@ -567,7 +567,7 @@ class LocalWorkspaceBackend:
         workspace_root.parent.mkdir(parents=True, exist_ok=True)
         artifact_root.mkdir(parents=True, exist_ok=True)
         self._run(("git", "clone", "--quiet", str(repo_root), str(workspace_root)))
-        self._run(("git", "checkout", "--quiet", base_ref), cwd=workspace_root)
+        self._checkout_prepared_ref(workspace_root, base_ref)
         driver = LocalWorkspaceDriver(
             workspace_root=workspace_root,
             artifact_root=artifact_root,
@@ -583,6 +583,18 @@ class LocalWorkspaceBackend:
             driver=driver,
             metadata={},
         )
+
+    def _checkout_prepared_ref(self, workspace_root: Path, base_ref: str) -> None:
+        try:
+            self._run(("git", "checkout", "--quiet", base_ref), cwd=workspace_root)
+        except subprocess.CalledProcessError:
+            # Prepared SWE-bench refs are custom local refs, so a fresh clone may
+            # need an explicit fetch before they become visible in the workspace.
+            self._run(
+                ("git", "fetch", "--quiet", "origin", f"{base_ref}:{base_ref}"),
+                cwd=workspace_root,
+            )
+            self._run(("git", "checkout", "--quiet", base_ref), cwd=workspace_root)
 
     def _run(self, command: tuple[str, ...], *, cwd: Path | None = None) -> None:
         subprocess.run(

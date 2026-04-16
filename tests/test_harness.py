@@ -21,6 +21,7 @@ from vtm.harness.models import (
     TaskMemoryContextItem,
     TraceManifest,
 )
+from vtm.harness.workspace import LocalWorkspaceBackend
 from vtm.harness.workspace import LocalWorkspaceDriver
 from vtm.harness.workspace_docker import DockerWorkspaceBackend, DockerWorkspaceDriver
 
@@ -44,6 +45,16 @@ def _build_repo(repo: Path) -> None:
     (repo / "hello.txt").write_text("hello\n", encoding="utf-8")
     _run(repo, "git", "add", "hello.txt")
     _run(repo, "git", "commit", "-m", "base")
+
+
+def _build_repo_with_second_commit(repo: Path) -> tuple[str, str]:
+    _build_repo(repo)
+    base = _run(repo, "git", "rev-parse", "HEAD")
+    (repo / "hello.txt").write_text("hello from head\n", encoding="utf-8")
+    _run(repo, "git", "add", "hello.txt")
+    _run(repo, "git", "commit", "-m", "head")
+    head = _run(repo, "git", "rev-parse", "HEAD")
+    return base, head
 
 
 def test_harness_models_round_trip() -> None:
@@ -211,6 +222,30 @@ def test_docker_workspace_backend_prepares_isolated_workspace(
     assert state_path.exists() is False
 
     prepared.driver.close()
+
+
+def test_local_workspace_backend_fetches_missing_prepared_ref(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    base, _ = _build_repo_with_second_commit(repo_root)
+    prepared_ref = "refs/vtm-swebench/example__repo-1/base"
+    _run(repo_root, "git", "update-ref", prepared_ref, base)
+
+    backend = LocalWorkspaceBackend()
+    prepared = backend.prepare_workspace(
+        case_id="prepared-ref-case",
+        attempt_index=1,
+        repo_root=repo_root,
+        base_ref=prepared_ref,
+        output_root=tmp_path / "outputs",
+        mode="lexical",
+        command_timeout_seconds=30,
+        max_output_chars=200,
+    )
+
+    try:
+        assert _run(prepared.workspace_root, "git", "rev-parse", "HEAD") == base
+    finally:
+        prepared.driver.close()
 
 
 def test_docker_workspace_backend_prepares_existing_workspace(

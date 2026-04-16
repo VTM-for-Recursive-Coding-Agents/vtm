@@ -43,7 +43,13 @@ class RepoWorkspaceManager:
 
     def git_checkout(self, repo_root: Path, ref: str) -> None:
         """Check out the requested git ref inside a materialized repo."""
-        self.run(["git", "checkout", "--quiet", ref], cwd=repo_root)
+        try:
+            self.run(["git", "checkout", "--quiet", ref], cwd=repo_root)
+        except subprocess.CalledProcessError:
+            # Prepared SWE-bench refs live outside normal branch heads, so a
+            # local clone may need an explicit fetch before the ref is visible.
+            self.run(["git", "fetch", "--quiet", "origin", f"{ref}:{ref}"], cwd=repo_root)
+            self.run(["git", "checkout", "--quiet", ref], cwd=repo_root)
 
     def git_diff_paths(self, repo_root: Path, base_ref: str, head_ref: str) -> tuple[str, ...]:
         """Return changed paths between the two refs."""

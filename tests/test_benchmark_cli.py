@@ -6,6 +6,38 @@ import sys
 from pathlib import Path
 from textwrap import dedent
 
+from vtm.benchmarks import matrix, run
+
+
+def test_run_cli_parser_accepts_agent_prompt_profile() -> None:
+    args = run.build_parser().parse_args(
+        [
+            "--manifest",
+            "benchmarks/manifests/synthetic-smoke.json",
+            "--suite",
+            "coding",
+            "--output",
+            "out",
+            "--agent-prompt-profile",
+            "vtm-native-agent-rlm-v1",
+        ]
+    )
+
+    assert args.agent_prompt_profile == "vtm-native-agent-rlm-v1"
+
+
+def test_matrix_cli_parser_accepts_agent_prompt_profile() -> None:
+    args = matrix.build_parser().parse_args(
+        [
+            "--output",
+            "out",
+            "--agent-prompt-profile",
+            "vtm-native-agent-rlm-v1",
+        ]
+    )
+
+    assert args.agent_prompt_profile == "vtm-native-agent-rlm-v1"
+
 
 def test_benchmark_cli_runs_synthetic_retrieval(tmp_path: Path) -> None:
     output_dir = tmp_path / "cli-run"
