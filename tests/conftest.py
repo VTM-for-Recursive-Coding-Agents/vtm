@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from textwrap import dedent
 
 import pytest
 
@@ -280,3 +281,195 @@ def embedding_retriever(
         embedding_store,
         DeterministicHashEmbeddingAdapter(),
     )
+
+
+@pytest.fixture
+def fake_docker_binary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    state_dir = tmp_path / "fake-docker-state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    script_path = tmp_path / "fake-docker"
+    script_path.write_text(
+        dedent(
+            """\
+            #!/usr/bin/env python3
+            import json
+            import os
+            import subprocess
+            import sys
+            from pathlib import Path
+
+
+            STATE_DIR = Path(os.environ["FAKE_DOCKER_STATE_DIR"])
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+            def _container_state(name: str) -> Path:
+                return STATE_DIR / f"{name}.json"
+
+
+            def _load_state(name: str) -> dict[str, object]:
+                return json.loads(_container_state(name).read_text(encoding="utf-8"))
+
+
+            def _write_state(name: str, payload: dict[str, object]) -> None:
+                _container_state(name).write_text(
+                    json.dumps(payload, sort_keys=True),
+                    encoding="utf-8",
+                )
+
+
+            def _run(args: list[str]) -> int:
+                name = None
+                network = "none"
+                workdir = None
+                image = None
+                read_only_rootfs = False
+                pids_limit = None
+                memory_limit = None
+                cpu_limit = None
+                tmpfs_mounts = []
+                bind_mounts = []
+                security_opts = []
+                cap_drops = []
+                index = 0
+                while index < len(args):
+                    token = args[index]
+                    if token == "-d":
+                        index += 1
+                    elif token == "--read-only":
+                        read_only_rootfs = True
+                        index += 1
+                    elif token in {
+                        "--name",
+                        "--network",
+                        "--cap-drop",
+                        "--security-opt",
+                        "--tmpfs",
+                        "--pids-limit",
+                        "--memory",
+                        "--cpus",
+                        "--user",
+                        "-v",
+                        "-w",
+                    }:
+                        value = args[index + 1]
+                        if token == "--name":
+                            name = value
+                        elif token == "--network":
+                            network = value
+                        elif token == "--cap-drop":
+                            cap_drops.append(value)
+                        elif token == "--security-opt":
+                            security_opts.append(value)
+                        elif token == "--tmpfs":
+                            tmpfs_mounts.append(value)
+                        elif token == "--pids-limit":
+                            pids_limit = value
+                        elif token == "--memory":
+                            memory_limit = value
+                        elif token == "--cpus":
+                            cpu_limit = value
+                        elif token == "-w":
+                            workdir = value
+                        elif token == "-v":
+                            bind_mounts.append(value)
+                        index += 2
+                    else:
+                        image = token
+                        break
+                if name is None or workdir is None or image is None:
+                    raise SystemExit("fake docker run missing required arguments")
+                _write_state(
+                    name,
+                    {
+                        "container_id": f"fake-{name}",
+                        "image": image,
+                        "network": network,
+                        "workdir": workdir,
+                        "read_only_rootfs": read_only_rootfs,
+                        "pids_limit": pids_limit,
+                        "memory_limit": memory_limit,
+                        "cpu_limit": cpu_limit,
+                        "tmpfs_mounts": tmpfs_mounts,
+                        "bind_mounts": bind_mounts,
+                        "security_opts": security_opts,
+                        "cap_drops": cap_drops,
+                    },
+                )
+                sys.stdout.write(f"fake-{name}\\n")
+                return 0
+
+
+            def _exec(args: list[str]) -> int:
+                interactive = False
+                workdir = None
+                index = 0
+                while index < len(args):
+                    token = args[index]
+                    if token == "-i":
+                        interactive = True
+                        index += 1
+                    elif token == "-w":
+                        workdir = args[index + 1]
+                        index += 2
+                    else:
+                        break
+                name = args[index]
+                command = args[index + 1 :]
+                if not command:
+                    raise SystemExit("fake docker exec missing command")
+                state = _load_state(name)
+                cwd = Path(workdir or str(state["workdir"]))
+                env = {
+                    **os.environ,
+                    "PS1": "",
+                    "TERM": "dumb",
+                }
+                if interactive:
+                    os.chdir(cwd)
+                    os.execvpe(command[0], command, env)
+                completed = subprocess.run(
+                    command,
+                    cwd=cwd,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                sys.stdout.write(completed.stdout)
+                sys.stderr.write(completed.stderr)
+                return completed.returncode
+
+
+            def _rm(args: list[str]) -> int:
+                names = [value for value in args if value != "-f"]
+                for name in names:
+                    state_path = _container_state(name)
+                    if state_path.exists():
+                        state_path.unlink()
+                return 0
+
+
+            def main() -> int:
+                if len(sys.argv) < 2:
+                    raise SystemExit("fake docker requires a subcommand")
+                command = sys.argv[1]
+                args = sys.argv[2:]
+                if command == "run":
+                    return _run(args)
+                if command == "exec":
+                    return _exec(args)
+                if command == "rm":
+                    return _rm(args)
+                raise SystemExit(f"unsupported fake docker command: {command}")
+
+
+            if __name__ == "__main__":
+                raise SystemExit(main())
+            """
+        ),
+        encoding="utf-8",
+    )
+    script_path.chmod(0o755)
+    monkeypatch.setenv("FAKE_DOCKER_STATE_DIR", str(state_dir))
+    return script_path

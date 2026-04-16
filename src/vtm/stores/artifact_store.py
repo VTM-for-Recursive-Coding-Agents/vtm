@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from vtm.artifacts import ArtifactIntegrityReport, ArtifactRecord
+from vtm.artifacts import ArtifactIntegrityReport, ArtifactRecord, ArtifactRepairReport
 from vtm.base import utc_now
 from vtm.enums import ArtifactCaptureState
 from vtm.ids import new_artifact_id
@@ -117,11 +117,14 @@ class FilesystemArtifactStore:
         artifact_id: str,
         *,
         reason: str | None = None,
+        provenance: Mapping[str, Any] | None = None,
     ) -> ArtifactRecord:
         record = self._require_artifact_record(artifact_id)
         metadata = dict(record.metadata)
         if reason is not None:
             metadata["abandon_reason"] = reason
+        if provenance is not None:
+            metadata["abandon_provenance"] = dict(provenance)
         abandoned = record.model_copy(
             update={
                 "capture_state": ArtifactCaptureState.ABANDONED,
@@ -212,6 +215,9 @@ class FilesystemArtifactStore:
             )
         )
         committed_missing_blob_artifact_ids: list[str] = []
+        abandoned_artifact_ids_by_reason: dict[str, list[str]] = {}
+        abandoned_artifact_ids_by_origin: dict[str, list[str]] = {}
+        abandoned_artifact_ids_without_reason: list[str] = []
         referenced_paths: set[str] = set()
         for record in self.list_artifact_records():
             if record.capture_state is ArtifactCaptureState.COMMITTED:
@@ -222,6 +228,14 @@ class FilesystemArtifactStore:
                 continue
             if record.capture_state is ArtifactCaptureState.PREPARED:
                 referenced_paths.add(record.relative_path)
+                continue
+            if record.capture_state is ArtifactCaptureState.ABANDONED:
+                self._append_abandoned_summary(
+                    abandoned_artifact_ids_by_reason=abandoned_artifact_ids_by_reason,
+                    abandoned_artifact_ids_by_origin=abandoned_artifact_ids_by_origin,
+                    abandoned_artifact_ids_without_reason=abandoned_artifact_ids_without_reason,
+                    record=record,
+                )
 
         orphaned_blob_paths = tuple(
             sorted(
@@ -234,6 +248,17 @@ class FilesystemArtifactStore:
             prepared_artifact_ids=prepared_artifact_ids,
             committed_missing_blob_artifact_ids=tuple(committed_missing_blob_artifact_ids),
             orphaned_blob_paths=orphaned_blob_paths,
+            abandoned_artifact_ids_by_reason={
+                reason: tuple(sorted(artifact_ids))
+                for reason, artifact_ids in sorted(abandoned_artifact_ids_by_reason.items())
+            },
+            abandoned_artifact_ids_by_origin={
+                origin: tuple(sorted(artifact_ids))
+                for origin, artifact_ids in sorted(abandoned_artifact_ids_by_origin.items())
+            },
+            abandoned_artifact_ids_without_reason=tuple(
+                sorted(abandoned_artifact_ids_without_reason)
+            ),
         )
 
     def abandon_stale_prepared_artifacts(self) -> Sequence[ArtifactRecord]:
@@ -243,6 +268,10 @@ class FilesystemArtifactStore:
                 self.abandon_artifact(
                     record.artifact_id,
                     reason="janitor_abandoned_prepared_capture",
+                    provenance={
+                        "origin": "artifact_janitor",
+                        "stage": "prepared_capture_cleanup",
+                    },
                 )
             )
         return tuple(abandoned)
@@ -261,6 +290,23 @@ class FilesystemArtifactStore:
             blob_path.unlink(missing_ok=True)
             removed.append(relative_path)
         return tuple(removed)
+
+    def repair_integrity(self) -> ArtifactRepairReport:
+        audit_before = self.audit_integrity()
+        abandoned_prepared_artifact_ids = tuple(
+            record.artifact_id for record in self.abandon_stale_prepared_artifacts()
+        )
+        removed_orphaned_blob_paths = tuple(self.cleanup_orphaned_blobs())
+        audit_after = self.audit_integrity()
+        return ArtifactRepairReport(
+            audit_before=audit_before,
+            audit_after=audit_after,
+            abandoned_prepared_artifact_ids=abandoned_prepared_artifact_ids,
+            removed_orphaned_blob_paths=removed_orphaned_blob_paths,
+            unresolved_committed_missing_blob_artifact_ids=(
+                audit_after.committed_missing_blob_artifact_ids
+            ),
+        )
 
     def read_bytes_by_id(self, artifact_id: str) -> bytes | None:
         record = self.get_artifact_record_by_id(artifact_id)
@@ -309,6 +355,27 @@ class FilesystemArtifactStore:
             ),
         )
         self._conn.commit()
+
+    def _append_abandoned_summary(
+        self,
+        *,
+        abandoned_artifact_ids_by_reason: dict[str, list[str]],
+        abandoned_artifact_ids_by_origin: dict[str, list[str]],
+        abandoned_artifact_ids_without_reason: list[str],
+        record: ArtifactRecord,
+    ) -> None:
+        reason = record.metadata.get("abandon_reason")
+        if isinstance(reason, str) and reason:
+            abandoned_artifact_ids_by_reason.setdefault(reason, []).append(record.artifact_id)
+        else:
+            abandoned_artifact_ids_without_reason.append(record.artifact_id)
+
+        provenance = record.metadata.get("abandon_provenance")
+        if not isinstance(provenance, Mapping):
+            return
+        origin = provenance.get("origin")
+        if isinstance(origin, str) and origin:
+            abandoned_artifact_ids_by_origin.setdefault(origin, []).append(record.artifact_id)
 
     def _require_artifact_record(self, artifact_id: str) -> ArtifactRecord:
         record = self.get_artifact_record_by_id(artifact_id)

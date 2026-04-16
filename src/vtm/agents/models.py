@@ -27,6 +27,9 @@ class AgentRunStatus(StrEnum):
     MODEL_ERROR = "model_error"
 
 
+AgentToolPolicy = Literal["full", "no_file_mutation"]
+
+
 class AgentConversationMessage(VTMModel):
     """One message in the model-visible conversation transcript."""
 
@@ -84,6 +87,7 @@ class AgentRunRequest(VTMModel):
     attempt_index: int = Field(default=1, ge=1)
     mode: AgentMode = AgentMode.BENCHMARK_AUTONOMOUS
     prompt_profile: str = "vtm-native-agent-v1"
+    tool_policy: AgentToolPolicy = "full"
     task_payload: dict[str, Any] = Field(default_factory=dict)
     max_turns: int = Field(default=12, ge=1, le=128)
     max_tool_failures: int = Field(default=8, ge=1, le=128)
@@ -210,6 +214,7 @@ __all__ = [
     "AgentToolCall",
     "AgentToolResult",
     "AgentToolSpec",
+    "AgentToolPolicy",
     "AgentTurnRecord",
     "CompactionRecord",
     "PromptPack",

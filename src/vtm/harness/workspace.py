@@ -11,12 +11,13 @@ import shlex
 import shutil
 import subprocess
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
 from vtm.base import utc_now
+from vtm.harness.models import HarnessWorkspaceBackend
 
 
 @dataclass(frozen=True)
@@ -42,10 +43,11 @@ class PreparedWorkspace:
 
     workspace_root: Path
     artifact_root: Path
-    backend_name: str
+    backend_name: HarnessWorkspaceBackend
     attempt_index: int
     command_events_path: Path
     driver: WorkspaceDriver
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 class WorkspaceDriver(Protocol):
@@ -542,7 +544,7 @@ class LocalWorkspaceDriver:
 class LocalWorkspaceBackend:
     """Reference backend that clones the repo locally per benchmark case."""
 
-    backend_name = "local_workspace"
+    backend_name: HarnessWorkspaceBackend = "local_workspace"
 
     def prepare_workspace(
         self,
@@ -579,6 +581,7 @@ class LocalWorkspaceBackend:
             attempt_index=attempt_index,
             command_events_path=driver.command_events_path,
             driver=driver,
+            metadata={},
         )
 
     def _run(self, command: tuple[str, ...], *, cwd: Path | None = None) -> None:

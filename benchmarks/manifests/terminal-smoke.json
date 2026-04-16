@@ -88,6 +88,27 @@
           "head_ref": "terminal-cleanup-plan-fix",
           "label": "cleanup_plan",
           "pair_id": "cleanup_plan"
+        },
+        {
+          "base_ref": "terminal-service-label-bug",
+          "description": "Service label normalization bug.",
+          "head_ref": "terminal-service-label-fix",
+          "label": "service_label",
+          "pair_id": "service_label"
+        },
+        {
+          "base_ref": "terminal-notification-policy-bug",
+          "description": "Notification policy config regression.",
+          "head_ref": "terminal-notification-policy-fix",
+          "label": "notification_policy",
+          "pair_id": "notification_policy"
+        },
+        {
+          "base_ref": "terminal-release-reviewers-bug",
+          "description": "Release reviewer alias resolution bug.",
+          "head_ref": "terminal-release-reviewers-fix",
+          "label": "release_reviewers",
+          "pair_id": "release_reviewers"
         }
       ],
       "repo_name": "synthetic_terminal_smoke",
@@ -249,6 +270,44 @@
       "task_statement": "Fix cleanup planning so temporary prefixes are excluded and duplicate targets are removed.",
       "test_command": ["python3", "-m", "unittest", "tests.test_cleanup_plan", "-q"],
       "touched_paths": ["cleanup_plan.py"]
+    },
+    {
+      "case_id": "terminal_service_label_unittest",
+      "commit_pair_id": "service_label",
+      "difficulty": "easy",
+      "expected_changed_paths": ["service_labels.py"],
+      "failing_tests": ["tests.test_service_labels.ServiceLabelsTests.test_canonical_service_label_normalizes_case_and_separators"],
+      "repo_name": "synthetic_terminal_smoke",
+      "retrieval_query": "canonical service label lower hyphen trim separator normalization",
+      "task_kind": "label_normalization",
+      "task_statement": "Fix service label normalization so labels are lowercase hyphenated identifiers.",
+      "test_command": ["python3", "-m", "unittest", "tests.test_service_labels", "-q"],
+      "touched_paths": ["service_labels.py"]
+    },
+    {
+      "case_id": "terminal_notification_policy_unittest",
+      "commit_pair_id": "notification_policy",
+      "difficulty": "medium",
+      "expected_changed_paths": ["configs/notification_policy.json"],
+      "failing_tests": ["tests.test_notification_policy.NotificationPolicyTests.test_load_batch_limit_uses_restored_config_value"],
+      "repo_name": "synthetic_terminal_smoke",
+      "task_kind": "config_restore",
+      "task_statement": "Restore the notification policy config so the batch limit uses the intended value.",
+      "test_command": ["python3", "-m", "unittest", "tests.test_notification_policy", "-q"],
+      "touched_paths": ["configs/notification_policy.json"]
+    },
+    {
+      "case_id": "terminal_release_reviewers_unittest",
+      "commit_pair_id": "release_reviewers",
+      "difficulty": "hard",
+      "expected_changed_paths": ["release_reviewers.py", "team_aliases.py"],
+      "failing_tests": ["tests.test_release_reviewers.ReleaseReviewersTests.test_build_release_reviewers_resolves_aliases_and_deduplicates"],
+      "repo_name": "synthetic_terminal_smoke",
+      "retrieval_query": "release reviewers team aliases archived deduplicate oncall names",
+      "task_kind": "multi_file_alias_resolution",
+      "task_statement": "Fix release reviewer generation so archived teams are excluded, aliases are resolved, and reviewers are deduplicated.",
+      "test_command": ["python3", "-m", "unittest", "tests.test_release_reviewers", "-q"],
+      "touched_paths": ["release_reviewers.py", "team_aliases.py"]
     }
   ]
 }

@@ -67,10 +67,14 @@ class BenchmarkRunner:
         }
         if self._config.suite == "coding":
             manifest_lock["coding_executor"] = self._config.coding_executor
-            manifest_lock["workspace_backend"] = "local_workspace"
+            manifest_lock["workspace_backend"] = self._config.workspace_backend
             manifest_lock["attempt_count"] = self._config.attempt_count
             manifest_lock["pass_k_values"] = list(self._config.pass_k_values)
             manifest_lock["agent_temperature"] = self._config.agent_temperature
+            if self._config.workspace_backend == "docker_workspace":
+                manifest_lock["docker_image"] = self._config.docker_image
+                manifest_lock["docker_binary"] = self._config.docker_binary
+                manifest_lock["docker_network"] = self._config.docker_network
             if self._config.agent_seed_base is not None:
                 manifest_lock["agent_seed_base"] = self._config.agent_seed_base
         if self._config.repo_filters:

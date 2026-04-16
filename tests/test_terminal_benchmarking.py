@@ -78,6 +78,40 @@ class RecordingAttemptAgentModel:
         )
 
 
+class RecordingShellCommandAgentModel:
+    model_id = "recording-shell-command-agent"
+
+    def __init__(self) -> None:
+        self._steps_by_attempt: dict[int, int] = {}
+        self.observed: list[tuple[int, float, int | None, tuple[str, ...]]] = []
+
+    def complete_turn(self, request: AgentModelTurnRequest) -> AgentModelTurnResponse:
+        attempt_index = int(request.task_payload.get("attempt_index", 0))
+        tool_names = tuple(tool.name for tool in request.tools)
+        observation = (
+            attempt_index,
+            request.sampling_temperature,
+            request.sampling_seed,
+            tool_names,
+        )
+        if observation not in self.observed:
+            self.observed.append(observation)
+        step = self._steps_by_attempt.get(attempt_index, 0)
+        if step == 0:
+            response = AgentModelTurnResponse(
+                tool_calls=(
+                    AgentToolCall(
+                        tool_name="terminal",
+                        arguments={"command": "python3 scripts/build_daily_report.py"},
+                    ),
+                )
+            )
+        else:
+            response = AgentModelTurnResponse(assistant_message="done", done=True)
+        self._steps_by_attempt[attempt_index] = step + 1
+        return response
+
+
 def test_terminal_smoke_manifest_tasks_fail_on_base_and_pass_on_head(tmp_path: Path) -> None:
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/terminal-smoke.json")
     repo_root = tmp_path / "terminal-corpus"
@@ -92,6 +126,47 @@ def test_terminal_smoke_manifest_tasks_fail_on_base_and_pass_on_head(tmp_path: P
     for task in manifest.coding_tasks:
         difficulty = task.difficulty or "unknown"
         difficulty_counts[difficulty] = difficulty_counts.get(difficulty, 0) + 1
+        pair = pair_map[task.commit_pair_id]
+        _run(repo_root, "git", "checkout", "--quiet", pair.base_ref)
+        base_result = subprocess.run(
+            list(task.test_command),
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        _run(repo_root, "git", "checkout", "--quiet", pair.head_ref)
+        head_result = subprocess.run(
+            list(task.test_command),
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert base_result.returncode != 0, task.case_id
+        assert head_result.returncode == 0, task.case_id
+
+    assert len(manifest.coding_tasks) == 15
+    assert difficulty_counts == {"easy": 5, "medium": 5, "hard": 5}
+
+
+def test_terminal_shell_smoke_manifest_tasks_fail_on_base_and_pass_on_head(
+    tmp_path: Path,
+) -> None:
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/terminal-shell-smoke.json")
+    repo_root = tmp_path / "terminal-shell-corpus"
+    SyntheticTerminalSmokeCorpus().materialize(repo_root)
+    pair_map = {
+        pair.pair_id: pair
+        for repo in manifest.repos
+        if repo.repo_name == "synthetic_terminal_smoke"
+        for pair in repo.commit_pairs
+    }
+    difficulty_counts: dict[str, int] = {}
+    for task in manifest.coding_tasks:
+        difficulty = task.difficulty or "unknown"
+        difficulty_counts[difficulty] = difficulty_counts.get(difficulty, 0) + 1
+        assert task.execution_style == "shell_command"
         pair = pair_map[task.commit_pair_id]
         _run(repo_root, "git", "checkout", "--quiet", pair.base_ref)
         base_result = subprocess.run(
@@ -209,6 +284,107 @@ def test_retrieval_query_overrides_default_query(tmp_path: Path, monkeypatch) ->
     assert result.case_count == 1
     assert captured_queries[0] == "build export path lowercase json report name"
     assert task_pack.retrieval_query == captured_queries[0]
+
+
+def test_shell_command_attempts_run_under_docker_workspace_external_executor(
+    tmp_path: Path,
+    fake_docker_binary: Path,
+) -> None:
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/terminal-shell-smoke.json")
+    result = BenchmarkRunner(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/terminal-shell-smoke.json",
+            suite="coding",
+            mode="no_memory",
+            output_dir=str(tmp_path / "docker-shell-external"),
+            pair_filters=("shell_daily_report",),
+            max_cases=1,
+            workspace_backend="docker_workspace",
+            docker_image="python:3.12",
+            docker_binary=str(fake_docker_binary),
+            executor_command=("python3", "scripts/build_daily_report.py"),
+            attempt_count=2,
+            pass_k_values=(1, 2),
+        ),
+    ).run()
+
+    attempt_rows = [
+        json.loads(line)
+        for line in Path(result.artifacts["attempts_jsonl"]).read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    result_row = json.loads(
+        Path(result.artifacts["results_jsonl"]).read_text(encoding="utf-8").splitlines()[0]
+    )
+    manifest_lock = json.loads(
+        Path(result.artifacts["manifest_lock"]).read_text(encoding="utf-8")
+    )
+
+    assert result.case_count == 1
+    assert len(attempt_rows) == 2
+    assert all(
+        row["metadata"]["workspace_backend"] == "docker_workspace" for row in attempt_rows
+    )
+    assert all(row["metadata"]["docker_network"] == "none" for row in attempt_rows)
+    assert result_row["metadata"]["execution_style"] == "shell_command"
+    assert result.metrics["pass_at_1"] == 1.0
+    assert result.metrics["workspace_backend_breakdown"] == {"docker_workspace": 1}
+    assert result.metrics["execution_style_metrics"]["shell_command"]["pass_at_1"] == 1.0
+    assert manifest_lock["workspace_backend"] == "docker_workspace"
+    assert manifest_lock["docker_image"] == "python:3.12"
+
+
+def test_shell_command_native_agent_uses_no_file_mutation_policy_under_docker(
+    tmp_path: Path,
+    fake_docker_binary: Path,
+) -> None:
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/terminal-shell-smoke.json")
+    model = RecordingShellCommandAgentModel()
+    result = BenchmarkRunner(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/terminal-shell-smoke.json",
+            suite="coding",
+            mode="lexical",
+            output_dir=str(tmp_path / "docker-shell-native"),
+            pair_filters=("shell_daily_report",),
+            max_cases=1,
+            coding_executor="native_agent",
+            agent_model_id=model.model_id,
+            workspace_backend="docker_workspace",
+            docker_image="python:3.12",
+            docker_binary=str(fake_docker_binary),
+            attempt_count=2,
+            pass_k_values=(1, 2),
+            agent_max_turns=4,
+            agent_compaction_window=4,
+            agent_temperature=0.2,
+            agent_seed_base=1200,
+        ),
+        agent_model_adapter=model,
+    ).run()
+
+    attempt_rows = [
+        json.loads(line)
+        for line in Path(result.artifacts["attempts_jsonl"]).read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    observed = sorted(
+        (attempt, temperature, seed)
+        for attempt, temperature, seed, _ in model.observed
+    )
+
+    assert result.case_count == 1
+    assert len(attempt_rows) == 2
+    assert observed == [(1, 0.2, 1200), (2, 0.2, 1201)]
+    assert all("apply_patch" not in tools for _, _, _, tools in model.observed)
+    assert all("terminal" in tools for _, _, _, tools in model.observed)
+    assert all(row["metadata"]["workspace_backend"] == "docker_workspace" for row in attempt_rows)
+    assert result.metrics["pass_at_1"] == 1.0
+    assert result.metrics["pass_at_2"] == 1.0
 
 
 def test_native_agent_attempt_sampling_propagates(tmp_path: Path) -> None:

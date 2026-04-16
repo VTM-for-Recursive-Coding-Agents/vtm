@@ -78,6 +78,16 @@ uv run python -m vtm.benchmarks.run \
   --output .benchmarks/terminal-smoke-dry-run
 ```
 
+Shell-command terminal track:
+
+```bash
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/terminal-shell-smoke.json \
+  --suite coding \
+  --mode lexical \
+  --output .benchmarks/terminal-shell-smoke-dry-run
+```
+
 External-command executor:
 
 ```bash
@@ -102,6 +112,20 @@ uv run python -m vtm.benchmarks.run \
   --pass-k 1 \
   --pass-k 3 \
   --executor-command "python scripts/vtm_local_patcher.py --task-file {task_file} --workspace {workspace} --attempt {attempt} --artifact-root {artifact_root}"
+```
+
+Docker-backed shell-command executor:
+
+```bash
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/terminal-shell-smoke.json \
+  --suite coding \
+  --mode no_memory \
+  --output .benchmarks/terminal-shell-docker \
+  --workspace-backend docker_workspace \
+  --docker-image python:3.12 \
+  --pair shell_daily_report \
+  --executor-command "python3 scripts/build_daily_report.py"
 ```
 
 Native-agent executor:
@@ -142,6 +166,28 @@ uv run python -m vtm.benchmarks.run \
   --agent-seed-base 1000
 ```
 
+Attempt-aware native-agent run on the shell-command track under Docker:
+
+```bash
+export VTM_AGENT_BASE_URL=http://127.0.0.1:8000
+export VTM_AGENT_MODEL=qwen3.5-35b-a3b
+
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/terminal-shell-smoke.json \
+  --suite coding \
+  --mode lexical \
+  --output .benchmarks/terminal-shell-native-agent \
+  --coding-executor native_agent \
+  --agent-model "$VTM_AGENT_MODEL" \
+  --workspace-backend docker_workspace \
+  --docker-image python:3.12 \
+  --attempts 5 \
+  --pass-k 1 \
+  --pass-k 5 \
+  --agent-temperature 0.3 \
+  --agent-seed-base 1000
+```
+
 Comparable memory-mode matrix for the terminal-smoke track:
 
 ```bash
@@ -168,6 +214,34 @@ uv run python -m vtm.benchmarks.run \
   --suite coding \
   --mode embedding \
   --output .benchmarks/terminal-smoke-embedding
+```
+
+Comparable memory-mode matrix for the shell-command track:
+
+```bash
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/terminal-shell-smoke.json \
+  --suite coding \
+  --mode no_memory \
+  --output .benchmarks/terminal-shell-no-memory
+
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/terminal-shell-smoke.json \
+  --suite coding \
+  --mode lexical \
+  --output .benchmarks/terminal-shell-lexical
+
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/terminal-shell-smoke.json \
+  --suite coding \
+  --mode lexical_rlm_rerank \
+  --output .benchmarks/terminal-shell-lexical-rlm
+
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/terminal-shell-smoke.json \
+  --suite coding \
+  --mode embedding \
+  --output .benchmarks/terminal-shell-embedding
 ```
 
 ## SWE-bench Lite
@@ -200,14 +274,85 @@ uv run python -m vtm.benchmarks.run \
   --swebench-dataset-name princeton-nlp/SWE-bench_Lite
 ```
 
+## Comparing completed runs
+
+Compare two retrieval runs with paired case deltas and confidence intervals:
+
+```bash
+uv run python -m vtm.benchmarks.compare \
+  --baseline .benchmarks/retrieval-no-memory \
+  --candidate .benchmarks/retrieval-lexical \
+  --output .benchmarks/retrieval-compare
+```
+
+Compare two coding runs and include paired `pass_at_k` / `resolved_at_k` comparisons from `attempts.jsonl`:
+
+```bash
+uv run python -m vtm.benchmarks.compare \
+  --baseline .benchmarks/terminal-smoke-no-memory \
+  --candidate .benchmarks/terminal-smoke-lexical \
+  --output .benchmarks/terminal-smoke-compare
+```
+
+## Running maintained matrices
+
+Run the maintained terminal-smoke matrix and compare every selected mode against `no_memory`:
+
+```bash
+uv run python -m vtm.benchmarks.matrix \
+  --preset terminal_smoke \
+  --output .benchmarks/terminal-smoke-matrix \
+  --mode no_memory \
+  --mode lexical \
+  --mode embedding \
+  --attempts 3 \
+  --pass-k 1 \
+  --pass-k 3 \
+  --executor-command "python scripts/vtm_local_patcher.py --task-file {task_file} --workspace {workspace} --attempt {attempt} --artifact-root {artifact_root}"
+```
+
+Run the maintained shell-command matrix under Docker:
+
+```bash
+uv run python -m vtm.benchmarks.matrix \
+  --preset terminal_shell_smoke \
+  --output .benchmarks/terminal-shell-matrix \
+  --mode no_memory \
+  --mode lexical \
+  --mode embedding \
+  --workspace-backend docker_workspace \
+  --docker-image python:3.12 \
+  --executor-command "python3 scripts/build_daily_report.py"
+```
+
+Include `lexical_rlm_rerank` when an RLM model is configured:
+
+```bash
+export VTM_OPENAI_MODEL=gpt-5.4-mini
+
+uv run python -m vtm.benchmarks.matrix \
+  --preset terminal_smoke \
+  --output .benchmarks/terminal-smoke-matrix-rlm \
+  --mode no_memory \
+  --mode lexical \
+  --mode lexical_rlm_rerank \
+  --mode embedding \
+  --rlm-model "$VTM_OPENAI_MODEL"
+```
+
 ## Notes
 
 - Retrieval summaries include both `taskish_behavior` and `smoke_identity` slices.
 - Coding task packs are written as typed `HarnessTaskPack` JSON under `task-packs/`.
 - Repeated-attempt coding runs keep one aggregate row per case in `results.jsonl` and one row per attempt in `attempts.jsonl`.
+- Offline comparisons write `comparison.json` plus a human-readable `comparison.md`.
+- Matrix runs write one completed benchmark run per mode under `runs/<mode>/` plus baseline comparisons under `comparisons/<baseline>-vs-<mode>/`.
 - Attempt-aware workspaces and artifacts live under `workspaces/<mode>/<case-id>/attempt-01` and `executor-artifacts/<case-id>/attempt-01`.
 - Case-local executor artifacts always include `command-events.jsonl`, `final-git-status.txt`, `produced.patch`, and final verification stdout/stderr files.
 - Native-agent runs additionally emit `session.json`, `turns.jsonl`, `tool_calls.jsonl`, and `compactions.jsonl` through the harness trace manifest.
+- Docker-backed attempts require `--workspace-backend docker_workspace` plus `--docker-image`; `--docker-network` defaults to `none`.
+- Shell-command tasks still use the coding suite, the standard `test_command` verifier, and diff-based scoring when they regenerate tracked files.
+- Native-agent shell-command tasks disable direct file-mutation tools through `tool_policy="no_file_mutation"`.
 - If `--attempts > 1` and no explicit `--pass-k` values are provided, the runner reports `pass_at_1` and `pass_at_<attempt_count>` by default.
 - For meaningful native-agent `pass@k` experiments, prefer a nonzero `--agent-temperature`.
 - Prefer `--repo` and `--pair` filters over ad hoc truncation when you want reproducible targeted runs.

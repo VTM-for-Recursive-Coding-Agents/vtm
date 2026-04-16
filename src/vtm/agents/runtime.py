@@ -92,6 +92,7 @@ class TerminalCodingAgent:
             task_scope=context.task_scope,
             durable_scope=context.durable_scope,
             dependency_builder=context.dependency_builder,
+            tool_policy=request.tool_policy,
         )
         tools = self._tool_provider.build_tools(tool_context)
         started = utc_now()
@@ -131,6 +132,7 @@ class TerminalCodingAgent:
                 "compaction_window": request.compaction_window,
                 "command_timeout_seconds": request.command_timeout_seconds,
                 "max_command_output_chars": request.max_command_output_chars,
+                "tool_policy": request.tool_policy,
                 "sampling_temperature": request.sampling_temperature,
                 "sampling_seed": request.sampling_seed,
             },

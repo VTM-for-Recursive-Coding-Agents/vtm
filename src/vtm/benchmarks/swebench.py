@@ -132,7 +132,6 @@ class SWEbenchLitePreparer:
                     base_ref=refs.base_ref,
                     gold_ref=refs.gold_ref,
                     expected_changed_paths=self._modified_paths_from_patch(instance.patch),
-                    gold_patch_digest=self._sha256(instance.patch),
                     gold_test_patch_digest=self._sha256(instance.test_patch)
                     if instance.test_patch.strip()
                     else None,
@@ -449,7 +448,6 @@ class PreparedSWEbenchLiteInstance:
     base_ref: str
     gold_ref: str
     expected_changed_paths: tuple[str, ...]
-    gold_patch_digest: str
     gold_test_patch_digest: str | None
 
 

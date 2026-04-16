@@ -4,7 +4,11 @@ from vtm.services.consolidator import Consolidator, DeterministicConsolidator, N
 from vtm.services.embedding_retriever import EmbeddingRetriever
 from vtm.services.fingerprints import DependencyFingerprintBuilder
 from vtm.services.memory_kernel import MemoryKernel, TransactionalMemoryKernel
-from vtm.services.procedures import CommandProcedureValidator, ProcedureValidator
+from vtm.services.procedures import (
+    CommandProcedureValidator,
+    DockerProcedureValidator,
+    ProcedureValidator,
+)
 from vtm.services.reranking_retriever import RLMRerankingRetriever
 from vtm.services.retriever import LexicalRetriever, Retriever
 from vtm.services.verifier import BasicVerifier, Verifier
@@ -15,6 +19,7 @@ __all__ = [
     "Consolidator",
     "DeterministicConsolidator",
     "DependencyFingerprintBuilder",
+    "DockerProcedureValidator",
     "EmbeddingRetriever",
     "LexicalRetriever",
     "MemoryKernel",

@@ -9,14 +9,16 @@ It owns the contracts that should stay stable even when benchmark orchestration,
 - `HarnessTaskPack`
   - typed on-disk task definition used by coding executors and local patchers
   - includes optional `retrieval_query` when the benchmark author wants explicit retrieval phrasing
+  - includes `execution_style` so patch-oriented and shell-command tasks can share the same suite
 - `TaskMemoryContextItem`
   - normalized retrieval context embedded in a task pack
 - `ExecutorRequest`
   - typed execution request metadata
-  - includes `attempt_index` and `artifact_root`
+  - includes `attempt_index`, `artifact_root`, and `workspace_backend`
 - `ExecutorResult`
   - typed execution result and artifact summary
   - includes the normalized `attempt_index`
+  - normalizes `workspace_backend` plus optional Docker sandbox metadata
 - `TraceManifest`
   - stable pointer set for native-agent trace files
 
@@ -33,10 +35,25 @@ It owns the contracts that should stay stable even when benchmark orchestration,
   - changed-path capture
   - final verification commands
 
-Current local implementation:
+Built-in workspace backends:
 
 - `LocalWorkspaceBackend`
 - `LocalWorkspaceDriver`
+- `DockerWorkspaceBackend`
+- `DockerWorkspaceDriver`
+
+Docker-backed attempts run one long-lived container per attempt with:
+
+- bind-mounted workspace and artifact roots
+- `--network none` by default
+- `--read-only` root filesystem by default
+- `--cap-drop ALL`
+- `--security-opt no-new-privileges`
+- `--pids-limit 256`
+- `--memory 2g`
+- `--cpus 2`
+- writable `tmpfs` at `/tmp` and `/run` with `noexec`, `nosuid`, and `nodev`
+- startup logs persisted at `docker-run.stdout` and `docker-run.stderr`
 
 ## Executor contracts
 
@@ -76,6 +93,16 @@ External executor templates may reference:
 - `{attempt}`
 - `{artifact_root}`
 
+Native-agent shell-command tasks use the same executor surface but switch the
+runtime to `tool_policy="no_file_mutation"`. That keeps:
+
+- `terminal`
+- `read`
+- `search`
+- memory tools
+
+and excludes direct file-mutation tools such as `apply_patch`.
+
 ## Task-pack contract
 
 `HarnessTaskPack` is the canonical coding-task file shape written under `task-packs/<case-id>.json`.
@@ -88,6 +115,7 @@ Important fields:
 - evaluation metadata: `evaluation_backend`, `dataset_name`, `instance_id`
 - scoring inputs: `expected_changed_paths`, `target_patch_digest`, optional `gold_test_patch_digest`
 - execution settings: `memory_mode`, `top_k`, `coding_executor`
+- execution style: `execution_style`
 - retrieval override: optional `retrieval_query`
 - retrieval context: `memory_context`
 

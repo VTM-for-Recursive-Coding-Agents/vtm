@@ -28,6 +28,7 @@ def _terminal(
     context: ToolExecutionContext,
     call_id: str,
 ) -> AgentToolResult:
+    """Run one terminal command in the persistent workspace session."""
     command = str(arguments.get("command", "")).strip()
     if not command:
         return AgentToolResult(success=False, content="terminal command must be non-empty")

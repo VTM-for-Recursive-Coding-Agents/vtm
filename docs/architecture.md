@@ -51,13 +51,31 @@ The attempt-aware coding benchmark contract now depends on a few specific fields
   - stable per-attempt artifact root used by both native and external executors
 - `ExecutorResult.attempt_index`
   - propagated attempt identity for `attempts.jsonl`
+- `HarnessTaskPack.execution_style`
+  - distinguishes patch-oriented tasks from shell-command tasks while keeping both under `suite="coding"`
+- `ExecutorRequest.workspace_backend`
+  - records whether the attempt ran in `local_workspace` or `docker_workspace`
+- `ExecutorResult.workspace_backend`
+  - normalized backend identity emitted into aggregate and per-attempt results
+- `ExecutorResult.docker_*`
+  - optional sandbox metadata for Docker-backed attempts
 
-The current default implementation is local:
+The built-in implementations are:
 
 - `LocalWorkspaceBackend`
 - `LocalWorkspaceDriver`
+- `DockerWorkspaceBackend`
+- `DockerWorkspaceDriver`
 - `SubprocessBenchmarkExecutor`
 - `NativeAgentBenchmarkExecutor`
+
+Docker-backed attempts are prepared with:
+
+- bind-mounted workspace and artifact roots
+- `--network none` by default
+- `--cap-drop ALL`
+- `--security-opt no-new-privileges`
+- writable `tmpfs` mounted at `/tmp`
 
 Compatibility shims remain at:
 
@@ -88,7 +106,7 @@ Those shims are transitional; new code should import from `vtm.harness`.
 1. `vtm.benchmarks` selects coding cases from a manifest.
 2. Retrieval context is built from repo-scoped kernel memory and converted into a typed `HarnessTaskPack`.
 3. The task pack is written once per case under `task-packs/<case-id>.json`.
-4. `vtm.harness` prepares one isolated local workspace per attempt and runs either:
+4. `vtm.harness` prepares one isolated workspace per attempt and runs either:
    - an external command executor, or
    - the native agent executor
 5. Per-attempt workspace and artifact layout is stable:
@@ -105,7 +123,9 @@ Those shims are transitional; new code should import from `vtm.harness`.
    - `tool_calls.jsonl`
    - `compactions.jsonl`
 8. Benchmark outputs keep one aggregate row per case in `results.jsonl` and one row per attempt in `attempts.jsonl`.
-9. Scoring compares actual changed paths and patch similarity against the expected task contract, then aggregates `pass_at_k`, `resolved_at_k`, and `patch_applied_at_k`.
+9. Shell-command tasks still use the same diff and changed-path scoring surface when they intentionally regenerate tracked files.
+10. Native-agent shell-command tasks set `tool_policy="no_file_mutation"` so terminal, read/search, and memory tools remain available while direct file-mutation tools are withheld.
+11. Scoring compares actual changed paths and patch similarity against the expected task contract, then aggregates `pass_at_k`, `resolved_at_k`, and `patch_applied_at_k`.
 
 ## Design constraints
 
@@ -114,3 +134,5 @@ Those shims are transitional; new code should import from `vtm.harness`.
 - Agent prompting and autonomy policies live in `vtm.agents`, not in durable kernel interfaces.
 - Benchmarks may evolve quickly, but the task-pack, workspace, and executor seam should stay explicit and inspectable.
 - Repeated-attempt orchestration is currently scoped to coding suites; retrieval and drift stay single-attempt.
+- Shell-command tasks remain under the coding suite; there is no separate shell-only suite.
+- Docker is the only built-in sandbox backend in this pass; remote execution stays out of scope.

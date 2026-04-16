@@ -2,7 +2,9 @@
 
 from vtm.benchmarks.models import (
     BenchmarkCaseResult,
+    BenchmarkComparisonResult,
     BenchmarkManifest,
+    BenchmarkMatrixResult,
     BenchmarkRunConfig,
     BenchmarkRunResult,
     CodingExecutor,
@@ -16,7 +18,9 @@ from vtm.benchmarks.runner import BenchmarkRunner
 
 __all__ = [
     "BenchmarkCaseResult",
+    "BenchmarkComparisonResult",
     "BenchmarkManifest",
+    "BenchmarkMatrixResult",
     "BenchmarkRunConfig",
     "BenchmarkRunResult",
     "BenchmarkRunner",

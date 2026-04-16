@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import math
+import random
 from collections.abc import Iterable
 from pathlib import Path
 from statistics import median
@@ -11,6 +13,7 @@ from typing import Any
 from vtm.benchmarks.models import (
     BenchmarkAttemptResult,
     BenchmarkCaseResult,
+    BenchmarkComparisonResult,
     BenchmarkRunResult,
     BenchmarkSuite,
 )
@@ -81,9 +84,16 @@ class BenchmarkReporter:
         testable = [metric for metric in metrics if bool(metric["testable"])]
         evaluated = [metric for metric in metrics if bool(metric.get("evaluated", False))]
         backends: dict[str, int] = {}
+        workspace_backends: dict[str, int] = {}
         for result in results:
             backend = str(result.metadata.get("evaluation_backend", "local_subprocess"))
             backends[backend] = backends.get(backend, 0) + 1
+            workspace_backend = str(
+                result.metadata.get("workspace_backend", "local_workspace")
+            )
+            workspace_backends[workspace_backend] = (
+                workspace_backends.get(workspace_backend, 0) + 1
+            )
         runtimes = [float(metric["runtime_ms"]) for metric in executed]
         similarities = [
             float(metric["patch_similarity"])
@@ -234,6 +244,7 @@ class BenchmarkReporter:
             "agent_status_breakdown": agent_status_breakdown,
             "failure_breakdown": failure_breakdown,
             "evaluation_backend_breakdown": backends,
+            "workspace_backend_breakdown": workspace_backends,
         }
         if suite == "coding":
             requested_pass_k = tuple(sorted(set(pass_k_values)))
@@ -292,6 +303,18 @@ class BenchmarkReporter:
                 key_name="evaluation_backend",
                 pass_k_values=requested_pass_k,
             )
+            summary["execution_style_metrics"] = self._summarize_coding_breakdown(
+                results,
+                attempts_by_case,
+                key_name="execution_style",
+                pass_k_values=requested_pass_k,
+            )
+            summary["workspace_backend_metrics"] = self._summarize_coding_breakdown(
+                results,
+                attempts_by_case,
+                key_name="workspace_backend",
+                pass_k_values=requested_pass_k,
+            )
         return summary
 
     def _summarize_retrieval_metrics(
@@ -343,6 +366,152 @@ class BenchmarkReporter:
         ]
         for key, value in sorted(result.metrics.items()):
             lines.append(f"- {key}: `{value}`")
+        return "\n".join(lines) + "\n"
+
+    def compare_runs(
+        self,
+        *,
+        baseline: BenchmarkRunResult,
+        candidate: BenchmarkRunResult,
+        baseline_results: list[BenchmarkCaseResult],
+        candidate_results: list[BenchmarkCaseResult],
+        baseline_attempts: list[BenchmarkAttemptResult] | None = None,
+        candidate_attempts: list[BenchmarkAttemptResult] | None = None,
+        bootstrap_samples: int = 2000,
+        bootstrap_seed: int = 0,
+    ) -> BenchmarkComparisonResult:
+        """Build a paired comparison result for two completed benchmark runs."""
+        if baseline.suite != candidate.suite:
+            raise ValueError(
+                "benchmark comparisons require matching suites: "
+                f"{baseline.suite} != {candidate.suite}"
+            )
+
+        baseline_by_case = {result.case_id: result for result in baseline_results}
+        candidate_by_case = {result.case_id: result for result in candidate_results}
+        common_case_ids = sorted(set(baseline_by_case) & set(candidate_by_case))
+        if not common_case_ids:
+            raise ValueError("benchmark comparisons require at least one shared case_id")
+
+        metrics: dict[str, Any] = {
+            "baseline_summary_metrics": baseline.metrics,
+            "candidate_summary_metrics": candidate.metrics,
+            "summary_scalar_deltas": self._compare_summary_scalars(
+                baseline.metrics,
+                candidate.metrics,
+            ),
+            "paired_numeric_metrics": self._compare_case_numeric_metrics(
+                common_case_ids,
+                baseline_by_case,
+                candidate_by_case,
+                bootstrap_samples=bootstrap_samples,
+                bootstrap_seed=bootstrap_seed,
+            ),
+            "paired_binary_metrics": self._compare_case_binary_metrics(
+                common_case_ids,
+                baseline_by_case,
+                candidate_by_case,
+            ),
+        }
+
+        if baseline.suite == "coding":
+            metrics["paired_attempt_binary_metrics"] = self._compare_attempt_success_metrics(
+                common_case_ids,
+                baseline.metrics,
+                candidate.metrics,
+                self._group_attempts_by_case(baseline_attempts or []),
+                self._group_attempts_by_case(candidate_attempts or []),
+            )
+
+        comparison_id = f"{baseline.run_id}-vs-{candidate.run_id}"
+        return BenchmarkComparisonResult(
+            comparison_id=comparison_id,
+            suite=baseline.suite,
+            baseline_run_id=baseline.run_id,
+            baseline_manifest_id=baseline.manifest_id,
+            baseline_mode=baseline.mode,
+            baseline_case_count=baseline.case_count,
+            candidate_run_id=candidate.run_id,
+            candidate_manifest_id=candidate.manifest_id,
+            candidate_mode=candidate.mode,
+            candidate_case_count=candidate.case_count,
+            common_case_count=len(common_case_ids),
+            baseline_only_case_count=len(set(baseline_by_case) - set(candidate_by_case)),
+            candidate_only_case_count=len(set(candidate_by_case) - set(baseline_by_case)),
+            metrics=metrics,
+        )
+
+    def render_comparison(self, comparison: BenchmarkComparisonResult) -> str:
+        """Render a human-readable Markdown summary for a benchmark comparison."""
+        lines = [
+            "# VTM Benchmark Comparison",
+            "",
+            f"- Suite: `{comparison.suite}`",
+            (
+                f"- Baseline: `{comparison.baseline_run_id}` "
+                f"(`{comparison.baseline_mode}`, manifest `{comparison.baseline_manifest_id}`)"
+            ),
+            (
+                f"- Candidate: `{comparison.candidate_run_id}` "
+                f"(`{comparison.candidate_mode}`, manifest `{comparison.candidate_manifest_id}`)"
+            ),
+            f"- Common cases: `{comparison.common_case_count}`",
+            f"- Baseline-only cases: `{comparison.baseline_only_case_count}`",
+            f"- Candidate-only cases: `{comparison.candidate_only_case_count}`",
+            "",
+            "## Summary Scalar Deltas",
+        ]
+        summary_scalars = comparison.metrics.get("summary_scalar_deltas", {})
+        for key, value in sorted(summary_scalars.items()):
+            lines.append(
+                "- "
+                f"{key}: `{value['baseline_value']} -> {value['candidate_value']} "
+                f"(delta {value['delta']})`"
+            )
+        if not summary_scalars:
+            lines.append("- none")
+
+        lines.extend(["", "## Paired Binary Metrics"])
+        paired_binary = comparison.metrics.get("paired_binary_metrics", {})
+        for key, value in sorted(paired_binary.items()):
+            lines.append(
+                "- "
+                f"{key}: `baseline_rate={value['baseline_rate']} "
+                f"candidate_rate={value['candidate_rate']} "
+                f"delta={value['rate_delta']} "
+                f"candidate_only_true={value['candidate_only_true_count']} "
+                f"baseline_only_true={value['baseline_only_true_count']} "
+                f"p={value['mcnemar_p_value']}`"
+            )
+        if not paired_binary:
+            lines.append("- none")
+
+        paired_attempt = comparison.metrics.get("paired_attempt_binary_metrics", {})
+        if paired_attempt:
+            lines.extend(["", "## Paired Attempt Metrics"])
+            for key, value in sorted(paired_attempt.items()):
+                lines.append(
+                    "- "
+                    f"{key}: `baseline_rate={value['baseline_rate']} "
+                    f"candidate_rate={value['candidate_rate']} "
+                    f"delta={value['rate_delta']} "
+                    f"candidate_only_true={value['candidate_only_true_count']} "
+                    f"baseline_only_true={value['baseline_only_true_count']} "
+                    f"p={value['mcnemar_p_value']}`"
+                )
+
+        lines.extend(["", "## Paired Numeric Metrics"])
+        paired_numeric = comparison.metrics.get("paired_numeric_metrics", {})
+        for key, value in sorted(paired_numeric.items()):
+            lines.append(
+                "- "
+                f"{key}: `baseline_mean={value['baseline_mean']} "
+                f"candidate_mean={value['candidate_mean']} "
+                f"mean_delta={value['mean_delta']} "
+                f"ci95={tuple(value['bootstrap_ci_95'])}`"
+            )
+        if not paired_numeric:
+            lines.append("- none")
         return "\n".join(lines) + "\n"
 
     def write_jsonl(self, path: Path, rows: list[dict[str, Any]]) -> None:
@@ -452,3 +621,252 @@ class BenchmarkReporter:
         if bool(metrics.get("evaluated", False)):
             return "verification"
         return "infra"
+
+    def _compare_summary_scalars(
+        self,
+        baseline_metrics: dict[str, Any],
+        candidate_metrics: dict[str, Any],
+    ) -> dict[str, Any]:
+        summary: dict[str, Any] = {}
+        for key in sorted(set(baseline_metrics) & set(candidate_metrics)):
+            baseline_value = baseline_metrics[key]
+            candidate_value = candidate_metrics[key]
+            if not self._is_numeric_scalar(baseline_value) or not self._is_numeric_scalar(
+                candidate_value
+            ):
+                continue
+            baseline_float = float(baseline_value)
+            candidate_float = float(candidate_value)
+            summary[key] = {
+                "baseline_value": baseline_float,
+                "candidate_value": candidate_float,
+                "delta": candidate_float - baseline_float,
+            }
+        return summary
+
+    def _compare_case_numeric_metrics(
+        self,
+        common_case_ids: list[str],
+        baseline_by_case: dict[str, BenchmarkCaseResult],
+        candidate_by_case: dict[str, BenchmarkCaseResult],
+        *,
+        bootstrap_samples: int,
+        bootstrap_seed: int,
+    ) -> dict[str, Any]:
+        paired_values: dict[str, list[tuple[float, float]]] = {}
+        for case_id in common_case_ids:
+            baseline_metrics = baseline_by_case[case_id].metrics
+            candidate_metrics = candidate_by_case[case_id].metrics
+            for key in set(baseline_metrics) & set(candidate_metrics):
+                baseline_value = baseline_metrics[key]
+                candidate_value = candidate_metrics[key]
+                if not self._is_numeric_scalar(baseline_value) or not self._is_numeric_scalar(
+                    candidate_value
+                ):
+                    continue
+                paired_values.setdefault(str(key), []).append(
+                    (float(baseline_value), float(candidate_value))
+                )
+
+        summary: dict[str, Any] = {}
+        for index, key in enumerate(sorted(paired_values)):
+            pairs = paired_values[key]
+            baseline_values = [baseline_value for baseline_value, _ in pairs]
+            candidate_values = [candidate_value for _, candidate_value in pairs]
+            deltas = [candidate_value - baseline_value for baseline_value, candidate_value in pairs]
+            epsilon = 1e-12
+            summary[key] = {
+                "paired_case_count": len(pairs),
+                "baseline_mean": self._mean(baseline_values),
+                "candidate_mean": self._mean(candidate_values),
+                "mean_delta": self._mean(deltas),
+                "median_delta": median(deltas),
+                "candidate_greater_count": sum(1 for delta in deltas if delta > epsilon),
+                "baseline_greater_count": sum(1 for delta in deltas if delta < -epsilon),
+                "equal_count": sum(1 for delta in deltas if abs(delta) <= epsilon),
+                "bootstrap_ci_95": self._bootstrap_mean_delta_ci(
+                    deltas,
+                    samples=bootstrap_samples,
+                    seed=bootstrap_seed + index,
+                ),
+            }
+        return summary
+
+    def _compare_case_binary_metrics(
+        self,
+        common_case_ids: list[str],
+        baseline_by_case: dict[str, BenchmarkCaseResult],
+        candidate_by_case: dict[str, BenchmarkCaseResult],
+    ) -> dict[str, Any]:
+        paired_values: dict[str, list[tuple[bool, bool]]] = {}
+        for case_id in common_case_ids:
+            baseline_metrics = baseline_by_case[case_id].metrics
+            candidate_metrics = candidate_by_case[case_id].metrics
+            for key in set(baseline_metrics) & set(candidate_metrics):
+                baseline_value = baseline_metrics[key]
+                candidate_value = candidate_metrics[key]
+                if not self._is_bool_scalar(baseline_value) or not self._is_bool_scalar(
+                    candidate_value
+                ):
+                    continue
+                paired_values.setdefault(str(key), []).append((baseline_value, candidate_value))
+
+        return {
+            key: self._paired_binary_metric_summary(pairs)
+            for key, pairs in sorted(paired_values.items())
+        }
+
+    def _compare_attempt_success_metrics(
+        self,
+        common_case_ids: list[str],
+        baseline_summary_metrics: dict[str, Any],
+        candidate_summary_metrics: dict[str, Any],
+        baseline_attempts_by_case: dict[str, list[BenchmarkAttemptResult]],
+        candidate_attempts_by_case: dict[str, list[BenchmarkAttemptResult]],
+    ) -> dict[str, Any]:
+        if not baseline_attempts_by_case or not candidate_attempts_by_case:
+            return {}
+
+        summary: dict[str, Any] = {}
+        for metric_name, summary_prefix in (
+            ("passed", "pass_at_"),
+            ("resolved", "resolved_at_"),
+            ("patch_applied", "patch_applied_at_"),
+        ):
+            for k in sorted(
+                self._shared_attempt_k_values(
+                    baseline_summary_metrics,
+                    candidate_summary_metrics,
+                    prefix=summary_prefix,
+                )
+            ):
+                pairs = [
+                    (
+                        self._attempt_metric_succeeded(
+                            baseline_attempts_by_case.get(case_id, []),
+                            k,
+                            metric_name=metric_name,
+                        ),
+                        self._attempt_metric_succeeded(
+                            candidate_attempts_by_case.get(case_id, []),
+                            k,
+                            metric_name=metric_name,
+                        ),
+                    )
+                    for case_id in common_case_ids
+                ]
+                summary[f"{summary_prefix}{k}"] = self._paired_binary_metric_summary(pairs)
+        return summary
+
+    def _shared_attempt_k_values(
+        self,
+        baseline_summary_metrics: dict[str, Any],
+        candidate_summary_metrics: dict[str, Any],
+        *,
+        prefix: str,
+    ) -> set[int]:
+        baseline_values = {
+            int(key.removeprefix(prefix))
+            for key in baseline_summary_metrics
+            if key.startswith(prefix) and key.removeprefix(prefix).isdigit()
+        }
+        candidate_values = {
+            int(key.removeprefix(prefix))
+            for key in candidate_summary_metrics
+            if key.startswith(prefix) and key.removeprefix(prefix).isdigit()
+        }
+        return baseline_values & candidate_values
+
+    def _attempt_metric_succeeded(
+        self,
+        attempts: list[BenchmarkAttemptResult],
+        k: int,
+        *,
+        metric_name: str,
+    ) -> bool:
+        return any(bool(attempt.metrics.get(metric_name, False)) for attempt in attempts[:k])
+
+    def _paired_binary_metric_summary(self, pairs: list[tuple[bool, bool]]) -> dict[str, Any]:
+        baseline_true = sum(1 for baseline, _ in pairs if baseline)
+        candidate_true = sum(1 for _, candidate in pairs if candidate)
+        candidate_only_true = sum(1 for baseline, candidate in pairs if not baseline and candidate)
+        baseline_only_true = sum(1 for baseline, candidate in pairs if baseline and not candidate)
+        both_true = sum(1 for baseline, candidate in pairs if baseline and candidate)
+        both_false = sum(1 for baseline, candidate in pairs if not baseline and not candidate)
+        paired_case_count = len(pairs)
+        return {
+            "paired_case_count": paired_case_count,
+            "baseline_rate": 0.0 if paired_case_count == 0 else baseline_true / paired_case_count,
+            "candidate_rate": 0.0
+            if paired_case_count == 0
+            else candidate_true / paired_case_count,
+            "rate_delta": 0.0
+            if paired_case_count == 0
+            else (candidate_true - baseline_true) / paired_case_count,
+            "candidate_only_true_count": candidate_only_true,
+            "baseline_only_true_count": baseline_only_true,
+            "both_true_count": both_true,
+            "both_false_count": both_false,
+            "mcnemar_p_value": self._mcnemar_exact_p_value(
+                baseline_only_true,
+                candidate_only_true,
+            ),
+        }
+
+    def _bootstrap_mean_delta_ci(
+        self,
+        deltas: list[float],
+        *,
+        samples: int,
+        seed: int,
+    ) -> list[float]:
+        if not deltas:
+            return [0.0, 0.0]
+        if len(deltas) == 1:
+            return [deltas[0], deltas[0]]
+        rng = random.Random(seed)
+        size = len(deltas)
+        bootstrap_means = []
+        for _ in range(samples):
+            sample = [deltas[rng.randrange(size)] for _ in range(size)]
+            bootstrap_means.append(sum(sample) / size)
+        bootstrap_means.sort()
+        return [
+            self._percentile(bootstrap_means, 0.025),
+            self._percentile(bootstrap_means, 0.975),
+        ]
+
+    def _percentile(self, values: list[float], percentile: float) -> float:
+        if not values:
+            return 0.0
+        if len(values) == 1:
+            return values[0]
+        position = percentile * (len(values) - 1)
+        lower = math.floor(position)
+        upper = math.ceil(position)
+        if lower == upper:
+            return values[lower]
+        weight = position - lower
+        return values[lower] * (1.0 - weight) + values[upper] * weight
+
+    def _mcnemar_exact_p_value(
+        self,
+        baseline_only_true_count: int,
+        candidate_only_true_count: int,
+    ) -> float:
+        discordant = baseline_only_true_count + candidate_only_true_count
+        if discordant == 0:
+            return 1.0
+        lower_tail = sum(
+            math.comb(discordant, value)
+            for value in range(0, min(baseline_only_true_count, candidate_only_true_count) + 1)
+        ) / (2**discordant)
+        return float(min(1.0, 2.0 * lower_tail))
+
+    def _is_numeric_scalar(self, value: Any) -> bool:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+        return math.isfinite(float(value))
+
+    def _is_bool_scalar(self, value: Any) -> bool:
+        return isinstance(value, bool)

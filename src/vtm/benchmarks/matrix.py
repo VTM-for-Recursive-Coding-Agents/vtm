@@ -1,0 +1,456 @@
+"""CLI entrypoint for executing maintained benchmark mode matrices."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import shlex
+from dataclasses import dataclass
+from pathlib import Path
+
+from vtm.benchmarks.compare import compare_completed_runs
+from vtm.benchmarks.models import (
+    BenchmarkComparisonResult,
+    BenchmarkManifest,
+    BenchmarkMatrixResult,
+    BenchmarkMode,
+    BenchmarkRunConfig,
+    BenchmarkRunResult,
+    BenchmarkSuite,
+)
+from vtm.benchmarks.run import execute_benchmark_run
+
+DEFAULT_MATRIX_MODES: tuple[BenchmarkMode, ...] = (
+    "no_memory",
+    "lexical",
+    "lexical_rlm_rerank",
+    "embedding",
+)
+
+
+@dataclass(frozen=True)
+class MatrixPreset:
+    """Maintained matrix preset that pins a manifest and suite."""
+
+    manifest_path: str
+    suite: BenchmarkSuite
+    description: str
+
+
+PRESETS: dict[str, MatrixPreset] = {
+    "terminal_smoke": MatrixPreset(
+        manifest_path="benchmarks/manifests/terminal-smoke.json",
+        suite="coding",
+        description="Patch-oriented terminal coding matrix.",
+    ),
+    "terminal_shell_smoke": MatrixPreset(
+        manifest_path="benchmarks/manifests/terminal-shell-smoke.json",
+        suite="coding",
+        description="Shell-command terminal coding matrix.",
+    ),
+}
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the benchmark matrix CLI parser."""
+    parser = argparse.ArgumentParser(description="Run a maintained VTM benchmark matrix.")
+    parser.add_argument(
+        "--preset",
+        choices=tuple(sorted(PRESETS)),
+        default="terminal_smoke",
+        help="Maintained matrix preset to execute.",
+    )
+    parser.add_argument(
+        "--manifest",
+        default="",
+        help="Optional manifest override. Overrides the selected preset when provided.",
+    )
+    parser.add_argument(
+        "--suite",
+        choices=("retrieval", "drift", "coding"),
+        default="",
+        help="Optional suite override. Required when --manifest is used without a preset manifest.",
+    )
+    parser.add_argument("--output", required=True, help="Directory for matrix outputs.")
+    parser.add_argument(
+        "--mode",
+        action="append",
+        default=[],
+        help=(
+            "Mode to include in the matrix. Repeat to select multiple modes. "
+            "Defaults to the maintained four-mode matrix."
+        ),
+    )
+    parser.add_argument(
+        "--baseline-mode",
+        choices=("no_memory", "lexical", "lexical_rlm_rerank", "embedding"),
+        default="no_memory",
+        help="Mode used as the comparison baseline.",
+    )
+    parser.add_argument("--top-k", type=int, default=5, help="Top K memories to evaluate.")
+    parser.add_argument("--max-cases", type=int, default=None, help="Optional case limit.")
+    parser.add_argument("--seed", type=int, default=0, help="Deterministic run seed.")
+    parser.add_argument(
+        "--repo",
+        action="append",
+        default=[],
+        help="Optional repo name filter. Repeat to select multiple repos.",
+    )
+    parser.add_argument(
+        "--pair",
+        action="append",
+        default=[],
+        help="Optional commit-pair filter. Repeat to select multiple pairs.",
+    )
+    parser.add_argument(
+        "--workspace-backend",
+        choices=("local_workspace", "docker_workspace"),
+        default="local_workspace",
+        help="Workspace backend used for coding-task execution.",
+    )
+    parser.add_argument(
+        "--docker-image",
+        default="",
+        help="Docker image for docker_workspace coding runs.",
+    )
+    parser.add_argument(
+        "--docker-binary",
+        default="docker",
+        help="Docker CLI binary to use for docker_workspace runs.",
+    )
+    parser.add_argument(
+        "--docker-network",
+        choices=("none", "bridge"),
+        default="none",
+        help="Docker network mode for docker_workspace runs.",
+    )
+    parser.add_argument(
+        "--coding-executor",
+        choices=("external_command", "native_agent"),
+        default="external_command",
+        help="Coding-task execution path to use.",
+    )
+    parser.add_argument(
+        "--executor-command",
+        default="",
+        help=(
+            "Optional command template for coding tasks. Supports {task_file}, {workspace}, "
+            "{attempt}, and {artifact_root}."
+        ),
+    )
+    parser.add_argument(
+        "--attempts",
+        type=int,
+        default=1,
+        help="Number of attempts to execute per coding task.",
+    )
+    parser.add_argument(
+        "--pass-k",
+        action="append",
+        default=[],
+        help="Additional pass@k checkpoints to report for coding tasks. Repeat to add more.",
+    )
+    parser.add_argument(
+        "--agent-model",
+        default="",
+        help=(
+            "Model id for native-agent coding runs. Falls back to VTM_AGENT_MODEL "
+            "or VTM_LOCAL_LLM_MODEL."
+        ),
+    )
+    parser.add_argument(
+        "--agent-mode",
+        choices=("interactive_guarded", "benchmark_autonomous"),
+        default="benchmark_autonomous",
+        help="Permission mode for native-agent coding runs.",
+    )
+    parser.add_argument(
+        "--agent-max-turns",
+        type=int,
+        default=12,
+        help="Maximum number of turns for the native agent.",
+    )
+    parser.add_argument(
+        "--agent-max-tool-failures",
+        type=int,
+        default=8,
+        help="Maximum number of failed tool calls before the native agent stops.",
+    )
+    parser.add_argument(
+        "--agent-max-runtime-seconds",
+        type=int,
+        default=600,
+        help="Maximum runtime budget for the native agent.",
+    )
+    parser.add_argument(
+        "--agent-compaction-window",
+        type=int,
+        default=10,
+        help="Conversation message window for deterministic native-agent compaction.",
+    )
+    parser.add_argument(
+        "--agent-command-timeout-seconds",
+        type=int,
+        default=120,
+        help="Per-command timeout for native-agent workspace operations.",
+    )
+    parser.add_argument(
+        "--agent-max-output-chars",
+        type=int,
+        default=20000,
+        help="Maximum characters captured from a single native-agent command.",
+    )
+    parser.add_argument(
+        "--agent-temperature",
+        type=float,
+        default=0.0,
+        help="Sampling temperature for native-agent turns.",
+    )
+    parser.add_argument(
+        "--agent-seed-base",
+        type=int,
+        default=None,
+        help="Optional base seed used to derive one sampling seed per attempt.",
+    )
+    parser.add_argument(
+        "--rlm-model",
+        default="",
+        help="Model name for lexical_rlm_rerank mode. Falls back to VTM_OPENAI_MODEL.",
+    )
+    parser.add_argument(
+        "--embedding-model",
+        default="",
+        help="Optional model name for embedding mode. Falls back to VTM_OPENAI_EMBEDDING_MODEL.",
+    )
+    parser.add_argument(
+        "--swebench-dataset-name",
+        default="",
+        help="Optional SWE-bench dataset identifier for harness-backed coding tasks.",
+    )
+    parser.add_argument(
+        "--swebench-harness-workers",
+        type=int,
+        default=4,
+        help="Worker count for official SWE-bench harness evaluation.",
+    )
+    parser.add_argument(
+        "--swebench-cache-level",
+        choices=("none", "base", "env", "instance"),
+        default="env",
+        help="Cache level for official SWE-bench harness evaluation.",
+    )
+    parser.add_argument(
+        "--swebench-run-id",
+        default="",
+        help="Optional explicit run identifier for official SWE-bench harness evaluation.",
+    )
+    parser.add_argument(
+        "--comparison-bootstrap-samples",
+        type=int,
+        default=2000,
+        help="Bootstrap samples used for paired numeric confidence intervals.",
+    )
+    parser.add_argument(
+        "--comparison-bootstrap-seed",
+        type=int,
+        default=0,
+        help="Deterministic seed used for bootstrap comparison resampling.",
+    )
+    return parser
+
+
+def main() -> int:
+    """Execute the configured matrix and print the durable JSON result."""
+    args = build_parser().parse_args()
+    try:
+        result = run_matrix_from_args(args)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(result.to_json())
+    return 0
+
+
+def run_matrix_from_args(args: argparse.Namespace) -> BenchmarkMatrixResult:
+    """Execute one benchmark matrix from parsed CLI arguments."""
+    manifest_path, suite, preset_name = _resolve_manifest_and_suite(args)
+    manifest = BenchmarkManifest.from_path(manifest_path)
+    modes = _resolve_modes(args.mode, baseline_mode=args.baseline_mode)
+    output_dir = Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    runs_root = output_dir / "runs"
+    comparisons_root = output_dir / "comparisons"
+    run_results: dict[str, BenchmarkRunResult] = {}
+    comparison_results: dict[str, BenchmarkComparisonResult] = {}
+
+    for mode in modes:
+        run_output_dir = runs_root / mode
+        config = BenchmarkRunConfig(
+            manifest_path=manifest_path,
+            suite=suite,
+            mode=mode,
+            output_dir=str(run_output_dir),
+            top_k=args.top_k,
+            max_cases=args.max_cases,
+            seed=args.seed,
+            repo_filters=tuple(args.repo),
+            pair_filters=tuple(args.pair),
+            workspace_backend=args.workspace_backend,
+            docker_image=args.docker_image or None,
+            docker_binary=args.docker_binary,
+            docker_network=args.docker_network,
+            coding_executor=args.coding_executor,
+            executor_command=tuple(shlex.split(args.executor_command)),
+            attempt_count=args.attempts,
+            pass_k_values=_resolve_pass_k_values(args.pass_k, attempts=args.attempts, suite=suite),
+            agent_model_id=args.agent_model or None,
+            agent_mode=args.agent_mode,
+            agent_max_turns=args.agent_max_turns,
+            agent_max_tool_failures=args.agent_max_tool_failures,
+            agent_max_runtime_seconds=args.agent_max_runtime_seconds,
+            agent_compaction_window=args.agent_compaction_window,
+            agent_command_timeout_seconds=args.agent_command_timeout_seconds,
+            agent_max_output_chars=args.agent_max_output_chars,
+            agent_temperature=args.agent_temperature,
+            agent_seed_base=args.agent_seed_base,
+            swebench_dataset_name=args.swebench_dataset_name or None,
+            swebench_harness_workers=args.swebench_harness_workers,
+            swebench_harness_cache_level=args.swebench_cache_level,
+            swebench_harness_run_id=args.swebench_run_id or None,
+        )
+        run_results[mode] = execute_benchmark_run(
+            manifest,
+            config,
+            rlm_model_name=args.rlm_model or None,
+            embedding_model_name=args.embedding_model or None,
+            agent_model_name=args.agent_model or None,
+        )
+
+    baseline_dir = runs_root / args.baseline_mode
+    for mode in modes:
+        if mode == args.baseline_mode:
+            continue
+        comparison_output_dir = comparisons_root / f"{args.baseline_mode}-vs-{mode}"
+        comparison_results[mode] = compare_completed_runs(
+            baseline_location=baseline_dir,
+            candidate_location=runs_root / mode,
+            output_dir=comparison_output_dir,
+            bootstrap_samples=args.comparison_bootstrap_samples,
+            bootstrap_seed=args.comparison_bootstrap_seed,
+        )
+
+    matrix_id = hashlib.sha256(
+        "|".join(
+            [
+                preset_name or "custom",
+                manifest_path,
+                suite,
+                args.baseline_mode,
+                *modes,
+            ]
+        ).encode("utf-8")
+    ).hexdigest()[:16]
+    matrix_json_path = output_dir / "matrix.json"
+    matrix_md_path = output_dir / "matrix.md"
+    result = BenchmarkMatrixResult(
+        matrix_id=matrix_id,
+        preset_name=preset_name,
+        manifest_path=manifest_path,
+        suite=suite,
+        output_dir=str(output_dir),
+        baseline_mode=args.baseline_mode,
+        modes=modes,
+        run_results=run_results,
+        comparison_results=comparison_results,
+        artifacts={
+            "matrix_json": str(matrix_json_path),
+            "matrix_md": str(matrix_md_path),
+            "runs_dir": str(runs_root),
+            "comparisons_dir": str(comparisons_root),
+        },
+    )
+    matrix_json_path.write_text(result.to_json(), encoding="utf-8")
+    matrix_md_path.write_text(render_matrix_summary(result), encoding="utf-8")
+    return result
+
+
+def render_matrix_summary(result: BenchmarkMatrixResult) -> str:
+    """Render a human-readable Markdown summary for a matrix run."""
+    lines = [
+        "# VTM Benchmark Matrix",
+        "",
+        f"- Matrix ID: `{result.matrix_id}`",
+        f"- Preset: `{result.preset_name or 'custom'}`",
+        f"- Manifest: `{result.manifest_path}`",
+        f"- Suite: `{result.suite}`",
+        f"- Baseline mode: `{result.baseline_mode}`",
+        f"- Modes: `{', '.join(result.modes)}`",
+        "",
+        "## Runs",
+    ]
+    for mode in result.modes:
+        run = result.run_results[mode]
+        lines.append(
+            "- "
+            f"{mode}: `run_id={run.run_id} cases={run.case_count} "
+            f"summary={run.artifacts.get('summary_json', '')}`"
+        )
+    lines.extend(["", "## Comparisons"])
+    if not result.comparison_results:
+        lines.append("- none")
+    else:
+        for comparison_mode, comparison in sorted(result.comparison_results.items()):
+            lines.append(
+                "- "
+                f"{result.baseline_mode} vs {comparison_mode}: "
+                f"`common_cases={comparison.common_case_count} "
+                f"comparison={comparison.artifacts.get('comparison_json', '')}`"
+            )
+    return "\n".join(lines) + "\n"
+
+
+def _resolve_manifest_and_suite(
+    args: argparse.Namespace,
+) -> tuple[str, BenchmarkSuite, str | None]:
+    if args.manifest:
+        if not args.suite:
+            raise ValueError("--suite is required when --manifest is provided")
+        return args.manifest, args.suite, None
+    preset = PRESETS[args.preset]
+    return preset.manifest_path, preset.suite, args.preset
+
+
+def _resolve_modes(
+    requested_modes: list[str],
+    *,
+    baseline_mode: str,
+) -> tuple[BenchmarkMode, ...]:
+    if not requested_modes:
+        modes: tuple[BenchmarkMode, ...] = DEFAULT_MATRIX_MODES
+    else:
+        deduped: list[BenchmarkMode] = []
+        seen: set[str] = set()
+        for mode in requested_modes:
+            if mode not in seen:
+                deduped.append(mode)  # type: ignore[arg-type]
+                seen.add(mode)
+        modes = tuple(deduped)
+    if baseline_mode not in modes:
+        raise ValueError("--baseline-mode must be included in the selected --mode set")
+    return modes
+
+
+def _resolve_pass_k_values(
+    raw_values: list[str],
+    *,
+    attempts: int,
+    suite: BenchmarkSuite,
+) -> tuple[int, ...]:
+    if suite != "coding":
+        return (1,)
+    if not raw_values:
+        return (1, attempts) if attempts > 1 else (1,)
+    return tuple(int(value) for value in raw_values)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

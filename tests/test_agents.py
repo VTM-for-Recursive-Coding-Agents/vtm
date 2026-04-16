@@ -395,6 +395,26 @@ def test_built_in_tools_delegate_workspace_operations(tmp_path: Path) -> None:
     assert any(call[0] == "apply_patch" for call in driver.calls)
 
 
+def test_built_in_tools_exclude_file_mutation_when_policy_disables_it(tmp_path: Path) -> None:
+    driver = FakeWorkspaceDriver()
+    context = ToolExecutionContext(
+        workspace_root=tmp_path,
+        task_file=tmp_path / "task.json",
+        task_payload={"case_id": "fake"},
+        artifact_root=tmp_path / "artifacts",
+        workspace_driver=driver,
+        tool_policy="no_file_mutation",
+    )
+
+    tools = BuiltInToolProvider().build_tools(context)
+
+    assert "apply_patch" not in tools
+    assert "terminal" in tools
+    assert "read" in tools
+    assert "search" in tools
+    assert "retrieve_memory" in tools
+
+
 def test_terminal_coding_agent_writes_task_memory_and_promotes_procedure(
     tmp_path: Path,
     kernel,

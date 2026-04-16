@@ -17,6 +17,7 @@ def apply_embedding_migrations(conn: sqlite3.Connection, current_version: int) -
 
 
 def _apply_schema_v1(conn: sqlite3.Connection) -> None:
+    """Create the derived embedding index table and supporting indexes."""
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS embedding_index_entries (

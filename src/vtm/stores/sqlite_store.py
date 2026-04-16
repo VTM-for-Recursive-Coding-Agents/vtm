@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -327,6 +328,7 @@ class SqliteMetadataStore:
         if self._event_log_path is None:
             raise RuntimeError("no event_log_path configured for JSONL export")
 
+        self._reconcile_jsonl_progress_from_file()
         rows = self._conn.execute(
             """
             SELECT event_id, occurred_at, data
@@ -437,6 +439,109 @@ class SqliteMetadataStore:
         handle.write(payload)
         handle.write("\n")
         handle.flush()
+        os.fsync(handle.fileno())
+
+    def _reconcile_jsonl_progress_from_file(self) -> None:
+        recovered_events = self._recover_jsonl_events_from_file()
+        if not recovered_events:
+            return
+
+        recovered_event_ids: list[str] = []
+        seen_event_ids: set[str] = set()
+        for event in recovered_events:
+            if event.event_id in seen_event_ids:
+                continue
+            if self.get_event(event.event_id) != event:
+                continue
+            recovered_event_ids.append(event.event_id)
+            seen_event_ids.add(event.event_id)
+
+        if not recovered_event_ids:
+            return
+
+        rows = self._conn.execute(
+            """
+            SELECT event_id, occurred_at, exported_to_jsonl
+            FROM events
+            ORDER BY occurred_at ASC, event_id ASC
+            """
+        ).fetchall()
+        recovered_event_id_set = set(recovered_event_ids)
+
+        contiguous_prefix: list[sqlite3.Row] = []
+        for row in rows:
+            if row["event_id"] not in recovered_event_id_set:
+                break
+            contiguous_prefix.append(row)
+
+        unmarked_prefix_ids = [
+            row["event_id"] for row in contiguous_prefix if row["exported_to_jsonl"] == 0
+        ]
+        if not unmarked_prefix_ids:
+            return
+
+        last_row = contiguous_prefix[-1]
+        now = utc_now().isoformat()
+        with self._conn:
+            placeholders = ",".join("?" for _ in unmarked_prefix_ids)
+            self._conn.execute(
+                f"UPDATE events SET exported_to_jsonl = 1 WHERE event_id IN ({placeholders})",
+                unmarked_prefix_ids,
+            )
+            self._conn.execute(
+                """
+                INSERT INTO event_export_state (
+                    export_name,
+                    last_exported_event_id,
+                    last_exported_occurred_at,
+                    last_exported_at,
+                    full_rebuild_count,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, 0, ?)
+                ON CONFLICT(export_name) DO UPDATE SET
+                    last_exported_event_id = excluded.last_exported_event_id,
+                    last_exported_occurred_at = excluded.last_exported_occurred_at,
+                    last_exported_at = excluded.last_exported_at,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    JSONL_EXPORT_NAME,
+                    last_row["event_id"],
+                    last_row["occurred_at"],
+                    now,
+                    now,
+                ),
+            )
+
+    def _recover_jsonl_events_from_file(self) -> tuple[MemoryEvent, ...]:
+        if self._event_log_path is None or not self._event_log_path.exists():
+            return ()
+
+        payload = self._event_log_path.read_bytes()
+        if not payload:
+            return ()
+
+        recovered: list[MemoryEvent] = []
+        safe_offset = 0
+        offset = 0
+        for raw_line in payload.splitlines(keepends=True):
+            offset += len(raw_line)
+            is_complete_line = raw_line.endswith(b"\n")
+            line = raw_line[:-1] if is_complete_line else raw_line
+            if not line:
+                break
+            try:
+                event = MemoryEvent.from_json(line.decode("utf-8"))
+            except Exception:
+                break
+            recovered.append(event)
+            safe_offset = offset
+            if not is_complete_line:
+                break
+
+        if safe_offset < len(payload):
+            self._event_log_path.write_bytes(payload[:safe_offset])
+        return tuple(recovered)
 
     def _mark_event_exported(self, event: MemoryEvent) -> None:
         with self._conn:

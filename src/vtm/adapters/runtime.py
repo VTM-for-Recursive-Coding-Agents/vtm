@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import platform
 import subprocess
-import sys
 from collections.abc import Mapping, Sequence
 from typing import Protocol
 
@@ -80,8 +79,3 @@ class RuntimeEnvFingerprintCollector:
         if lowered_value.startswith(f"{lowered_name} "):
             return value[len(name) + 1 :]
         return value
-
-
-def current_python_version() -> str:
-    """Return the current interpreter version as `major.minor.patch`."""
-    return ".".join(str(part) for part in sys.version_info[:3])

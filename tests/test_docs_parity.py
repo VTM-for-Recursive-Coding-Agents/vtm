@@ -19,10 +19,15 @@ EXPECTED_CORE_DOCS = (
     Path("docs/harness.md"),
     Path("src/vtm/harness/README.md"),
 )
+EXPECTED_REFERENCE_DOCS = (
+    Path("docs/codebase-guide.md"),
+    Path("docs/code-reference.md"),
+)
 EXPECTED_BENCHMARK_DOCS = (
     Path("docs/benchmark-recipes.md"),
     Path("src/vtm/benchmarks/README.md"),
     Path("docs/decisions/0010-multi-attempt-coding-benchmarks.md"),
+    Path("docs/decisions/0011-docker-sandboxed-shell-benchmarks.md"),
 )
 
 
@@ -100,10 +105,30 @@ def test_harness_docs_exist_and_reference_public_contracts() -> None:
     assert "TraceManifest" in harness_doc
 
 
+def test_code_reference_exists_and_covers_every_python_file() -> None:
+    for path in EXPECTED_REFERENCE_DOCS:
+        assert path.exists()
+
+    reference = Path("docs/code-reference.md").read_text(encoding="utf-8")
+    assert "scripts/generate_code_reference.py" in reference
+
+    flattened = sorted(
+        path for root in ("src", "tests", "scripts") for path in Path(root).rglob("*.py")
+    )
+    missing = [
+        path.as_posix()
+        for path in flattened
+        if f"`{path.as_posix()}`" not in reference
+    ]
+    assert missing == []
+
+
 def test_readme_keeps_kernel_and_harness_boundaries_distinct() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
     assert "vtm.harness" in readme
     assert "terminal-smoke" in readme
+    assert "terminal-shell-smoke" in readme
+    assert "DockerWorkspaceBackend" in readme
     assert "from vtm import BenchmarkRunner" not in readme
     assert "from vtm import OpenAIEmbeddingAdapter" not in readme
 
@@ -114,17 +139,28 @@ def test_benchmark_docs_cover_terminal_smoke_attempts_and_pass_k() -> None:
 
     recipes = Path("docs/benchmark-recipes.md").read_text(encoding="utf-8")
     assert "benchmarks/manifests/terminal-smoke.json" in recipes
+    assert "benchmarks/manifests/terminal-shell-smoke.json" in recipes
     assert "--attempts" in recipes
     assert "--pass-k" in recipes
+    assert "--workspace-backend" in recipes
+    assert "--docker-image" in recipes
 
     harness_doc = Path("docs/harness.md").read_text(encoding="utf-8")
     assert "attempts.jsonl" in harness_doc
     assert "artifact_root" in harness_doc
+    assert "DockerWorkspaceBackend" in harness_doc
+    assert "no_file_mutation" in harness_doc
+    assert "--read-only" in harness_doc
+    assert "--pids-limit 256" in harness_doc
+    assert "docker-run.stdout" in harness_doc
 
     benchmark_readme = Path("src/vtm/benchmarks/README.md").read_text(encoding="utf-8")
     assert "terminal-smoke.json" in benchmark_readme
+    assert "terminal-shell-smoke.json" in benchmark_readme
     assert "attempts.jsonl" in benchmark_readme
+    assert "workspace_backend" in benchmark_readme
 
     audit = Path("docs/current-state-audit.md").read_text(encoding="utf-8")
     assert "pass@k" in audit
-    assert "pass@k controller" not in audit
+    assert "docker_workspace" in audit
+    assert "shell_command" in audit

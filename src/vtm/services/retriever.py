@@ -35,10 +35,12 @@ class Retriever(Protocol):
 
 
 def _tokenize(text: str) -> tuple[str, ...]:
+    """Tokenize free text into case-folded alphanumeric terms."""
     return tuple(token.lower() for token in TOKEN_RE.findall(text))
 
 
 def _searchable_fields(item: MemoryItem) -> dict[str, str]:
+    """Collect the text fields that participate in lexical matching."""
     payload_parts: list[str] = []
     if isinstance(item.payload, ClaimPayload):
         payload_parts.append(item.payload.claim)
@@ -59,6 +61,7 @@ def _searchable_fields(item: MemoryItem) -> dict[str, str]:
 
 
 def _query_tokens(query: str) -> set[str]:
+    """Return the unique lexical tokens present in a query string."""
     return set(_tokenize(query))
 
 
@@ -66,6 +69,7 @@ def _match_fields(
     query_tokens: set[str],
     item: MemoryItem,
 ) -> tuple[tuple[str, ...], tuple[str, ...], float]:
+    """Score one memory item by token overlap across searchable fields."""
     fields = _searchable_fields(item)
     matched_tokens: set[str] = set()
     matched_fields: list[str] = []
@@ -84,6 +88,7 @@ def _candidate_evidence(
     request: RetrieveRequest,
     item: MemoryItem,
 ) -> tuple[tuple[EvidenceRef, ...], bool]:
+    """Select evidence payloads according to the request evidence budget."""
     evidence: tuple[EvidenceRef, ...] = ()
     raw_evidence_available = False
     if request.evidence_budget is EvidenceBudget.FORCE_RAW:
@@ -95,6 +100,7 @@ def _candidate_evidence(
 
 
 def _explanation_metadata(item: MemoryItem) -> dict[str, Any]:
+    """Expose procedure-specific metadata used by retrieval explanations."""
     if not isinstance(item.payload, ProcedurePayload):
         return {}
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import shlex
 from datetime import datetime
-from typing import Protocol
+from typing import Literal, Protocol, cast
 
 from vtm.adapters.agent_model import AgentModelAdapter
 from vtm.agents import (
@@ -96,7 +96,20 @@ class SubprocessBenchmarkExecutor:
                 ),
                 final_git_status_path=str(final_git_status_path),
                 command_events_path=str(prepared_workspace.command_events_path),
-                workspace_backend=prepared_workspace.backend_name,
+                workspace_backend=self._workspace_backend(prepared_workspace),
+                docker_image=self._workspace_metadata(
+                    prepared_workspace,
+                    "docker_image",
+                ),
+                docker_container_id=self._workspace_metadata(
+                    prepared_workspace,
+                    "docker_container_id",
+                ),
+                docker_container_name=self._workspace_metadata(
+                    prepared_workspace,
+                    "docker_container_name",
+                ),
+                docker_network=self._docker_network(prepared_workspace),
                 produced_patch_path=str(produced_patch_path),
                 produced_patch_digest=produced_patch_digest,
                 produced_patch_text=produced_patch,
@@ -104,6 +117,26 @@ class SubprocessBenchmarkExecutor:
             )
         finally:
             prepared_workspace.driver.close()
+
+    def _workspace_metadata(
+        self,
+        prepared_workspace: PreparedWorkspace,
+        key: str,
+    ) -> str | None:
+        return prepared_workspace.metadata.get(key)
+
+    def _workspace_backend(
+        self,
+        prepared_workspace: PreparedWorkspace,
+    ) -> Literal["local_workspace", "docker_workspace"]:
+        return prepared_workspace.backend_name
+
+    def _docker_network(
+        self,
+        prepared_workspace: PreparedWorkspace,
+    ) -> Literal["none", "bridge"] | None:
+        value = prepared_workspace.metadata.get("docker_network")
+        return cast(Literal["none", "bridge"] | None, value)
 
 
 class NativeAgentBenchmarkExecutor:
@@ -194,7 +227,20 @@ class NativeAgentBenchmarkExecutor:
                 ),
                 final_git_status_path=str(final_git_status_path),
                 command_events_path=str(prepared_workspace.command_events_path),
-                workspace_backend=prepared_workspace.backend_name,
+                workspace_backend=self._workspace_backend(prepared_workspace),
+                docker_image=self._workspace_metadata(
+                    prepared_workspace,
+                    "docker_image",
+                ),
+                docker_container_id=self._workspace_metadata(
+                    prepared_workspace,
+                    "docker_container_id",
+                ),
+                docker_container_name=self._workspace_metadata(
+                    prepared_workspace,
+                    "docker_container_name",
+                ),
+                docker_network=self._docker_network(prepared_workspace),
                 produced_patch_path=str(produced_patch_path),
                 produced_patch_digest=produced_patch_digest,
                 produced_patch_text=produced_patch,
@@ -230,6 +276,26 @@ class NativeAgentBenchmarkExecutor:
         started = datetime.fromisoformat(result.started_at)
         completed = datetime.fromisoformat(result.completed_at)
         return (completed - started).total_seconds() * 1000
+
+    def _workspace_metadata(
+        self,
+        prepared_workspace: PreparedWorkspace,
+        key: str,
+    ) -> str | None:
+        return prepared_workspace.metadata.get(key)
+
+    def _workspace_backend(
+        self,
+        prepared_workspace: PreparedWorkspace,
+    ) -> Literal["local_workspace", "docker_workspace"]:
+        return prepared_workspace.backend_name
+
+    def _docker_network(
+        self,
+        prepared_workspace: PreparedWorkspace,
+    ) -> Literal["none", "bridge"] | None:
+        value = prepared_workspace.metadata.get("docker_network")
+        return cast(Literal["none", "bridge"] | None, value)
 
 
 __all__ = [

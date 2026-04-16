@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Any, Protocol, TypeVar
 
-from vtm.artifacts import ArtifactIntegrityReport, ArtifactRecord
+from vtm.artifacts import ArtifactIntegrityReport, ArtifactRecord, ArtifactRepairReport
 from vtm.cache import CacheEntry, CacheKey
 from vtm.embeddings import EmbeddingIndexEntry
 from vtm.enums import ArtifactCaptureState, ValidityStatus
@@ -93,6 +93,7 @@ class ArtifactStore(Protocol):
         artifact_id: str,
         *,
         reason: str | None = None,
+        provenance: Mapping[str, Any] | None = None,
     ) -> ArtifactRecord: ...
 
     def put_bytes(
@@ -125,6 +126,8 @@ class ArtifactStore(Protocol):
     def abandon_stale_prepared_artifacts(self) -> Sequence[ArtifactRecord]: ...
 
     def cleanup_orphaned_blobs(self) -> Sequence[str]: ...
+
+    def repair_integrity(self) -> ArtifactRepairReport: ...
 
 
 class CacheStore(Protocol):

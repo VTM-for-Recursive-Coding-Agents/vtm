@@ -22,6 +22,7 @@ def apply_metadata_migrations(conn: sqlite3.Connection, current_version: int) ->
 
 
 def _apply_schema_v1(conn: sqlite3.Connection) -> None:
+    """Create the initial metadata, transaction, staged-memory, and event tables."""
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS memory_items (
@@ -112,6 +113,7 @@ def _apply_schema_v1(conn: sqlite3.Connection) -> None:
 
 
 def _apply_schema_v2(conn: sqlite3.Connection) -> None:
+    """Create persistent export-state tracking for derived event logs."""
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS event_export_state (

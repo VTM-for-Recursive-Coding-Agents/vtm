@@ -19,19 +19,25 @@ Compatibility re-exports still exist for some older import paths, but new code s
 - deterministic lexical retrieval, derived embedding retrieval, and optional RLM reranking
 - verification, procedure validation, and deterministic consolidation
 - typed harness task packs plus local workspace and executor contracts
+- typed harness task packs plus local and Docker-backed workspace contracts
 - native single-agent terminal runtime with built-in file, patch, terminal, and memory tools
 - retrieval, drift, coding-task, native-agent, and SWE-bench Lite benchmark workflows
 - checked-in `terminal-smoke` coding tasks for harder local terminal-style evaluation
+- checked-in `terminal-shell-smoke` coding tasks for shell-command-driven evaluation
 - repeated-attempt coding benchmarks with `attempts.jsonl`, `pass_at_k`, `resolved_at_k`, and `patch_applied_at_k`
+- Docker-sandboxed coding attempts with per-attempt container metadata and backend breakdowns
+- offline benchmark comparison via `vtm-bench-compare`, including paired case deltas and coding `pass_at_k` comparisons
+- preset-driven benchmark matrices via `vtm-bench-matrix`
 
 ## Intentionally Limited
 
 - JSONL export is derived from SQLite, not in the same atomic commit boundary
-- filesystem artifact writes and SQLite writes are still separate failure domains
-- procedure validation is bounded but not sandboxed
+- filesystem artifact writes and SQLite writes are still separate failure domains, even though failed writeback paths now record abandonment provenance and `repair_integrity()` applies the safe janitor steps
+- `CommandProcedureValidator` is still restricted local-process execution; `DockerProcedureValidator` is the only built-in sandboxed procedure-validation backend today
 - the native runtime is still single-agent and local
-- the default workspace backend is local only; remote sandbox execution is future work
-- repeated attempts are only implemented for coding suites; shell-only task classes are still future work
+- the default workspace backend is still local; Docker is the only built-in sandbox today
+- repeated attempts are only implemented for coding suites
+- remote sandbox execution and multi-agent orchestration are still future work
 
 ## Import Boundaries
 
@@ -49,7 +55,7 @@ from vtm import (
 Harness imports:
 
 ```python
-from vtm.harness import HarnessTaskPack, LocalWorkspaceBackend
+from vtm.harness import DockerWorkspaceBackend, HarnessTaskPack, LocalWorkspaceBackend
 ```
 
 Benchmark imports:
@@ -58,9 +64,10 @@ Benchmark imports:
 from vtm.benchmarks import BenchmarkRunner
 ```
 
-The main benchmark credibility entrypoint is now
-`benchmarks/manifests/terminal-smoke.json`, which exercises repeated attempts,
-memory retrieval, multi-file fixes, and terminal-style workflows.
+Benchmark credibility now has two checked-in tracks:
+
+- `benchmarks/manifests/terminal-smoke.json`: patch-oriented terminal tasks with repeated attempts
+- `benchmarks/manifests/terminal-shell-smoke.json`: shell-command tasks intended to be solved from the terminal, optionally under Docker isolation
 
 ## Quick Start
 
@@ -99,6 +106,8 @@ For a complete executable example that stages memory, captures artifacts, retrie
 ## Where To Start
 
 - Building against the kernel: start with [docs/api.md](docs/api.md) and [`src/vtm/__init__.py`](src/vtm/__init__.py).
+- Navigating the repository: start with [docs/codebase-guide.md](docs/codebase-guide.md).
+- Looking for a per-file inventory: use [docs/code-reference.md](docs/code-reference.md).
 - Running coding tasks in isolated workspaces: read [docs/harness.md](docs/harness.md) and [`src/vtm/harness/README.md`](src/vtm/harness/README.md).
 - Using the native agent runtime: start in [`src/vtm/agents/README.md`](src/vtm/agents/README.md).
 - Running evaluations: start in [docs/benchmark-recipes.md](docs/benchmark-recipes.md) and [`src/vtm/benchmarks/README.md`](src/vtm/benchmarks/README.md).
@@ -115,23 +124,42 @@ For a complete executable example that stages memory, captures artifacts, retrie
 Target runtime: Python 3.12.
 
 ```bash
-uv sync --dev
+uv sync --dev --all-extras
 uv run pytest -q
 uv run python -m ruff check .
 uv run python -m mypy src
 ```
 
-Optional extras:
+Installed CLI entrypoints:
 
 ```bash
-uv sync --extra openai
-uv sync --extra bench
+vtm-bench --help
+vtm-bench-compare --help
+vtm-bench-matrix --help
+vtm-prepare-swebench-lite --help
+```
+
+Nix workflow:
+
+```bash
+nix develop
+uv sync --dev --all-extras
+```
+
+Package and app entrypoints through the flake:
+
+```bash
+nix build .#vtm
+nix run .#vtm-bench -- --help
+nix shell .#vtm
 ```
 
 ## Docs
 
 - [docs/architecture.md](docs/architecture.md): system boundary and data-flow reference
 - [docs/api.md](docs/api.md): kernel API and stable root imports
+- [docs/codebase-guide.md](docs/codebase-guide.md): maintainer-oriented repository map and ownership guide
+- [docs/code-reference.md](docs/code-reference.md): generated inventory of every Python file and top-level symbols
 - [docs/harness.md](docs/harness.md): task packs, executors, workspace backends, and traces
 - [docs/current-state-audit.md](docs/current-state-audit.md): guarantees, gaps, and explicit limits
 - [docs/benchmark-recipes.md](docs/benchmark-recipes.md): repeatable benchmark commands

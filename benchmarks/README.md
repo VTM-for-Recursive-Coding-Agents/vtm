@@ -4,7 +4,7 @@ Purpose: checked-in benchmark assets that feed the benchmark runner. This direct
 
 Contents
 - `.gitkeep`: Keeps the top-level benchmark asset directory present in git.
-- `manifests/`: Versioned benchmark manifests consumed by `python -m vtm.benchmarks.run`.
+- `manifests/`: Versioned benchmark manifests consumed by `vtm-bench` or `python -m vtm.benchmarks.run`.
 
 Benchmark run outputs, task packs, workspaces, executor artifact files, `predictions.jsonl`, and normalized SWE-bench harness artifacts are written under the chosen runtime output directory, not back into this checked-in asset tree.
 

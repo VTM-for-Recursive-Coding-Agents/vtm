@@ -71,6 +71,7 @@ with tempfile.TemporaryDirectory() as temp_dir:
         metadata={"command": "flake8 ."},
     )
     integrity = artifacts.audit_integrity()
+    repair = artifacts.repair_integrity()
     evidence = kernel.artifact_evidence(
         artifact,
         label="flake8-output",
@@ -134,6 +135,7 @@ with tempfile.TemporaryDirectory() as temp_dir:
     assert integrity.prepared_artifact_ids == ()
     assert integrity.committed_missing_blob_artifact_ids == ()
     assert integrity.orphaned_blob_paths == ()
+    assert repair.audit_after.prepared_artifact_ids == ()
     assert updated_memory.validity.status is ValidityStatus.RELOCATED
     assert verification.current_status is ValidityStatus.RELOCATED
 

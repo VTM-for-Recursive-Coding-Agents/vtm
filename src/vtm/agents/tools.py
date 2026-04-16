@@ -23,16 +23,17 @@ class BuiltInToolProvider:
 
     def build_tools(self, context: ToolExecutionContext) -> Mapping[str, AgentTool]:
         """Return the built-in tools available to the runtime."""
-        del context
-        return {
+        tools = {
             "terminal": build_terminal_tool(),
             "read": build_read_tool(),
             "search": build_search_tool(),
-            "apply_patch": build_apply_patch_tool(),
             "retrieve_memory": build_retrieve_memory_tool(),
             "record_task_memory": build_record_task_memory_tool(),
             "promote_procedure": build_promote_procedure_tool(),
         }
+        if context.tool_policy != "no_file_mutation":
+            tools["apply_patch"] = build_apply_patch_tool()
+        return tools
 
 
 __all__ = [

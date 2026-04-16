@@ -13,7 +13,7 @@ from vtm.adapters import (
     OpenAIEmbeddingAdapter,
     OpenAIRLMAdapter,
 )
-from vtm.benchmarks.models import BenchmarkManifest, BenchmarkRunConfig
+from vtm.benchmarks.models import BenchmarkManifest, BenchmarkRunConfig, BenchmarkRunResult
 from vtm.benchmarks.runner import BenchmarkRunner
 
 
@@ -48,6 +48,28 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="Optional commit-pair filter. Repeat to select multiple pairs.",
+    )
+    parser.add_argument(
+        "--workspace-backend",
+        choices=("local_workspace", "docker_workspace"),
+        default="local_workspace",
+        help="Workspace backend used for coding-task execution.",
+    )
+    parser.add_argument(
+        "--docker-image",
+        default="",
+        help="Docker image for docker_workspace coding runs.",
+    )
+    parser.add_argument(
+        "--docker-binary",
+        default="docker",
+        help="Docker CLI binary to use for docker_workspace runs.",
+    )
+    parser.add_argument(
+        "--docker-network",
+        choices=("none", "bridge"),
+        default="none",
+        help="Docker network mode for docker_workspace runs.",
     )
     parser.add_argument(
         "--coding-executor",
@@ -180,6 +202,26 @@ def main() -> int:
         raise SystemExit("--attempts > 1 is only supported for coding suites")
     if args.suite != "coding" and args.pass_k:
         raise SystemExit("--pass-k is only supported for coding suites")
+    if args.workspace_backend == "docker_workspace" and args.suite != "coding":
+        raise SystemExit("--workspace-backend docker_workspace is only supported for coding suites")
+    if args.workspace_backend == "docker_workspace" and not args.docker_image:
+        raise SystemExit("--docker-image is required when --workspace-backend docker_workspace")
+    if args.workspace_backend == "local_workspace":
+        if args.docker_image:
+            raise SystemExit(
+                "--docker-image is only supported with --workspace-backend "
+                "docker_workspace"
+            )
+        if args.docker_binary != "docker":
+            raise SystemExit(
+                "--docker-binary is only supported with --workspace-backend "
+                "docker_workspace"
+            )
+        if args.docker_network != "none":
+            raise SystemExit(
+                "--docker-network is only supported with --workspace-backend "
+                "docker_workspace"
+            )
     if not args.pass_k:
         pass_k_values = (1, args.attempts) if args.attempts > 1 else (1,)
     else:
@@ -195,6 +237,10 @@ def main() -> int:
         seed=args.seed,
         repo_filters=tuple(args.repo),
         pair_filters=tuple(args.pair),
+        workspace_backend=args.workspace_backend,
+        docker_image=args.docker_image or None,
+        docker_binary=args.docker_binary,
+        docker_network=args.docker_network,
         coding_executor=args.coding_executor,
         executor_command=tuple(shlex.split(args.executor_command)),
         attempt_count=args.attempts,
@@ -214,63 +260,88 @@ def main() -> int:
         swebench_harness_cache_level=args.swebench_cache_level,
         swebench_harness_run_id=args.swebench_run_id or None,
     )
+    try:
+        result = execute_benchmark_run(
+            manifest,
+            config,
+            rlm_model_name=args.rlm_model or None,
+            embedding_model_name=args.embedding_model or None,
+            agent_model_name=args.agent_model or None,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    print(result.to_json())
+    return 0
 
+
+def execute_benchmark_run(
+    manifest: BenchmarkManifest,
+    config: BenchmarkRunConfig,
+    *,
+    rlm_model_name: str | None = None,
+    embedding_model_name: str | None = None,
+    agent_model_name: str | None = None,
+    agent_base_url: str | None = None,
+    agent_api_key: str | None = None,
+) -> BenchmarkRunResult:
+    """Execute one benchmark run with environment-aware optional adapters."""
     rlm_adapter = None
     embedding_adapter: EmbeddingAdapter | None = None
     agent_model_adapter = None
-    if args.mode == "lexical_rlm_rerank":
-        model_name = args.rlm_model or os.getenv("VTM_OPENAI_MODEL")
+    resolved_config = config
+
+    if config.mode == "lexical_rlm_rerank":
+        model_name = rlm_model_name or os.getenv("VTM_OPENAI_MODEL")
         if not model_name:
-            raise SystemExit(
-                "lexical_rlm_rerank mode requires --rlm-model or VTM_OPENAI_MODEL"
-            )
+            raise ValueError("lexical_rlm_rerank mode requires --rlm-model or VTM_OPENAI_MODEL")
         rlm_adapter = OpenAIRLMAdapter(model=model_name)
-    if args.mode == "embedding":
-        embedding_model = args.embedding_model or os.getenv("VTM_OPENAI_EMBEDDING_MODEL")
-        if embedding_model:
-            embedding_adapter = OpenAIEmbeddingAdapter(model=embedding_model)
+    if config.mode == "embedding":
+        resolved_embedding_model = embedding_model_name or os.getenv(
+            "VTM_OPENAI_EMBEDDING_MODEL"
+        )
+        if resolved_embedding_model:
+            embedding_adapter = OpenAIEmbeddingAdapter(model=resolved_embedding_model)
         else:
             embedding_adapter = DeterministicHashEmbeddingAdapter()
-    if args.suite == "coding" and args.coding_executor == "native_agent":
-        agent_model = (
-            args.agent_model
+    if config.suite == "coding" and config.coding_executor == "native_agent":
+        resolved_agent_model = (
+            agent_model_name
+            or config.agent_model_id
             or os.getenv("VTM_AGENT_MODEL")
             or os.getenv("VTM_LOCAL_LLM_MODEL")
         )
-        if not agent_model:
-            raise SystemExit(
+        if not resolved_agent_model:
+            raise ValueError(
                 "native_agent coding runs require --agent-model, VTM_AGENT_MODEL, or "
                 "VTM_LOCAL_LLM_MODEL"
             )
         agent_model_adapter = OpenAICompatibleAgentModelAdapter(
-            model=agent_model,
+            model=resolved_agent_model,
             base_url=(
-                os.getenv("VTM_AGENT_BASE_URL")
+                agent_base_url
+                or os.getenv("VTM_AGENT_BASE_URL")
                 or os.getenv("VTM_LOCAL_LLM_BASE_URL")
                 or ""
             ),
             api_key=(
-                os.getenv("VTM_AGENT_API_KEY")
+                agent_api_key
+                or os.getenv("VTM_AGENT_API_KEY")
                 or os.getenv("VTM_LOCAL_LLM_API_KEY")
                 or "vtm-agent"
             ),
             temperature=config.agent_temperature,
         )
-        config = config.model_copy(
-            update={
-                "agent_model_id": agent_model,
-            }
+        resolved_config = resolved_config.model_copy(
+            update={"agent_model_id": resolved_agent_model}
         )
 
-    result = BenchmarkRunner(
+    return BenchmarkRunner(
         manifest,
-        config,
+        resolved_config,
         rlm_adapter=rlm_adapter,
         embedding_adapter=embedding_adapter,
         agent_model_adapter=agent_model_adapter,
     ).run()
-    print(result.to_json())
-    return 0
 
 
 if __name__ == "__main__":

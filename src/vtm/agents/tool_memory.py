@@ -94,6 +94,7 @@ def _retrieve_memory(
     context: ToolExecutionContext,
     call_id: str,
 ) -> AgentToolResult:
+    """Query task and durable memory, then emit a compact JSON candidate list."""
     if context.kernel is None or context.durable_scope is None:
         return AgentToolResult(success=False, content="memory retrieval is not enabled")
     query = str(arguments.get("query", "")).strip()
@@ -148,6 +149,7 @@ def _record_task_memory(
     context: ToolExecutionContext,
     call_id: str,
 ) -> AgentToolResult:
+    """Persist a verified task-scoped memory item captured from agent output."""
     if (
         context.kernel is None
         or context.task_scope is None
@@ -251,6 +253,7 @@ def _promote_procedure(
     context: ToolExecutionContext,
     call_id: str,
 ) -> AgentToolResult:
+    """Promote selected source memories into a durable procedure record."""
     if context.kernel is None or context.durable_scope is None:
         return AgentToolResult(success=False, content="procedure promotion is not enabled")
     source_memory_ids = tuple(str(item) for item in _items(arguments.get("source_memory_ids")))
@@ -313,6 +316,7 @@ def _promote_procedure(
 
 
 def _coerce_int(value: object, *, default: int) -> int:
+    """Coerce a tool argument into an integer, applying a default when missing."""
     if value is None:
         return default
     if isinstance(value, bool):
@@ -323,12 +327,14 @@ def _coerce_int(value: object, *, default: int) -> int:
 
 
 def _items(value: object) -> tuple[object, ...]:
+    """Normalize list-like tool arguments into a tuple."""
     if isinstance(value, (list, tuple)):
         return tuple(value)
     return ()
 
 
 def _string_items(value: object) -> tuple[str, ...]:
+    """Normalize list-like tool arguments into a tuple of strings."""
     return tuple(str(item) for item in _items(value))
 
 

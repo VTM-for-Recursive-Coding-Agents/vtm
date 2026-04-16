@@ -62,7 +62,7 @@ def test_openai_chat_client_only_includes_seed_when_present(monkeypatch) -> None
         def __enter__(self) -> FakeHttpResponse:
             return self
 
-        def __exit__(self, exc_type, exc, tb) -> None:
+        def __exit__(self, _exc_type, _exc, _tb) -> None:
             return None
 
         def read(self) -> bytes:

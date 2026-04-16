@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import suppress
 from typing import Protocol
 from uuid import uuid4
 
@@ -60,42 +61,55 @@ class ArtifactKernelOps:
     ) -> ArtifactRecord:
         """Capture an artifact through prepare-and-commit semantics."""
         capture_group_id = f"capgrp_{uuid4().hex}"
-        prepared = self._artifact_store.prepare_bytes(
-            data,
-            content_type=content_type,
-            tool_name=tool_name,
-            tool_version=tool_version,
-            metadata=metadata,
-            capture_group_id=capture_group_id,
-            actor="kernel",
-        )
-        self._event_store.save_event(
-            MemoryEvent(
-                event_type="artifact_capture_prepared",
-                payload={
-                    "artifact_id": prepared.artifact_id,
-                    "capture_group_id": capture_group_id,
-                    "sha256": prepared.sha256,
-                    "tool_name": prepared.tool_name,
-                    "capture_state": prepared.capture_state.value,
-                },
-            )
-        )
-        record = self._artifact_store.commit_artifact(prepared.artifact_id)
-        self._event_store.save_event(
-            MemoryEvent(
-                event_type="artifact_captured",
+        prepared = None
+        record = None
+        try:
+            prepared = self._artifact_store.prepare_bytes(
+                data,
+                content_type=content_type,
                 tool_name=tool_name,
-                payload={
-                    "artifact_id": record.artifact_id,
-                    "capture_group_id": capture_group_id,
-                    "sha256": record.sha256,
-                    "tool_name": record.tool_name,
-                    "capture_state": record.capture_state.value,
-                },
+                tool_version=tool_version,
+                metadata=metadata,
+                capture_group_id=capture_group_id,
+                actor="kernel",
             )
-        )
-        return record
+            self._event_store.save_event(
+                MemoryEvent(
+                    event_type="artifact_capture_prepared",
+                    payload={
+                        "artifact_id": prepared.artifact_id,
+                        "capture_group_id": capture_group_id,
+                        "sha256": prepared.sha256,
+                        "tool_name": prepared.tool_name,
+                        "capture_state": prepared.capture_state.value,
+                    },
+                )
+            )
+            record = self._artifact_store.commit_artifact(prepared.artifact_id)
+            self._event_store.save_event(
+                MemoryEvent(
+                    event_type="artifact_captured",
+                    tool_name=tool_name,
+                    payload={
+                        "artifact_id": record.artifact_id,
+                        "capture_group_id": capture_group_id,
+                        "sha256": record.sha256,
+                        "tool_name": record.tool_name,
+                        "capture_state": record.capture_state.value,
+                    },
+                )
+            )
+            return record
+        except Exception:
+            artifact_id = record.artifact_id if record is not None else None
+            if artifact_id is None and prepared is not None:
+                artifact_id = prepared.artifact_id
+            if artifact_id is not None:
+                self._best_effort_abandon(
+                    artifact_id,
+                    reason="artifact_capture_writeback_failed",
+                )
+            raise
 
     def artifact_evidence(
         self,
@@ -132,3 +146,14 @@ class ArtifactKernelOps:
             label=label,
             summary=summary,
         )
+
+    def _best_effort_abandon(self, artifact_id: str, *, reason: str) -> None:
+        with suppress(Exception):
+            self._artifact_store.abandon_artifact(
+                artifact_id,
+                reason=reason,
+                provenance={
+                    "origin": "kernel_artifact_capture",
+                    "stage": "event_writeback",
+                },
+            )

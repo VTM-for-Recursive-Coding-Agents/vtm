@@ -13,3 +13,4 @@ Contents
 - `0008-agent-runtime-boundary.md`: Native agent runtime boundary and task-memory promotion rules.
 - `0009-harness-executor-boundary.md`: Public harness seam for task packs, workspaces, executors, and traces.
 - `0010-multi-attempt-coding-benchmarks.md`: Repeated-attempt coding benchmark semantics and artifact layout.
+- `0011-docker-sandboxed-shell-benchmarks.md`: Docker-backed shell-command coding benchmarks under the existing coding suite.

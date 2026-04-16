@@ -17,6 +17,7 @@ def apply_cache_migrations(conn: sqlite3.Connection, current_version: int) -> No
 
 
 def _apply_schema_v1(conn: sqlite3.Connection) -> None:
+    """Create the cache entry table and its tool-name index."""
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS cache_entries (

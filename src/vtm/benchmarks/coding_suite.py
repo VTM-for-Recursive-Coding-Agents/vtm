@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from vtm.adapters.agent_model import AgentModelAdapter
-from vtm.agents import AgentRunRequest, AgentRuntimeContext
+from vtm.agents import AgentRunRequest, AgentRuntimeContext, AgentToolPolicy
 from vtm.benchmarks.kernel_factory import BenchmarkKernelFactory
 from vtm.benchmarks.models import (
     BenchmarkAttemptResult,
@@ -28,7 +28,12 @@ from vtm.enums import EvidenceBudget, EvidenceKind, ScopeKind
 from vtm.harness.executors import NativeAgentBenchmarkExecutor, SubprocessBenchmarkExecutor
 from vtm.harness.models import ExecutorRequest, HarnessTaskPack, TaskMemoryContextItem
 from vtm.harness.scoring import changed_path_metrics, patch_similarity
-from vtm.harness.workspace import LocalWorkspaceBackend, PreparedWorkspace
+from vtm.harness.workspace import (
+    LocalWorkspaceBackend,
+    PreparedWorkspace,
+    WorkspaceBackend,
+)
+from vtm.harness.workspace_docker import DockerWorkspaceBackend
 from vtm.memory_items import MemoryItem, VisibilityScope
 from vtm.retrieval import RetrieveRequest
 from vtm.services import TransactionalMemoryKernel
@@ -81,6 +86,7 @@ def run_coding_suite(
         cases = cases[: config.max_cases]
 
     repo_map = {repo.repo_name: repo for repo in manifest.repos}
+    workspace_backend = build_workspace_backend(config)
     repo_roots: dict[str, Path] = {}
     attempt_results_by_case: dict[str, list[BenchmarkAttemptResult]] = {}
     for task in cases:
@@ -110,7 +116,7 @@ def run_coding_suite(
                 prepared_task=prepared_task,
                 output_dir=output_dir,
                 config=config,
-                repo_manager=repo_manager,
+                workspace_backend=workspace_backend,
                 kernel_factory=kernel_factory,
                 agent_model_adapter=agent_model_adapter,
                 attempt_index=attempt_index,
@@ -247,6 +253,7 @@ def prepare_coding_task(
         top_k=config.top_k,
         task_kind=task.task_kind,
         difficulty=task.difficulty,
+        execution_style=task.execution_style,
         memory_context=memory_context,
         coding_executor=config.coding_executor,
     )
@@ -284,13 +291,12 @@ def evaluate_coding_attempt(
     prepared_task: PreparedCodingTask,
     output_dir: Path,
     config: BenchmarkRunConfig,
-    repo_manager: RepoWorkspaceManager,
+    workspace_backend: WorkspaceBackend,
     kernel_factory: BenchmarkKernelFactory,
     agent_model_adapter: AgentModelAdapter | None,
     attempt_index: int,
 ) -> BenchmarkAttemptResult:
     """Execute one concrete attempt for a coding task."""
-    del repo_manager
     executed = False
     passed = False
     resolved = False
@@ -326,7 +332,7 @@ def evaluate_coding_attempt(
                 raise ValueError(
                     "native_agent coding executor requires an agent_model_adapter"
                 )
-            prepared_workspace = LocalWorkspaceBackend().prepare_workspace(
+            prepared_workspace = workspace_backend.prepare_workspace(
                 case_id=task.case_id,
                 attempt_index=attempt_index,
                 repo_root=repo_root,
@@ -374,6 +380,7 @@ def evaluate_coding_attempt(
                     attempt_index=attempt_index,
                     mode=config.agent_mode,
                     prompt_profile=config.agent_prompt_profile,
+                    tool_policy=tool_policy_for_task(task),
                     task_payload=task_payload,
                     max_turns=config.agent_max_turns,
                     max_tool_failures=config.agent_max_tool_failures,
@@ -401,7 +408,7 @@ def evaluate_coding_attempt(
             )
             executed = True
         elif config.executor_command:
-            prepared_workspace = LocalWorkspaceBackend().prepare_workspace(
+            prepared_workspace = workspace_backend.prepare_workspace(
                 case_id=task.case_id,
                 attempt_index=attempt_index,
                 repo_root=repo_root,
@@ -473,6 +480,7 @@ def evaluate_coding_attempt(
                 "coding_executor": config.coding_executor,
                 "attempt_index": attempt_index,
                 "artifact_root": str(prepared_workspace.artifact_root),
+                "execution_style": task.execution_style,
                 "executor_command": list(outcome.command),
                 "executor_exit_code": outcome.command_exit_code,
                 "executor_timed_out": outcome.command_timed_out,
@@ -501,6 +509,11 @@ def evaluate_coding_attempt(
                     if outcome.trace_manifest is not None
                     else None
                 ),
+                "docker_image": outcome.docker_image,
+                "docker_container_id": outcome.docker_container_id,
+                "docker_container_name": outcome.docker_container_name,
+                "docker_network": outcome.docker_network,
+                **prepared_workspace.metadata,
                 **outcome.agent_artifacts,
                 **outcome.agent_metadata,
             }
@@ -509,11 +522,13 @@ def evaluate_coding_attempt(
             executor_metadata = {
                 "coding_executor": config.coding_executor,
                 "attempt_index": attempt_index,
-                "workspace_backend": "local_workspace",
+                "execution_style": task.execution_style,
+                "workspace_backend": config.workspace_backend,
             }
             if prepared_workspace is not None:
                 executor_metadata["workspace"] = str(prepared_workspace.workspace_root)
                 executor_metadata["artifact_root"] = str(prepared_workspace.artifact_root)
+                executor_metadata.update(prepared_workspace.metadata)
     except Exception as exc:
         infra_failure = True
         incomplete = True
@@ -521,11 +536,13 @@ def evaluate_coding_attempt(
             "coding_executor": config.coding_executor,
             "attempt_index": attempt_index,
             "infra_error": str(exc),
-            "workspace_backend": "local_workspace",
+            "execution_style": task.execution_style,
+            "workspace_backend": config.workspace_backend,
         }
         if prepared_workspace is not None:
             executor_metadata["workspace"] = str(prepared_workspace.workspace_root)
             executor_metadata["artifact_root"] = str(prepared_workspace.artifact_root)
+            executor_metadata.update(prepared_workspace.metadata)
     finally:
         if metadata is not None and artifacts is not None and cache is not None:
             kernel_factory.close_kernel_stores(metadata, artifacts, cache, embedding_index)
@@ -571,6 +588,7 @@ def evaluate_coding_attempt(
             "top_k": config.top_k,
             "task_kind": task.task_kind,
             "difficulty": task.difficulty,
+            "execution_style": task.execution_style,
             "evaluation_backend": task.evaluation_backend,
             "instance_id": task.instance_id,
             "dataset_name": task.dataset_name,
@@ -734,6 +752,24 @@ def attempt_task_payload(
     payload["attempt_index"] = attempt_index
     payload["artifact_root"] = str(artifact_root)
     return payload
+
+
+def build_workspace_backend(config: BenchmarkRunConfig) -> WorkspaceBackend:
+    """Construct the configured workspace backend for coding execution."""
+    if config.workspace_backend == "docker_workspace":
+        return DockerWorkspaceBackend(
+            docker_binary=config.docker_binary,
+            docker_image=config.docker_image or "",
+            docker_network=config.docker_network,
+        )
+    return LocalWorkspaceBackend()
+
+
+def tool_policy_for_task(task: CodingTaskCase) -> AgentToolPolicy:
+    """Return the native-agent tool policy for the task's execution style."""
+    if task.execution_style == "shell_command":
+        return "no_file_mutation"
+    return "full"
 
 
 def attempt_seed(config: BenchmarkRunConfig, attempt_index: int) -> int | None:
