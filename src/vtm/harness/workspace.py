@@ -61,23 +61,7 @@ class WorkspaceDriver(Protocol):
         max_output_chars: int | None = None,
     ) -> CommandResult: ...
 
-    def read_file(
-        self,
-        path: str,
-        *,
-        start_line: int = 1,
-        end_line: int | None = None,
-        max_chars: int = 20000,
-    ) -> str: ...
-
     def search(self, pattern: str, *, path: str = ".") -> CommandResult: ...
-
-    def apply_patch(
-        self,
-        patch_text: str,
-        *,
-        patch_path: Path | None = None,
-    ) -> CommandResult: ...
 
     def capture_patch(self) -> str: ...
 
@@ -237,27 +221,6 @@ class LocalWorkspaceDriver:
         self._append_event(result)
         return result
 
-    def read_file(
-        self,
-        path: str,
-        *,
-        start_line: int = 1,
-        end_line: int | None = None,
-        max_chars: int = 20000,
-    ) -> str:
-        """Read and line-number a file inside the workspace."""
-        resolved = self._resolve_workspace_path(path)
-        if not resolved.exists() or not resolved.is_file():
-            raise FileNotFoundError(path)
-        lines = resolved.read_text(encoding="utf-8").splitlines()
-        selected = lines[max(start_line - 1, 0) :]
-        if end_line is not None:
-            selected = selected[: max(end_line - start_line + 1, 0)]
-        return "\n".join(
-            f"{index}: {line}"
-            for index, line in enumerate(selected, start=max(start_line, 1))
-        )[:max_chars]
-
     def search(self, pattern: str, *, path: str = ".") -> CommandResult:
         """Search the workspace with `rg`, falling back to `grep`."""
         target_path = self._resolve_workspace_path(path)
@@ -273,29 +236,6 @@ class LocalWorkspaceDriver:
                 operation="search",
                 max_output_chars=self._default_max_output_chars,
             )
-
-    def apply_patch(
-        self,
-        patch_text: str,
-        *,
-        patch_path: Path | None = None,
-    ) -> CommandResult:
-        """Apply a git patch to the workspace after a dry-run check."""
-        target = patch_path or (self.artifact_root / f"{uuid4().hex}.patch")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(patch_text, encoding="utf-8")
-        check_result = self._run_subprocess(
-            ("git", "apply", "--check", "--3way", str(target)),
-            operation="apply_patch_check",
-            max_output_chars=self._default_max_output_chars,
-        )
-        if check_result.exit_code != 0:
-            return check_result
-        return self._run_subprocess(
-            ("git", "apply", "--3way", str(target)),
-            operation="apply_patch",
-            max_output_chars=self._default_max_output_chars,
-        )
 
     def capture_patch(self) -> str:
         """Return the current diff from `HEAD` for the workspace."""

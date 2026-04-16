@@ -245,8 +245,6 @@ def execute_benchmark_run(
     rlm_model_name: str | None = None,
     embedding_model_name: str | None = None,
     agent_model_name: str | None = None,
-    agent_base_url: str | None = None,
-    agent_api_key: str | None = None,
 ) -> BenchmarkRunResult:
     """Execute one benchmark run with environment-aware optional adapters."""
     rlm_adapter = None

@@ -26,9 +26,7 @@ It owns the contracts that should stay stable even when benchmark orchestration,
   - prepares an isolated workspace for a task
 - `WorkspaceDriver`
   - terminal execution
-  - file reads
   - ripgrep-style search
-  - patch application
   - patch capture
   - changed-path capture
   - final verification commands
@@ -115,9 +113,5 @@ the on-disk task-pack file.
 - `vtm.harness` owns typed execution contracts and local reference implementations.
 - `vtm_rlm` owns the vendored-RLM execution bridge and memory writeback behavior.
 - `vtm.benchmarks` owns suite selection, reporting, and manifest-driven orchestration.
-
-Compatibility shims remain at:
-
-- `vtm.benchmarks.executor`
 
 New code should import from `vtm.harness`.

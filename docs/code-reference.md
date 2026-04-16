@@ -5,8 +5,8 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 
 ## Coverage
 
-- Total Python files: `120`
-- `src/`: `88`
+- Total Python files: `119`
+- `src/`: `87`
 - `tests/`: `29`
 - `scripts/`: `3`
 
@@ -214,12 +214,6 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Top-level symbols:
   - `function run_drift_suite(*, output_dir, selected_repo_pairs, repo_manager, symbol_indexer, kernel_factory, mode)`: Run verification-drift evaluation for the selected repo pairs.
 
-#### `src/vtm/benchmarks/executor.py`
-
-- Purpose: Compatibility re-exports for executor-facing benchmark imports.
-- Module docstring: `yes`
-- Top-level symbols: none
-
 #### `src/vtm/benchmarks/kernel_factory.py`
 
 - Purpose: Helpers for constructing and seeding benchmark-local kernels.
@@ -304,7 +298,7 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Top-level symbols:
   - `function build_parser()`: Build the benchmark runner CLI parser.
   - `function main()`: Parse CLI args, configure adapters, and execute a benchmark run.
-  - `function execute_benchmark_run(manifest, config, *, rlm_model_name=..., embedding_model_name=..., agent_model_name=..., agent_base_url=..., agent_api_key=...)`: Execute one benchmark run with environment-aware optional adapters.
+  - `function execute_benchmark_run(manifest, config, *, rlm_model_name=..., embedding_model_name=..., agent_model_name=...)`: Execute one benchmark run with environment-aware optional adapters.
 
 #### `src/vtm/benchmarks/runner.py`
 
@@ -973,7 +967,6 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `function _build_repo(repo)`: No symbol docstring.
   - `function _build_repo_with_second_commit(repo)`: No symbol docstring.
   - `function test_harness_models_round_trip()`: No symbol docstring.
-  - `function test_harness_shims_reexport_new_modules()`: No symbol docstring.
   - `function test_local_workspace_driver_preserves_blank_lines(tmp_path)`: No symbol docstring.
   - `function test_docker_workspace_backend_prepares_isolated_workspace(tmp_path, fake_docker_binary)`: No symbol docstring.
   - `function test_local_workspace_backend_fetches_missing_prepared_ref(tmp_path)`: No symbol docstring.

@@ -2,6 +2,9 @@
 
 Purpose: manifest-driven benchmark orchestration and reporting.
 
+Use this README for package ownership only.
+For benchmark commands and runbooks, use [`docs/benchmark-recipes.md`](../../../docs/benchmark-recipes.md).
+
 Start here
 - `models.py`: manifest, config, and result records.
 - `runner.py`: the public `BenchmarkRunner` entrypoint.
@@ -19,13 +22,14 @@ Contents
 - `compare.py`: CLI entrypoint for offline comparison of completed benchmark runs.
 - `matrix.py`: CLI entrypoint for maintained benchmark matrices and baseline comparisons.
 - `repo_materialization.py`, `symbol_index.py`, `synthetic.py`, `swebench.py`, `swebench_harness.py`: corpus preparation and evaluation helpers.
-- `executor.py`: Compatibility shim re-exporting the public harness executor surface.
 - `local_patcher.py`: Local patch generator that consumes typed harness task packs.
+- `scaffold_bridge.py`: Helper that converts harness task packs into delegate-friendly bundles.
 
 Current benchmark credibility surface
 - `benchmarks/manifests/synthetic-smoke.json`: small regression-friendly smoke corpus.
 - `benchmarks/manifests/terminal-smoke.json`: harder local terminal-style coding corpus.
 - `benchmarks/manifests/terminal-shell-smoke.json`: shell-command coding corpus intended to be solved from the terminal.
+- `docs/benchmark-recipes.md`: the single maintained source for benchmark commands and workflows.
 - `BenchmarkRunConfig.attempt_count` and `pass_k_values`: repeated-attempt coding controls.
 - `BenchmarkRunConfig.workspace_backend`: `local_workspace` or `docker_workspace`.
 - `results.jsonl`: one aggregate row per case.

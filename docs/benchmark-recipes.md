@@ -345,10 +345,9 @@ uv run python -m vtm.benchmarks.matrix \
 - Matrix runs write one completed benchmark run per mode under `runs/<mode>/` plus baseline comparisons under `comparisons/<baseline>-vs-<mode>/`.
 - Attempt-aware workspaces and artifacts live under `workspaces/<mode>/<case-id>/attempt-01` and `executor-artifacts/<case-id>/attempt-01`.
 - Case-local executor artifacts always include `command-events.jsonl`, `final-git-status.txt`, `produced.patch`, and final verification stdout/stderr files.
-- Native-agent runs additionally emit `session.json`, `turns.jsonl`, `tool_calls.jsonl`, and `compactions.jsonl` through the harness trace manifest.
+- Vendored-RLM runs additionally emit `response.txt`, `completion.json`, and optional trajectory artifacts under `executor-artifacts/<case-id>/attempt-01/rlm/`.
 - Docker-backed attempts require `--workspace-backend docker_workspace` plus `--docker-image`; `--docker-network` defaults to `none`.
 - Shell-command tasks still use the coding suite, the standard `test_command` verifier, and diff-based scoring when they regenerate tracked files.
-- Native-agent shell-command tasks disable direct file-mutation tools through `tool_policy="no_file_mutation"`.
 - If `--attempts > 1` and no explicit `--pass-k` values are provided, the runner reports `pass_at_1` and `pass_at_<attempt_count>` by default.
 - Use repeated `--attempts` and `--pass-k` runs to compare memory modes under the same vendored-RLM execution engine.
 - Prefer `--repo` and `--pair` filters over ad hoc truncation when you want reproducible targeted runs.

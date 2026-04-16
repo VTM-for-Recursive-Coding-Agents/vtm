@@ -6,13 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from vtm.benchmarks.executor import (
-    ExecutorResult as BenchmarkExecutorResult,
-)
-from vtm.benchmarks.executor import (
-    SubprocessBenchmarkExecutor as BenchmarkSubprocessExecutor,
-)
-from vtm.harness.executors import SubprocessBenchmarkExecutor
 from vtm.harness.models import (
     ExecutorRequest,
     ExecutorResult,
@@ -120,11 +113,6 @@ def test_harness_models_round_trip() -> None:
     )
     restored_result = ExecutorResult.from_json(executor_result.to_json())
     assert restored_result == executor_result
-
-
-def test_harness_shims_reexport_new_modules() -> None:
-    assert BenchmarkSubprocessExecutor is SubprocessBenchmarkExecutor
-    assert BenchmarkExecutorResult is ExecutorResult
 
 
 def test_local_workspace_driver_preserves_blank_lines(tmp_path: Path) -> None:
