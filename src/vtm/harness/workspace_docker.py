@@ -247,7 +247,7 @@ class DockerWorkspaceBackend:
         workspace_root.parent.mkdir(parents=True, exist_ok=True)
         artifact_root.mkdir(parents=True, exist_ok=True)
         self._run(("git", "clone", "--quiet", str(repo_root), str(workspace_root)))
-        self._run(("git", "checkout", "--quiet", base_ref), cwd=workspace_root)
+        self._checkout_prepared_ref(workspace_root, base_ref)
         return self.prepare_existing_workspace(
             case_id=case_id,
             attempt_index=attempt_index,
@@ -370,6 +370,16 @@ class DockerWorkspaceBackend:
                 "docker_run_stderr_path": str(startup_stderr_path),
             },
         )
+
+    def _checkout_prepared_ref(self, workspace_root: Path, base_ref: str) -> None:
+        try:
+            self._run(("git", "checkout", "--quiet", base_ref), cwd=workspace_root)
+        except subprocess.CalledProcessError:
+            self._run(
+                ("git", "fetch", "--quiet", "origin", f"{base_ref}:{base_ref}"),
+                cwd=workspace_root,
+            )
+            self._run(("git", "checkout", "--quiet", base_ref), cwd=workspace_root)
 
     def _run(self, command: tuple[str, ...], *, cwd: Path | None = None) -> None:
         subprocess.run(

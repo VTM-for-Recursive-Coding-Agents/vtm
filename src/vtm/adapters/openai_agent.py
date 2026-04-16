@@ -7,6 +7,7 @@ import os
 
 from vtm.adapters.agent_model import AgentModelAdapter
 from vtm.adapters.openai_chat import OpenAICompatibleChatClient, OpenAICompatibleChatConfig
+from vtm.agents.prompts import build_system_prompt
 from vtm.agents.models import AgentModelTurnRequest, AgentModelTurnResponse
 
 
@@ -81,6 +82,8 @@ class OpenAICompatibleAgentModelAdapter:
             raise RuntimeError(
                 "OpenAI-compatible agent adapter did not return valid JSON"
             ) from exc
+        if isinstance(payload, dict):
+            payload = self._normalize_payload(payload)
         return AgentModelTurnResponse.model_validate(payload)
 
     def _build_client(
@@ -115,16 +118,50 @@ class OpenAICompatibleAgentModelAdapter:
         )
 
     def _build_system_prompt(self, request: AgentModelTurnRequest) -> str:
-        return "\n".join(
-            [
-                "You are a single-agent terminal coding runtime.",
-                "Return only a JSON object matching the requested schema.",
-                "Use tools when needed; do not invent tool results.",
-                "If the task is complete, set done=true.",
-                "Keep arguments minimal and valid for the declared tool schemas.",
-                f"Prompt profile: {request.prompt_profile}",
-            ]
-        )
+        return build_system_prompt(request)
+
+    def _normalize_payload(self, payload: dict[str, object]) -> dict[str, object]:
+        """Coerce common near-miss tool-call payloads into the expected schema."""
+        if "tool_calls" in payload and isinstance(payload["tool_calls"], list):
+            normalized_calls: list[dict[str, object]] = []
+            changed = False
+            for item in payload["tool_calls"]:
+                if not isinstance(item, dict):
+                    normalized_calls.append(item)
+                    continue
+                command = item.get("tool_name", item.get("command"))
+                arguments = item.get("arguments", item.get("tool_args"))
+                if isinstance(command, str) and isinstance(arguments, dict):
+                    normalized_calls.append(
+                        {
+                            "tool_name": command,
+                            "arguments": arguments,
+                        }
+                    )
+                    changed = True
+                    continue
+                normalized_calls.append(item)
+            if changed:
+                return {**payload, "tool_calls": normalized_calls}
+
+        command = payload.get("command")
+        arguments = payload.get("arguments", payload.get("tool_args"))
+        if isinstance(command, str) and isinstance(arguments, dict):
+            assistant_message = payload.get("assistant_message")
+            done = payload.get("done")
+            metadata = payload.get("metadata")
+            normalized: dict[str, object] = {
+                "tool_calls": [{"tool_name": command, "arguments": arguments}],
+            }
+            if isinstance(assistant_message, str):
+                normalized["assistant_message"] = assistant_message
+            if isinstance(done, bool):
+                normalized["done"] = done
+            if isinstance(metadata, dict):
+                normalized["metadata"] = metadata
+            return normalized
+
+        return payload
 
 
 __all__ = ["AgentModelAdapter", "OpenAICompatibleAgentModelAdapter"]

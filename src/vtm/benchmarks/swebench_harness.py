@@ -75,6 +75,7 @@ class SWEbenchHarnessRunner:
         output_dir: Path,
     ) -> tuple[dict[str, SWEbenchHarnessInstanceResult], SWEbenchHarnessRunArtifacts]:
         """Run the external harness and normalize the resulting report."""
+        output_dir = output_dir.resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
         logs_dir = output_dir / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
@@ -100,7 +101,7 @@ class SWEbenchHarnessRunner:
             "--split",
             "test",
             "--predictions_path",
-            str(predictions_path),
+            str(predictions_path.resolve()),
             "--max_workers",
             str(config.swebench_harness_workers),
             "--cache_level",

@@ -112,6 +112,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Permission mode for native-agent coding runs.",
     )
     parser.add_argument(
+        "--agent-prompt-profile",
+        default="vtm-native-agent-v1",
+        help=(
+            "Prompt profile for native-agent coding runs. "
+            "Use vtm-native-agent-rlm-v1 for a stronger memory-oriented prompt."
+        ),
+    )
+    parser.add_argument(
         "--agent-max-turns",
         type=int,
         default=12,
@@ -247,6 +255,7 @@ def main() -> int:
         pass_k_values=pass_k_values,
         agent_model_id=args.agent_model or None,
         agent_mode=args.agent_mode,
+        agent_prompt_profile=args.agent_prompt_profile,
         agent_max_turns=args.agent_max_turns,
         agent_max_tool_failures=args.agent_max_tool_failures,
         agent_max_runtime_seconds=args.agent_max_runtime_seconds,
