@@ -9,7 +9,6 @@ from pydantic import Field
 from vtm.base import VTMModel
 
 HarnessMemoryMode = Literal["no_memory", "lexical", "lexical_rlm_rerank", "embedding"]
-HarnessCodingExecutor = Literal["external_command", "rlm"]
 HarnessEvaluationBackend = Literal["local_subprocess", "swebench_harness"]
 HarnessExecutionStyle = Literal["mixed_patch", "shell_command"]
 HarnessWorkspaceBackend = Literal["local_workspace", "docker_workspace"]
@@ -59,7 +58,6 @@ class HarnessTaskPack(VTMModel):
     difficulty: str | None = None
     execution_style: HarnessExecutionStyle = "mixed_patch"
     memory_context: tuple[TaskMemoryContextItem, ...] = Field(default_factory=tuple)
-    coding_executor: HarnessCodingExecutor
 
 
 class ExecutorRequest(VTMModel):
@@ -69,10 +67,8 @@ class ExecutorRequest(VTMModel):
     task_file: str
     workspace: str
     artifact_root: str = ""
-    coding_executor: HarnessCodingExecutor
     attempt_index: int = Field(default=1, ge=1)
     workspace_backend: HarnessWorkspaceBackend = "local_workspace"
-    command: tuple[str, ...] = Field(default_factory=tuple)
     test_command: tuple[str, ...] = Field(default_factory=tuple)
 
 

@@ -22,8 +22,6 @@ Contents
 - `compare.py`: CLI entrypoint for offline comparison of completed benchmark runs.
 - `matrix.py`: CLI entrypoint for maintained benchmark matrices and baseline comparisons.
 - `repo_materialization.py`, `symbol_index.py`, `synthetic.py`, `swebench.py`, `swebench_harness.py`: corpus preparation and evaluation helpers.
-- `local_patcher.py`: Local patch generator that consumes typed harness task packs.
-- `scaffold_bridge.py`: Helper that converts harness task packs into delegate-friendly bundles.
 
 Current benchmark credibility surface
 - `benchmarks/manifests/synthetic-smoke.json`: small regression-friendly smoke corpus.
@@ -31,6 +29,7 @@ Current benchmark credibility surface
 - `benchmarks/manifests/terminal-shell-smoke.json`: shell-command coding corpus intended to be solved from the terminal.
 - `docs/benchmark-recipes.md`: the single maintained source for benchmark commands and workflows.
 - `BenchmarkRunConfig.attempt_count` and `pass_k_values`: repeated-attempt coding controls.
+- `BenchmarkRunConfig.rlm_model_id`: vendored-RLM execution model for coding suites.
 - `BenchmarkRunConfig.workspace_backend`: `local_workspace` or `docker_workspace`.
 - `results.jsonl`: one aggregate row per case.
 - `attempts.jsonl`: one row per attempt for coding suites.

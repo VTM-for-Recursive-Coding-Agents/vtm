@@ -26,7 +26,6 @@ from vtm.benchmarks.symbol_index import SymbolIndexer
 from vtm.enums import EvidenceBudget, EvidenceKind, ScopeKind
 from vtm.harness.executors import (
     RLMBenchmarkExecutor,
-    SubprocessBenchmarkExecutor,
 )
 from vtm.harness.models import ExecutorRequest, HarnessTaskPack, TaskMemoryContextItem
 from vtm.harness.scoring import changed_path_metrics, patch_similarity
@@ -256,7 +255,6 @@ def prepare_coding_task(
         difficulty=task.difficulty,
         execution_style=task.execution_style,
         memory_context=memory_context,
-        coding_executor=config.coding_executor,
     )
     tasks_dir = output_dir / "task-packs"
     tasks_dir.mkdir(parents=True, exist_ok=True)
@@ -327,107 +325,68 @@ def evaluate_coding_attempt(
     durable_scope: VisibilityScope | None = None
 
     try:
-        if config.coding_executor == "rlm":
-            prepared_workspace = workspace_backend.prepare_workspace(
-                case_id=task.case_id,
-                attempt_index=attempt_index,
-                repo_root=repo_root,
-                base_ref=pair.base_ref,
-                output_root=output_dir,
-                mode=config.mode,
-                command_timeout_seconds=config.agent_command_timeout_seconds,
-                max_output_chars=config.agent_max_output_chars,
-            )
-            executor_request = ExecutorRequest(
-                case_id=task.case_id,
-                task_file=str(prepared_task.task_file),
-                workspace=str(prepared_workspace.workspace_root),
-                artifact_root=str(prepared_workspace.artifact_root),
-                coding_executor=config.coding_executor,
-                attempt_index=prepared_workspace.attempt_index,
-                workspace_backend=prepared_workspace.backend_name,
-                test_command=task.test_command,
-            )
-            session_id = f"{task.case_id}-{config.mode}-attempt-{attempt_index:02d}"
-            task_scope = VisibilityScope(kind=ScopeKind.TASK, scope_id=session_id)
-            if config.mode != "no_memory":
-                kernel, metadata, artifacts, cache, embedding_index, durable_scope = (
-                    kernel_factory.open_kernel(
-                        repo_root=repo_root,
-                        repo_name=repo_spec.repo_name,
-                        pair=pair,
-                        output_dir=output_dir,
-                    )
+        prepared_workspace = workspace_backend.prepare_workspace(
+            case_id=task.case_id,
+            attempt_index=attempt_index,
+            repo_root=repo_root,
+            base_ref=pair.base_ref,
+            output_root=output_dir,
+            mode=config.mode,
+            command_timeout_seconds=config.workspace_command_timeout_seconds,
+            max_output_chars=config.workspace_max_output_chars,
+        )
+        executor_request = ExecutorRequest(
+            case_id=task.case_id,
+            task_file=str(prepared_task.task_file),
+            workspace=str(prepared_workspace.workspace_root),
+            artifact_root=str(prepared_workspace.artifact_root),
+            attempt_index=prepared_workspace.attempt_index,
+            workspace_backend=prepared_workspace.backend_name,
+            test_command=task.test_command,
+        )
+        session_id = f"{task.case_id}-{config.mode}-attempt-{attempt_index:02d}"
+        task_scope = VisibilityScope(kind=ScopeKind.TASK, scope_id=session_id)
+        if config.mode != "no_memory":
+            kernel, metadata, artifacts, cache, embedding_index, durable_scope = (
+                kernel_factory.open_kernel(
+                    repo_root=repo_root,
+                    repo_name=repo_spec.repo_name,
+                    pair=pair,
+                    output_dir=output_dir,
                 )
-            runtime_context = RLMRuntimeContext(
-                kernel=kernel,
-                task_scope=task_scope if kernel is not None else None,
-                durable_scope=durable_scope,
-                dependency_builder=(
-                    kernel_factory.dependency_builder() if kernel is not None else None
-                ),
             )
-            if not config.agent_model_id:
-                raise ValueError(
-                    "rlm coding executor requires --agent-model, VTM_AGENT_MODEL, "
-                    "or VTM_LOCAL_LLM_MODEL"
-                )
-            outcome = RLMBenchmarkExecutor(
-                model_id=config.agent_model_id,
-                base_url=(
-                    os.getenv("VTM_AGENT_BASE_URL")
-                    or os.getenv("VTM_LOCAL_LLM_BASE_URL")
-                    or None
-                ),
-                api_key=(
-                    os.getenv("VTM_AGENT_API_KEY")
-                    or os.getenv("VTM_LOCAL_LLM_API_KEY")
-                    or None
-                ),
-                max_iterations=config.agent_max_turns,
-                max_timeout_seconds=config.agent_max_runtime_seconds,
-            ).execute(
-                request=executor_request,
-                prepared_workspace=prepared_workspace,
-                runtime_context=runtime_context,
+        runtime_context = RLMRuntimeContext(
+            kernel=kernel,
+            task_scope=task_scope if kernel is not None else None,
+            durable_scope=durable_scope,
+            dependency_builder=(
+                kernel_factory.dependency_builder() if kernel is not None else None
+            ),
+        )
+        if not config.rlm_model_id:
+            raise ValueError(
+                "coding runs require --rlm-model-id, VTM_AGENT_MODEL, or VTM_LOCAL_LLM_MODEL"
             )
-            executed = True
-        elif config.executor_command:
-            prepared_workspace = workspace_backend.prepare_workspace(
-                case_id=task.case_id,
-                attempt_index=attempt_index,
-                repo_root=repo_root,
-                base_ref=pair.base_ref,
-                output_root=output_dir,
-                mode=config.mode,
-                command_timeout_seconds=config.agent_command_timeout_seconds,
-                max_output_chars=config.agent_max_output_chars,
-            )
-            command = tuple(
-                token.format(
-                    task_file=str(prepared_task.task_file),
-                    workspace=str(prepared_workspace.workspace_root),
-                    attempt=attempt_index,
-                    artifact_root=str(prepared_workspace.artifact_root),
-                )
-                for token in config.executor_command
-            )
-            executor_request = ExecutorRequest(
-                case_id=task.case_id,
-                task_file=str(prepared_task.task_file),
-                workspace=str(prepared_workspace.workspace_root),
-                artifact_root=str(prepared_workspace.artifact_root),
-                coding_executor=config.coding_executor,
-                attempt_index=prepared_workspace.attempt_index,
-                workspace_backend=prepared_workspace.backend_name,
-                command=command,
-                test_command=task.test_command,
-            )
-            outcome = SubprocessBenchmarkExecutor().execute(
-                request=executor_request,
-                prepared_workspace=prepared_workspace,
-            )
-            executed = True
+        outcome = RLMBenchmarkExecutor(
+            model_id=config.rlm_model_id,
+            base_url=(
+                os.getenv("VTM_AGENT_BASE_URL")
+                or os.getenv("VTM_LOCAL_LLM_BASE_URL")
+                or None
+            ),
+            api_key=(
+                os.getenv("VTM_AGENT_API_KEY")
+                or os.getenv("VTM_LOCAL_LLM_API_KEY")
+                or None
+            ),
+            max_iterations=config.rlm_max_iterations,
+            max_timeout_seconds=config.rlm_max_runtime_seconds,
+        ).execute(
+            request=executor_request,
+            prepared_workspace=prepared_workspace,
+            runtime_context=runtime_context,
+        )
+        executed = True
 
         if outcome is not None:
             assert prepared_workspace is not None
@@ -462,11 +421,10 @@ def evaluate_coding_attempt(
                 produced_changed_paths=produced_changed_paths,
             )
             executor_metadata = {
-                "coding_executor": config.coding_executor,
+                "execution_engine": "vendored_rlm_vtm",
                 "attempt_index": attempt_index,
                 "artifact_root": str(prepared_workspace.artifact_root),
                 "execution_style": task.execution_style,
-                "executor_command": list(outcome.command),
                 "executor_exit_code": outcome.command_exit_code,
                 "executor_timed_out": outcome.command_timed_out,
                 "executor_runtime_ms": outcome.runtime_ms,
@@ -500,7 +458,7 @@ def evaluate_coding_attempt(
         else:
             incomplete = True
             executor_metadata = {
-                "coding_executor": config.coding_executor,
+                "execution_engine": "vendored_rlm_vtm",
                 "attempt_index": attempt_index,
                 "execution_style": task.execution_style,
                 "workspace_backend": config.workspace_backend,
@@ -513,7 +471,7 @@ def evaluate_coding_attempt(
         infra_failure = True
         incomplete = True
         executor_metadata = {
-            "coding_executor": config.coding_executor,
+            "execution_engine": "vendored_rlm_vtm",
             "attempt_index": attempt_index,
             "infra_error": str(exc),
             "execution_style": task.execution_style,
@@ -583,7 +541,7 @@ def evaluate_coding_attempt(
             "commit_pair_label": pair.label,
             "produced_changed_paths": list(produced_changed_paths),
             "produced_patch_text": produced_patch_text,
-            "coding_executor": config.coding_executor,
+            "execution_engine": "vendored_rlm_vtm",
             **executor_metadata,
         },
     )

@@ -4,12 +4,11 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from textwrap import dedent
 
-from vtm.benchmarks import matrix, run
+from vtm.benchmarks import BenchmarkManifest, BenchmarkRunConfig, BenchmarkRunner, matrix, run
 
 
-def test_run_cli_parser_accepts_rlm_coding_executor() -> None:
+def test_run_cli_parser_accepts_rlm_execution_args() -> None:
     args = run.build_parser().parse_args(
         [
             "--manifest",
@@ -18,25 +17,25 @@ def test_run_cli_parser_accepts_rlm_coding_executor() -> None:
             "coding",
             "--output",
             "out",
-            "--coding-executor",
-            "rlm",
+            "--rlm-model-id",
+            "gpt-test",
         ]
     )
 
-    assert args.coding_executor == "rlm"
+    assert args.rlm_model_id == "gpt-test"
 
 
-def test_matrix_cli_parser_accepts_rlm_coding_executor() -> None:
+def test_matrix_cli_parser_accepts_rlm_execution_args() -> None:
     args = matrix.build_parser().parse_args(
         [
             "--output",
             "out",
-            "--coding-executor",
-            "rlm",
+            "--rlm-model-id",
+            "gpt-test",
         ]
     )
 
-    assert args.coding_executor == "rlm"
+    assert args.rlm_model_id == "gpt-test"
 
 
 def test_benchmark_cli_runs_synthetic_retrieval(tmp_path: Path) -> None:
@@ -159,33 +158,8 @@ def test_benchmark_cli_rejects_unknown_repo_filter(tmp_path: Path) -> None:
     assert "unknown benchmark repos" in completed.stderr
 
 
-def test_benchmark_cli_runs_attempt_aware_coding_suite(tmp_path: Path) -> None:
-    patcher_script = tmp_path / "attempt_patcher.py"
-    patcher_script.write_text(
-        dedent(
-            '''
-            from pathlib import Path
-            import argparse
-
-            parser = argparse.ArgumentParser()
-            parser.add_argument('--attempt', type=int, required=True)
-            parser.add_argument('--artifact-root', required=True)
-            args = parser.parse_args()
-            artifact_root = Path(args.artifact_root)
-            artifact_root.mkdir(parents=True, exist_ok=True)
-            (artifact_root / 'attempt.txt').write_text(str(args.attempt), encoding='utf-8')
-            if args.attempt == 2:
-                Path('bugfix_module.py').write_text(
-                    'def buggy_increment(value: int) -> int:\\n'
-                    '    """Return value plus one."""\\n'
-                    '    return value + 1\\n',
-                    encoding='utf-8',
-                )
-            '''
-        ).lstrip(),
-        encoding="utf-8",
-    )
-    output_dir = tmp_path / "cli-coding-attempts"
+def test_benchmark_cli_rejects_missing_rlm_model_for_coding(tmp_path: Path) -> None:
+    output_dir = tmp_path / "cli-coding-missing-model"
     completed = subprocess.run(
         [
             sys.executable,
@@ -201,28 +175,16 @@ def test_benchmark_cli_runs_attempt_aware_coding_suite(tmp_path: Path) -> None:
             str(output_dir),
             "--pair",
             "bugfix",
-            "--attempts",
-            "2",
-            "--pass-k",
+            "--max-cases",
             "1",
-            "--pass-k",
-            "2",
-            "--executor-command",
-            (
-                f"python3 {patcher_script} "
-                "--attempt {attempt} --artifact-root {artifact_root}"
-            ),
         ],
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
     )
 
-    payload = json.loads(completed.stdout)
-    assert payload["suite"] == "coding"
-    assert payload["metrics"]["pass_at_1"] == 0.0
-    assert payload["metrics"]["pass_at_2"] == 1.0
-    assert (output_dir / "attempts.jsonl").exists()
+    assert completed.returncode != 0
+    assert "--rlm-model-id" in completed.stderr
 
 
 def test_benchmark_cli_rejects_attempt_flags_for_retrieval(tmp_path: Path) -> None:
@@ -301,8 +263,8 @@ def test_benchmark_cli_rejects_docker_backend_without_image(tmp_path: Path) -> N
             "docker_workspace",
             "--pair",
             "shell_daily_report",
-            "--executor-command",
-            "python3 scripts/build_daily_report.py",
+            "--rlm-model-id",
+            "gpt-test",
         ],
         check=False,
         capture_output=True,
@@ -314,49 +276,6 @@ def test_benchmark_cli_rejects_docker_backend_without_image(tmp_path: Path) -> N
         "--docker-image is required when --workspace-backend docker_workspace"
         in completed.stderr
     )
-
-
-def test_benchmark_cli_runs_shell_command_track_with_docker_backend(
-    tmp_path: Path,
-    fake_docker_binary: Path,
-) -> None:
-    output_dir = tmp_path / "cli-docker-shell"
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "vtm.benchmarks.run",
-            "--manifest",
-            "benchmarks/manifests/terminal-shell-smoke.json",
-            "--suite",
-            "coding",
-            "--mode",
-            "no_memory",
-            "--output",
-            str(output_dir),
-            "--workspace-backend",
-            "docker_workspace",
-            "--docker-image",
-            "python:3.12",
-            "--docker-binary",
-            str(fake_docker_binary),
-            "--pair",
-            "shell_daily_report",
-            "--max-cases",
-            "1",
-            "--executor-command",
-            "python3 scripts/build_daily_report.py",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    payload = json.loads(completed.stdout)
-    assert payload["suite"] == "coding"
-    assert payload["metrics"]["pass_at_1"] == 1.0
-    assert payload["metrics"]["workspace_backend_breakdown"] == {"docker_workspace": 1}
-    assert (output_dir / "attempts.jsonl").exists()
 
 
 def test_benchmark_compare_cli_reports_retrieval_deltas(tmp_path: Path) -> None:
@@ -433,89 +352,70 @@ def test_benchmark_compare_cli_reports_retrieval_deltas(tmp_path: Path) -> None:
     assert (comparison_dir / "comparison.md").exists()
 
 
-def test_benchmark_compare_cli_reports_coding_attempt_metrics(tmp_path: Path) -> None:
-    failing_script = tmp_path / "failing_patcher.py"
-    failing_script.write_text(
-        dedent(
-            '''
-            import argparse
-            from pathlib import Path
-
-            parser = argparse.ArgumentParser()
-            parser.add_argument('--attempt', type=int, required=True)
-            parser.add_argument('--artifact-root', required=True)
-            args = parser.parse_args()
-            artifact_root = Path(args.artifact_root)
-            artifact_root.mkdir(parents=True, exist_ok=True)
-            (artifact_root / 'attempt.txt').write_text(str(args.attempt), encoding='utf-8')
-            '''
-        ).lstrip(),
-        encoding="utf-8",
-    )
-    succeeding_script = tmp_path / "succeeding_patcher.py"
-    succeeding_script.write_text(
-        dedent(
-            '''
-            import argparse
-            from pathlib import Path
-
-            parser = argparse.ArgumentParser()
-            parser.add_argument('--attempt', type=int, required=True)
-            parser.add_argument('--artifact-root', required=True)
-            args = parser.parse_args()
-            artifact_root = Path(args.artifact_root)
-            artifact_root.mkdir(parents=True, exist_ok=True)
-            (artifact_root / 'attempt.txt').write_text(str(args.attempt), encoding='utf-8')
-            if args.attempt == 2:
-                Path('bugfix_module.py').write_text(
-                    'def buggy_increment(value: int) -> int:\\n'
-                    '    """Return value plus one."""\\n'
-                    '    return value + 1\\n',
-                    encoding='utf-8',
-                )
-            '''
-        ).lstrip(),
-        encoding="utf-8",
-    )
-
-    baseline_dir = tmp_path / "coding-baseline"
-    candidate_dir = tmp_path / "coding-candidate"
-    comparison_dir = tmp_path / "coding-comparison"
-    for output_dir, script_path in (
-        (baseline_dir, failing_script),
-        (candidate_dir, succeeding_script),
-    ):
-        subprocess.run(
+def test_benchmark_compare_cli_reports_coding_attempt_metrics(
+    tmp_path: Path,
+    install_fake_vendored_rlm,
+) -> None:
+    def apply_candidate_update(task_pack, workspace_root: Path, artifact_root: Path) -> None:
+        if artifact_root.parent.name != "attempt-02":
+            return
+        diff_result = subprocess.run(
             [
-                sys.executable,
-                "-m",
-                "vtm.benchmarks.run",
-                "--manifest",
-                "benchmarks/manifests/synthetic-smoke.json",
-                "--suite",
-                "coding",
-                "--mode",
-                "lexical",
-                "--output",
-                str(output_dir),
-                "--pair",
-                "bugfix",
-                "--attempts",
-                "2",
-                "--pass-k",
-                "1",
-                "--pass-k",
-                "2",
-                "--executor-command",
-                (
-                    f"python3 {script_path} "
-                    "--attempt {attempt} --artifact-root {artifact_root}"
-                ),
+                "git",
+                "diff",
+                "--binary",
+                "--no-ext-diff",
+                f"{task_pack.base_ref}..{task_pack.head_ref}",
             ],
+            cwd=workspace_root,
             check=True,
             capture_output=True,
             text=True,
         )
+        subprocess.run(
+            ["git", "apply", "--whitespace=nowarn"],
+            cwd=workspace_root,
+            input=diff_result.stdout,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    install_fake_vendored_rlm(
+        apply_workspace_update=lambda task_pack, workspace_root, artifact_root: None
+    )
+    baseline_dir = tmp_path / "coding-baseline"
+    candidate_dir = tmp_path / "coding-candidate"
+    comparison_dir = tmp_path / "coding-comparison"
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
+    BenchmarkRunner(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="coding",
+            mode="lexical",
+            output_dir=str(baseline_dir),
+            pair_filters=("bugfix",),
+            rlm_model_id="fake-model",
+            attempt_count=2,
+            pass_k_values=(1, 2),
+        ),
+    ).run()
+
+    install_fake_vendored_rlm(apply_workspace_update=apply_candidate_update)
+    BenchmarkRunner(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="coding",
+            mode="lexical",
+            output_dir=str(candidate_dir),
+            pair_filters=("bugfix",),
+            rlm_model_id="fake-model",
+            attempt_count=2,
+            pass_k_values=(1, 2),
+        ),
+    ).run()
 
     completed = subprocess.run(
         [
@@ -584,7 +484,9 @@ def test_benchmark_matrix_cli_runs_manual_retrieval_matrix(tmp_path: Path) -> No
     assert (output_dir / "comparisons" / "no_memory-vs-lexical" / "comparison.json").exists()
 
 
-def test_benchmark_matrix_cli_runs_terminal_smoke_preset(tmp_path: Path) -> None:
+def test_benchmark_matrix_cli_rejects_missing_rlm_model_for_coding_preset(
+    tmp_path: Path,
+) -> None:
     output_dir = tmp_path / "terminal-smoke-matrix"
     completed = subprocess.run(
         [
@@ -604,14 +506,10 @@ def test_benchmark_matrix_cli_runs_terminal_smoke_preset(tmp_path: Path) -> None
             "--comparison-bootstrap-samples",
             "100",
         ],
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
     )
 
-    payload = json.loads(completed.stdout)
-    assert payload["preset_name"] == "terminal_smoke"
-    assert payload["manifest_path"] == "benchmarks/manifests/terminal-smoke.json"
-    assert payload["suite"] == "coding"
-    assert (output_dir / "matrix.md").exists()
-    assert (output_dir / "comparisons" / "no_memory-vs-lexical" / "comparison.md").exists()
+    assert completed.returncode != 0
+    assert "--rlm-model-id" in completed.stderr

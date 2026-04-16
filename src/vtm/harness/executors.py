@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import shlex
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
@@ -24,112 +23,6 @@ class BenchmarkExecutor(Protocol):
         prepared_workspace: PreparedWorkspace,
         runtime_context: RLMRuntimeContext | None = None,
     ) -> ExecutorResult: ...
-
-
-class SubprocessBenchmarkExecutor:
-    """Runs the configured command directly inside the prepared workspace."""
-
-    def execute(
-        self,
-        *,
-        request: ExecutorRequest,
-        prepared_workspace: PreparedWorkspace,
-        runtime_context: RLMRuntimeContext | None = None,
-    ) -> ExecutorResult:
-        """Execute a non-agent coding task and collect output artifacts."""
-        del runtime_context
-        if not request.command:
-            raise ValueError("subprocess benchmark executor requires a command")
-        artifact_root = prepared_workspace.artifact_root
-        command_stdout_path = artifact_root / "command.stdout"
-        command_stderr_path = artifact_root / "command.stderr"
-        verification_stdout_path = artifact_root / "final-verification.stdout"
-        verification_stderr_path = artifact_root / "final-verification.stderr"
-        produced_patch_path = artifact_root / "produced.patch"
-        final_git_status_path = artifact_root / "final-git-status.txt"
-        try:
-            command_result = prepared_workspace.driver.run_terminal(shlex.join(request.command))
-            command_stdout_path.write_text(command_result.output, encoding="utf-8")
-            command_stderr_path.write_text("", encoding="utf-8")
-
-            test_result = None
-            if request.test_command:
-                test_result = prepared_workspace.driver.run_verification(
-                    request.test_command,
-                    label="final_verification",
-                )
-                verification_stdout_path.write_text(test_result.stdout, encoding="utf-8")
-                verification_stderr_path.write_text(test_result.stderr, encoding="utf-8")
-
-            produced_patch = prepared_workspace.driver.capture_patch()
-            produced_patch_path.write_text(produced_patch, encoding="utf-8")
-            produced_patch_digest = hashlib.sha256(produced_patch.encode("utf-8")).hexdigest()
-            changed_paths = prepared_workspace.driver.capture_changed_paths()
-            final_git_status = prepared_workspace.driver.git_status()
-            final_git_status_path.write_text(final_git_status, encoding="utf-8")
-            return ExecutorResult(
-                command=request.command,
-                command_exit_code=command_result.exit_code,
-                command_stdout_path=str(command_stdout_path),
-                command_stderr_path=str(command_stderr_path),
-                attempt_index=request.attempt_index,
-                command_timed_out=command_result.timed_out,
-                runtime_ms=command_result.duration_ms,
-                workspace=request.workspace,
-                task_file=request.task_file,
-                test_command=request.test_command,
-                test_exit_code=test_result.exit_code if test_result is not None else None,
-                test_stdout_path=str(verification_stdout_path) if test_result is not None else None,
-                test_stderr_path=str(verification_stderr_path) if test_result is not None else None,
-                final_verification_runtime_ms=(
-                    test_result.duration_ms if test_result is not None else None
-                ),
-                final_verification_timed_out=(
-                    test_result.timed_out if test_result is not None else False
-                ),
-                final_git_status_path=str(final_git_status_path),
-                command_events_path=str(prepared_workspace.command_events_path),
-                workspace_backend=self._workspace_backend(prepared_workspace),
-                docker_image=self._workspace_metadata(
-                    prepared_workspace,
-                    "docker_image",
-                ),
-                docker_container_id=self._workspace_metadata(
-                    prepared_workspace,
-                    "docker_container_id",
-                ),
-                docker_container_name=self._workspace_metadata(
-                    prepared_workspace,
-                    "docker_container_name",
-                ),
-                docker_network=self._docker_network(prepared_workspace),
-                produced_patch_path=str(produced_patch_path),
-                produced_patch_digest=produced_patch_digest,
-                produced_patch_text=produced_patch,
-                produced_changed_paths=changed_paths,
-            )
-        finally:
-            prepared_workspace.driver.close()
-
-    def _workspace_metadata(
-        self,
-        prepared_workspace: PreparedWorkspace,
-        key: str,
-    ) -> str | None:
-        return prepared_workspace.metadata.get(key)
-
-    def _workspace_backend(
-        self,
-        prepared_workspace: PreparedWorkspace,
-    ) -> Literal["local_workspace", "docker_workspace"]:
-        return prepared_workspace.backend_name
-
-    def _docker_network(
-        self,
-        prepared_workspace: PreparedWorkspace,
-    ) -> Literal["none", "bridge"] | None:
-        value = prepared_workspace.metadata.get("docker_network")
-        return cast(Literal["none", "bridge"] | None, value)
 
 
 class RLMBenchmarkExecutor:
@@ -278,7 +171,7 @@ class RLMBenchmarkExecutor:
                 agent_metadata={
                     "agent_status": "completed",
                     "agent_final_message": rlm_result.response,
-                    "agent_model_id": self._model_id,
+                    "rlm_model_id": self._model_id,
                     "agent_mode": "vendored_rlm",
                     "rlm_memory_id": memory_id,
                     "rlm_usage_summary": usage_summary,
@@ -312,5 +205,4 @@ def _docker_network(
 __all__ = [
     "BenchmarkExecutor",
     "RLMBenchmarkExecutor",
-    "SubprocessBenchmarkExecutor",
 ]

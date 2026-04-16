@@ -100,26 +100,40 @@ def test_terminal_shell_smoke_manifest_tasks_fail_on_base_and_pass_on_head(
     assert difficulty_counts == {"easy": 4, "medium": 4, "hard": 4}
 
 
-def test_attempt_rows_and_pass_at_k_aggregate_external_executor(tmp_path: Path) -> None:
+def test_attempt_rows_and_pass_at_k_aggregate_rlm_executor(
+    tmp_path: Path,
+    install_fake_vendored_rlm,
+) -> None:
+    def apply_on_second_attempt(task_pack, workspace_root: Path, artifact_root: Path) -> None:
+        attempt_name = artifact_root.parent.name
+        attempt_marker = artifact_root.parent / "attempt.txt"
+        attempt_marker.write_text(str(int(attempt_name.split("-")[-1])), encoding="utf-8")
+        if attempt_name != "attempt-02":
+            return
+        diff_result = subprocess.run(
+            [
+                "git",
+                "diff",
+                "--binary",
+                "--no-ext-diff",
+                f"{task_pack.base_ref}..{task_pack.head_ref}",
+            ],
+            cwd=workspace_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ["git", "apply", "--whitespace=nowarn"],
+            cwd=workspace_root,
+            input=diff_result.stdout,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    install_fake_vendored_rlm(apply_workspace_update=apply_on_second_attempt)
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
-    executor_command = (
-        "python3",
-        "-c",
-        (
-            "from pathlib import Path; import sys; "
-            "attempt = int(sys.argv[1]); "
-            "artifact_root = Path(sys.argv[2]); "
-            "artifact_root.mkdir(parents=True, exist_ok=True); "
-            "(artifact_root / 'attempt.txt').write_text(str(attempt), encoding='utf-8'); "
-            "Path('bugfix_module.py').write_text("
-            "\"def buggy_increment(value: int) -> int:\\n"
-            "    \\\"\\\"\\\"Return value plus one.\\\"\\\"\\\"\\n"
-            "    return value + 1\\n\", "
-            "encoding='utf-8') if attempt == 2 else None"
-        ),
-        "{attempt}",
-        "{artifact_root}",
-    )
     result = BenchmarkRunner(
         manifest,
         BenchmarkRunConfig(
@@ -129,7 +143,7 @@ def test_attempt_rows_and_pass_at_k_aggregate_external_executor(tmp_path: Path) 
             output_dir=str(tmp_path / "attempted-coding"),
             pair_filters=("bugfix",),
             max_cases=1,
-            executor_command=executor_command,
+            rlm_model_id="fake-model",
             attempt_count=3,
             pass_k_values=(1, 2, 3),
         ),
@@ -159,7 +173,12 @@ def test_attempt_rows_and_pass_at_k_aggregate_external_executor(tmp_path: Path) 
     ).read_text(encoding="utf-8") == "2"
 
 
-def test_retrieval_query_overrides_default_query(tmp_path: Path, monkeypatch) -> None:
+def test_retrieval_query_overrides_default_query(
+    tmp_path: Path,
+    monkeypatch,
+    install_fake_vendored_rlm,
+) -> None:
+    install_fake_vendored_rlm()
     captured_queries: list[str] = []
     original_retrieve = TransactionalMemoryKernel.retrieve
 
@@ -178,6 +197,7 @@ def test_retrieval_query_overrides_default_query(tmp_path: Path, monkeypatch) ->
             output_dir=str(tmp_path / "retrieval-query"),
             pair_filters=("export_path",),
             max_cases=1,
+            rlm_model_id="fake-model",
         ),
     ).run()
 
@@ -195,10 +215,12 @@ def test_retrieval_query_overrides_default_query(tmp_path: Path, monkeypatch) ->
     assert task_pack.retrieval_query == captured_queries[0]
 
 
-def test_shell_command_attempts_run_under_docker_workspace_external_executor(
+def test_shell_command_attempts_run_under_docker_workspace_rlm_executor(
     tmp_path: Path,
     fake_docker_binary: Path,
+    install_fake_vendored_rlm,
 ) -> None:
+    install_fake_vendored_rlm()
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/terminal-shell-smoke.json")
     result = BenchmarkRunner(
         manifest,
@@ -212,7 +234,7 @@ def test_shell_command_attempts_run_under_docker_workspace_external_executor(
             workspace_backend="docker_workspace",
             docker_image="python:3.12",
             docker_binary=str(fake_docker_binary),
-            executor_command=("python3", "scripts/build_daily_report.py"),
+            rlm_model_id="fake-model",
             attempt_count=2,
             pass_k_values=(1, 2),
         ),

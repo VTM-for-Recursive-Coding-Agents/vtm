@@ -5,10 +5,10 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 
 ## Coverage
 
-- Total Python files: `119`
-- `src/`: `87`
+- Total Python files: `115`
+- `src/`: `85`
 - `tests/`: `29`
-- `scripts/`: `3`
+- `scripts/`: `1`
 
 ## File Inventory
 
@@ -28,22 +28,6 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `function file_info(path)`: Parse one Python file into documentation metadata.
   - `function render_markdown(files)`: Render the complete code reference document.
   - `function main()`: Generate the checked-in code reference markdown file.
-
-#### `scripts/vtm_local_patcher.py`
-
-- Purpose: CLI wrapper for the local OpenAI-compatible benchmark patcher.
-- Module docstring: `yes`
-- Top-level symbols:
-  - `function build_parser()`: Build the CLI parser for one local patching attempt.
-  - `function main()`: Run the patcher from parsed CLI arguments.
-
-#### `scripts/vtm_scaffold_bridge.py`
-
-- Purpose: Build a scaffold-facing task bundle and optionally delegate to an external agent.
-- Module docstring: `yes`
-- Top-level symbols:
-  - `function build_parser()`: Build the CLI parser for one scaffold-bridge invocation.
-  - `function main()`: Build the bundle, then optionally run a delegate command.
 
 ### `src/`
 
@@ -221,14 +205,6 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Top-level symbols:
   - `class BenchmarkKernelFactory`: Creates isolated kernels and seeds benchmark source memory into them.
 
-#### `src/vtm/benchmarks/local_patcher.py`
-
-- Purpose: Local LLM patcher used by external-command coding benchmarks.
-- Module docstring: `yes`
-- Top-level symbols:
-  - `class LocalPatcherConfig`: Configuration for the local OpenAI-compatible patch generator.
-  - `class LocalOpenAIPatcher`: Generates and applies a patch using a local OpenAI-compatible model.
-
 #### `src/vtm/benchmarks/matrix.py`
 
 - Purpose: CLI entrypoint for executing maintained benchmark mode matrices.
@@ -298,7 +274,7 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Top-level symbols:
   - `function build_parser()`: Build the benchmark runner CLI parser.
   - `function main()`: Parse CLI args, configure adapters, and execute a benchmark run.
-  - `function execute_benchmark_run(manifest, config, *, rlm_model_name=..., embedding_model_name=..., agent_model_name=...)`: Execute one benchmark run with environment-aware optional adapters.
+  - `function execute_benchmark_run(manifest, config, *, rlm_model_name=..., embedding_model_name=..., execution_model_name=...)`: Execute one benchmark run with environment-aware optional adapters.
 
 #### `src/vtm/benchmarks/runner.py`
 
@@ -306,14 +282,6 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Module docstring: `yes`
 - Top-level symbols:
   - `class BenchmarkRunner`: Orchestrates one benchmark run from manifest load to summary artifacts.
-
-#### `src/vtm/benchmarks/scaffold_bridge.py`
-
-- Purpose: Bridge VTM task packs into richer bundles for external coding scaffolds.
-- Module docstring: `yes`
-- Top-level symbols:
-  - `class ScaffoldBridgeConfig`: Controls how much task context is emitted for external scaffolds.
-  - `class ScaffoldBridge`: Builds a richer task bundle and optional delegate-command handoff.
 
 #### `src/vtm/benchmarks/suite_execution.py`
 
@@ -443,7 +411,6 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Module docstring: `yes`
 - Top-level symbols:
   - `class BenchmarkExecutor`: Contract implemented by coding-task executors.
-  - `class SubprocessBenchmarkExecutor`: Runs the configured command directly inside the prepared workspace.
   - `class RLMBenchmarkExecutor`: Runs a coding task through the vendored upstream RLM runtime.
   - `function _workspace_metadata(prepared_workspace, key)`: No symbol docstring.
   - `function _workspace_backend(prepared_workspace)`: No symbol docstring.
@@ -833,6 +800,7 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `function embedding_store(tmp_path)`: No symbol docstring.
   - `function kernel(metadata_store, artifact_store, cache_store)`: No symbol docstring.
   - `function embedding_retriever(metadata_store, embedding_store)`: No symbol docstring.
+  - `function install_fake_vendored_rlm(monkeypatch)`: No symbol docstring.
   - `function fake_docker_binary(tmp_path, monkeypatch)`: No symbol docstring.
 
 #### `tests/test_anchor_relocation.py`
@@ -860,21 +828,20 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
 - Purpose: Tests covering benchmark cli behavior.
 - Module docstring: `no`
 - Top-level symbols:
-  - `function test_run_cli_parser_accepts_rlm_coding_executor()`: No symbol docstring.
-  - `function test_matrix_cli_parser_accepts_rlm_coding_executor()`: No symbol docstring.
+  - `function test_run_cli_parser_accepts_rlm_execution_args()`: No symbol docstring.
+  - `function test_matrix_cli_parser_accepts_rlm_execution_args()`: No symbol docstring.
   - `function test_benchmark_cli_runs_synthetic_retrieval(tmp_path)`: No symbol docstring.
   - `function test_benchmark_cli_runs_synthetic_embedding_retrieval(tmp_path)`: No symbol docstring.
   - `function test_benchmark_cli_filters_to_selected_pair(tmp_path)`: No symbol docstring.
   - `function test_benchmark_cli_rejects_unknown_repo_filter(tmp_path)`: No symbol docstring.
-  - `function test_benchmark_cli_runs_attempt_aware_coding_suite(tmp_path)`: No symbol docstring.
+  - `function test_benchmark_cli_rejects_missing_rlm_model_for_coding(tmp_path)`: No symbol docstring.
   - `function test_benchmark_cli_rejects_attempt_flags_for_retrieval(tmp_path)`: No symbol docstring.
   - `function test_benchmark_cli_rejects_local_backend_docker_flags(tmp_path)`: No symbol docstring.
   - `function test_benchmark_cli_rejects_docker_backend_without_image(tmp_path)`: No symbol docstring.
-  - `function test_benchmark_cli_runs_shell_command_track_with_docker_backend(tmp_path, fake_docker_binary)`: No symbol docstring.
   - `function test_benchmark_compare_cli_reports_retrieval_deltas(tmp_path)`: No symbol docstring.
-  - `function test_benchmark_compare_cli_reports_coding_attempt_metrics(tmp_path)`: No symbol docstring.
+  - `function test_benchmark_compare_cli_reports_coding_attempt_metrics(tmp_path, install_fake_vendored_rlm)`: No symbol docstring.
   - `function test_benchmark_matrix_cli_runs_manual_retrieval_matrix(tmp_path)`: No symbol docstring.
-  - `function test_benchmark_matrix_cli_runs_terminal_smoke_preset(tmp_path)`: No symbol docstring.
+  - `function test_benchmark_matrix_cli_rejects_missing_rlm_model_for_coding_preset(tmp_path)`: No symbol docstring.
 
 #### `tests/test_benchmarks.py`
 
@@ -890,14 +857,14 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `function test_synthetic_benchmark_retrieval_and_drift_runs(tmp_path)`: No symbol docstring.
   - `function test_synthetic_benchmark_embedding_run(tmp_path)`: No symbol docstring.
   - `function test_git_repo_checkout_supports_local_remote(tmp_path)`: No symbol docstring.
-  - `function test_coding_suite_dry_run_writes_task_pack(tmp_path)`: No symbol docstring.
-  - `function test_coding_suite_executor_writes_benchmark_local_artifacts(tmp_path)`: No symbol docstring.
+  - `function test_coding_suite_writes_task_pack_and_executes_rlm(tmp_path, install_fake_vendored_rlm)`: No symbol docstring.
+  - `function test_coding_suite_executor_writes_benchmark_local_artifacts(tmp_path, install_fake_vendored_rlm)`: No symbol docstring.
   - `function test_synthetic_coding_tasks_fail_on_base_and_pass_on_head(tmp_path)`: No symbol docstring.
-  - `function test_coding_suite_reports_multiple_tasks_and_filtering(tmp_path)`: No symbol docstring.
-  - `function test_coding_summary_compares_modes(tmp_path)`: No symbol docstring.
+  - `function test_coding_suite_reports_multiple_tasks_and_filtering(tmp_path, install_fake_vendored_rlm)`: No symbol docstring.
+  - `function test_coding_summary_compares_modes(tmp_path, install_fake_vendored_rlm)`: No symbol docstring.
   - `function test_coding_runner_rejects_unknown_pair_filters(tmp_path)`: No symbol docstring.
-  - `function test_coding_changed_path_metrics_detect_extra_paths(tmp_path)`: No symbol docstring.
-  - `function test_coding_changed_path_metrics_detect_missing_patch(tmp_path)`: No symbol docstring.
+  - `function test_coding_changed_path_metrics_detect_extra_paths(tmp_path, install_fake_vendored_rlm)`: No symbol docstring.
+  - `function test_coding_changed_path_metrics_detect_missing_patch(tmp_path, install_fake_vendored_rlm)`: No symbol docstring.
   - `function test_duplicate_symbol_case_ids_stay_unique_and_counts_align(tmp_path)`: No symbol docstring.
   - `function test_retrieval_case_generation_adds_taskish_and_smoke_slices(tmp_path)`: No symbol docstring.
   - `function test_repo_and_pair_filters_apply_before_case_limiting(tmp_path)`: No symbol docstring.
@@ -1127,14 +1094,9 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `function _run(repo, *args)`: No symbol docstring.
   - `function _build_swebench_repo(repo)`: No symbol docstring.
   - `function _git_diff(repo, base, head, *paths)`: No symbol docstring.
-  - `function _start_fake_openai_server(response_text)`: No symbol docstring.
   - `function test_prepare_swebench_manifest_cli_generates_local_refs(tmp_path)`: No symbol docstring.
-  - `function test_local_patcher_prompt_is_deterministic_and_script_applies_patch(tmp_path)`: No symbol docstring.
-  - `function test_local_patcher_rejects_invalid_patch_without_mutating_workspace(tmp_path)`: No symbol docstring.
-  - `function test_scaffold_bridge_builds_bundle_with_memory_and_test_files(tmp_path)`: No symbol docstring.
-  - `function test_scaffold_bridge_cli_writes_bundle_and_runs_delegate(tmp_path)`: No symbol docstring.
   - `function test_repo_materialization_fetches_missing_prepared_ref_on_checkout(tmp_path)`: No symbol docstring.
-  - `function test_swebench_coding_suite_runs_fake_harness_and_writes_artifacts(tmp_path, monkeypatch)`: No symbol docstring.
+  - `function test_swebench_coding_suite_runs_fake_harness_and_writes_artifacts(tmp_path, monkeypatch, install_fake_vendored_rlm)`: No symbol docstring.
   - `function test_swebench_harness_uses_absolute_predictions_path(tmp_path, monkeypatch)`: No symbol docstring.
 
 #### `tests/test_terminal_benchmarking.py`
@@ -1145,9 +1107,9 @@ It inventories every Python file under `src/`, `tests/`, and `scripts/`.
   - `function _run(repo, *args)`: No symbol docstring.
   - `function test_terminal_smoke_manifest_tasks_fail_on_base_and_pass_on_head(tmp_path)`: No symbol docstring.
   - `function test_terminal_shell_smoke_manifest_tasks_fail_on_base_and_pass_on_head(tmp_path)`: No symbol docstring.
-  - `function test_attempt_rows_and_pass_at_k_aggregate_external_executor(tmp_path)`: No symbol docstring.
-  - `function test_retrieval_query_overrides_default_query(tmp_path, monkeypatch)`: No symbol docstring.
-  - `function test_shell_command_attempts_run_under_docker_workspace_external_executor(tmp_path, fake_docker_binary)`: No symbol docstring.
+  - `function test_attempt_rows_and_pass_at_k_aggregate_rlm_executor(tmp_path, install_fake_vendored_rlm)`: No symbol docstring.
+  - `function test_retrieval_query_overrides_default_query(tmp_path, monkeypatch, install_fake_vendored_rlm)`: No symbol docstring.
+  - `function test_shell_command_attempts_run_under_docker_workspace_rlm_executor(tmp_path, fake_docker_binary, install_fake_vendored_rlm)`: No symbol docstring.
 
 #### `tests/test_transactions.py`
 

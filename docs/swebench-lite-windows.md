@@ -17,7 +17,7 @@ Machine-side, make sure the Windows host has:
 - Git installed inside Ubuntu
 - `uv` installed inside Ubuntu
 - Python 3.12 available to `uv`
-- a local OpenAI-compatible model endpoint if VTM will generate patches through `scripts/vtm_local_patcher.py`
+- a local OpenAI-compatible model endpoint for vendored `rlm`
 
 Recommended capacity for the official SWE-bench harness:
 
@@ -121,18 +121,15 @@ uv run python -m vtm.benchmarks.prepare_swebench_lite \
 
 This command downloads the dataset metadata if needed, prepares local repo caches, and creates per-instance base and gold refs inside the cache repo clones.
 
-## Start the local patch generator endpoint
+## Start the local RLM endpoint
 
-If you want VTM to generate patches through the included local patcher, start an OpenAI-compatible HTTP endpoint on the Windows 4090 machine and then export the environment variables from Ubuntu:
+Start an OpenAI-compatible HTTP endpoint on the Windows 4090 machine and then export the environment variables from Ubuntu:
 
 ```bash
 export VTM_LOCAL_LLM_BASE_URL=http://127.0.0.1:8000
 export VTM_LOCAL_LLM_MODEL=<your-model-name>
 export VTM_LOCAL_LLM_API_KEY=vtm-local
-export PATCHER_SCRIPT="$PWD/scripts/vtm_local_patcher.py"
 ```
-
-`PATCHER_SCRIPT` should be absolute. The benchmark executor runs from each per-task workspace clone, so a relative `scripts/vtm_local_patcher.py` path is not reliable there.
 
 ## Run one targeted VTM SWE-bench Lite job
 
@@ -146,7 +143,7 @@ uv run python -m vtm.benchmarks.run \
   --output .benchmarks/swebench-lite-astropy-14182 \
   --repo astropy__astropy \
   --pair astropy__astropy-14182 \
-  --executor-command "python $PATCHER_SCRIPT --task-file {task_file} --workspace {workspace}" \
+  --rlm-model-id "$VTM_LOCAL_LLM_MODEL" \
   --swebench-dataset-name princeton-nlp/SWE-bench_Lite \
   --swebench-harness-workers 1
 ```
@@ -172,7 +169,7 @@ uv run python -m vtm.benchmarks.run \
   --suite coding \
   --mode lexical \
   --output .benchmarks/swebench-lite-full \
-  --executor-command "python $PATCHER_SCRIPT --task-file {task_file} --workspace {workspace}" \
+  --rlm-model-id "$VTM_LOCAL_LLM_MODEL" \
   --swebench-dataset-name princeton-nlp/SWE-bench_Lite \
   --swebench-harness-workers 4
 ```
@@ -188,9 +185,9 @@ If the VTM run fails, check these files first:
 - `.benchmarks/.../logs/`
 - `.benchmarks/.../predictions.jsonl`
 - `.benchmarks/.../swebench_harness_results.json`
-- `.benchmarks/.../executor-artifacts/<case-id>/command.stderr`
+- `.benchmarks/.../executor-artifacts/<case-id>/rlm/completion.json`
 - `.benchmarks/.../executor-artifacts/<case-id>/produced.patch`
-- `.benchmarks/.../workspaces/<mode>/<case-id>/.vtm-local-patcher/response.txt`
+- `.benchmarks/.../executor-artifacts/<case-id>/rlm/response.txt`
 
 Common causes:
 
@@ -198,7 +195,6 @@ Common causes:
 - Docker Desktop does not have enough free virtual disk
 - the local model server is not listening on `127.0.0.1:8000`
 - `VTM_LOCAL_LLM_MODEL` does not match the model name the server expects
-- the patcher script path was passed as a relative path instead of an absolute path
 - the harness works for `gold` predictions but fails on generated predictions because the produced patch is empty or does not apply cleanly
 
 ## References

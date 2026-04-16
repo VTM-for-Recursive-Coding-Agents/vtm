@@ -81,51 +81,15 @@ uv run python -m vtm.benchmarks.run \
 Shell-command terminal track:
 
 ```bash
+export VTM_AGENT_BASE_URL=http://127.0.0.1:8000
+export VTM_AGENT_MODEL=qwen3.5-35b-a3b
+
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/terminal-shell-smoke.json \
   --suite coding \
   --mode lexical \
-  --output .benchmarks/terminal-shell-smoke-dry-run
-```
-
-External-command executor:
-
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/synthetic-smoke.json \
-  --suite coding \
-  --mode lexical \
-  --output .benchmarks/coding-external \
-  --pair bugfix \
-  --executor-command "python scripts/vtm_local_patcher.py --task-file {task_file} --workspace {workspace}"
-```
-
-Attempt-aware external-command executor:
-
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/terminal-smoke.json \
-  --suite coding \
-  --mode lexical \
-  --output .benchmarks/terminal-smoke-external \
-  --attempts 3 \
-  --pass-k 1 \
-  --pass-k 3 \
-  --executor-command "python scripts/vtm_local_patcher.py --task-file {task_file} --workspace {workspace} --attempt {attempt} --artifact-root {artifact_root}"
-```
-
-Docker-backed shell-command executor:
-
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/terminal-shell-smoke.json \
-  --suite coding \
-  --mode no_memory \
-  --output .benchmarks/terminal-shell-docker \
-  --workspace-backend docker_workspace \
-  --docker-image python:3.12 \
-  --pair shell_daily_report \
-  --executor-command "python3 scripts/build_daily_report.py"
+  --output .benchmarks/terminal-shell-smoke \
+  --rlm-model-id "$VTM_AGENT_MODEL"
 ```
 
 Vendored-RLM executor:
@@ -140,10 +104,9 @@ uv run python -m vtm.benchmarks.run \
   --mode lexical \
   --output .benchmarks/coding-rlm \
   --pair bugfix \
-  --coding-executor rlm \
-  --agent-model "$VTM_AGENT_MODEL" \
-  --agent-command-timeout-seconds 120 \
-  --agent-max-output-chars 20000
+  --rlm-model-id "$VTM_AGENT_MODEL" \
+  --workspace-command-timeout-seconds 120 \
+  --workspace-max-output-chars 20000
 ```
 
 Attempt-aware vendored-RLM run on the harder terminal track:
@@ -157,8 +120,7 @@ uv run python -m vtm.benchmarks.run \
   --suite coding \
   --mode lexical \
   --output .benchmarks/terminal-smoke-rlm \
-  --coding-executor rlm \
-  --agent-model "$VTM_AGENT_MODEL" \
+  --rlm-model-id "$VTM_AGENT_MODEL" \
   --attempts 5 \
   --pass-k 1 \
   --pass-k 5
@@ -175,8 +137,7 @@ uv run python -m vtm.benchmarks.run \
   --suite coding \
   --mode lexical \
   --output .benchmarks/terminal-shell-rlm \
-  --coding-executor rlm \
-  --agent-model "$VTM_AGENT_MODEL" \
+  --rlm-model-id "$VTM_AGENT_MODEL" \
   --workspace-backend docker_workspace \
   --docker-image python:3.12 \
   --attempts 5 \
@@ -257,7 +218,6 @@ Run a targeted harness-backed slice:
 ```bash
 export VTM_LOCAL_LLM_BASE_URL=http://127.0.0.1:8000
 export VTM_LOCAL_LLM_MODEL=qwen3.5-35b-a3b
-export PATCHER_SCRIPT="$PWD/scripts/vtm_local_patcher.py"
 
 uv run python -m vtm.benchmarks.run \
   --manifest .benchmarks/generated/swebench-lite.json \
@@ -266,7 +226,7 @@ uv run python -m vtm.benchmarks.run \
   --output .benchmarks/swebench-lite-targeted \
   --repo astropy__astropy \
   --pair astropy__astropy-14182 \
-  --executor-command "python $PATCHER_SCRIPT --task-file {task_file} --workspace {workspace}" \
+  --rlm-model-id "$VTM_LOCAL_LLM_MODEL" \
   --swebench-dataset-name princeton-nlp/SWE-bench_Lite
 ```
 
@@ -301,10 +261,10 @@ uv run python -m vtm.benchmarks.matrix \
   --mode no_memory \
   --mode lexical \
   --mode embedding \
+  --rlm-model-id "$VTM_AGENT_MODEL" \
   --attempts 3 \
   --pass-k 1 \
-  --pass-k 3 \
-  --executor-command "python scripts/vtm_local_patcher.py --task-file {task_file} --workspace {workspace} --attempt {attempt} --artifact-root {artifact_root}"
+  --pass-k 3
 ```
 
 Run the maintained shell-command matrix under Docker:
@@ -316,15 +276,19 @@ uv run python -m vtm.benchmarks.matrix \
   --mode no_memory \
   --mode lexical \
   --mode embedding \
+  --rlm-model-id "$VTM_AGENT_MODEL" \
   --workspace-backend docker_workspace \
   --docker-image python:3.12 \
-  --executor-command "python3 scripts/build_daily_report.py"
+  --attempts 3 \
+  --pass-k 1 \
+  --pass-k 3
 ```
 
 Include `lexical_rlm_rerank` when an RLM model is configured:
 
 ```bash
 export VTM_OPENAI_MODEL=gpt-5.4-mini
+export VTM_AGENT_MODEL=qwen3.5-35b-a3b
 
 uv run python -m vtm.benchmarks.matrix \
   --preset terminal_smoke \
@@ -333,6 +297,7 @@ uv run python -m vtm.benchmarks.matrix \
   --mode lexical \
   --mode lexical_rlm_rerank \
   --mode embedding \
+  --rlm-model-id "$VTM_AGENT_MODEL" \
   --rlm-model "$VTM_OPENAI_MODEL"
 ```
 

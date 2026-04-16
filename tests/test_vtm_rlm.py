@@ -58,7 +58,6 @@ def test_build_phase1_task_prompt_includes_memory_context() -> None:
         target_patch_digest="deadbeef",
         memory_mode="lexical",
         top_k=5,
-        coding_executor="rlm",
         memory_context=(),
     )
 
@@ -206,7 +205,6 @@ def test_rlm_executor_smoke_writes_patch_and_memory(
         target_patch_digest="deadbeef",
         memory_mode="lexical",
         top_k=5,
-        coding_executor="rlm",
     )
     task_file = output_root / "task.json"
     task_file.write_text(task_pack.model_dump_json(indent=2), encoding="utf-8")
@@ -222,7 +220,6 @@ def test_rlm_executor_smoke_writes_patch_and_memory(
             task_file=str(task_file),
             workspace=str(prepared.workspace_root),
             artifact_root=str(prepared.artifact_root),
-            coding_executor="rlm",
             attempt_index=1,
             workspace_backend=prepared.backend_name,
             test_command=task_pack.test_command,
