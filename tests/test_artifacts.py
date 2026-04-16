@@ -64,7 +64,11 @@ def test_artifact_store_prepared_commit_abandon_and_cleanup(artifact_store) -> N
         content_type="text/plain",
         capture_group_id="grp_2",
     )
-    artifact_store.abandon_artifact(abandoned.artifact_id, reason="test-abandon")
+    artifact_store.abandon_artifact(
+        abandoned.artifact_id,
+        reason="test-abandon",
+        provenance={"origin": "tests", "stage": "unit"},
+    )
     janitor = artifact_store.abandon_stale_prepared_artifacts()
     assert janitor == ()
 
@@ -72,6 +76,12 @@ def test_artifact_store_prepared_commit_abandon_and_cleanup(artifact_store) -> N
     assert audit_before_cleanup.prepared_artifact_ids == ()
     assert audit_before_cleanup.committed_missing_blob_artifact_ids == ()
     assert audit_before_cleanup.orphaned_blob_paths == (abandoned.relative_path,)
+    assert audit_before_cleanup.abandoned_artifact_ids_by_reason == {
+        "test-abandon": (abandoned.artifact_id,)
+    }
+    assert audit_before_cleanup.abandoned_artifact_ids_by_origin == {
+        "tests": (abandoned.artifact_id,)
+    }
 
     removed = artifact_store.cleanup_orphaned_blobs()
     assert removed == (abandoned.relative_path,)
@@ -85,6 +95,11 @@ def test_artifact_store_janitor_abandons_prepared_records(artifact_store) -> Non
     refreshed = artifact_store.get_artifact_record_by_id(prepared.artifact_id)
     assert refreshed is not None
     assert refreshed.capture_state.value == "abandoned"
+    assert refreshed.metadata["abandon_reason"] == "janitor_abandoned_prepared_capture"
+    assert refreshed.metadata["abandon_provenance"] == {
+        "origin": "artifact_janitor",
+        "stage": "prepared_capture_cleanup",
+    }
 
 
 def test_artifact_store_audit_reports_prepared_missing_and_orphaned_blobs(
@@ -103,3 +118,31 @@ def test_artifact_store_audit_reports_prepared_missing_and_orphaned_blobs(
     assert audit.prepared_artifact_ids == (prepared.artifact_id,)
     assert audit.committed_missing_blob_artifact_ids == (committed.artifact_id,)
     assert audit.orphaned_blob_paths == ("sha256/deadbeef",)
+
+
+def test_artifact_store_repair_integrity_applies_safe_repairs_and_reports_residuals(
+    artifact_store,
+) -> None:
+    prepared = artifact_store.prepare_bytes(b"prepared-payload", capture_group_id="grp_pending")
+    committed = artifact_store.put_bytes(b"committed-payload", content_type="text/plain")
+    committed_blob_path = artifact_store._root / committed.relative_path
+    committed_blob_path.unlink()
+    orphaned_blob_path = artifact_store._blob_root / "deadbeef"
+    orphaned_blob_path.write_bytes(b"orphaned")
+
+    repair = artifact_store.repair_integrity()
+    prepared_after = artifact_store.get_artifact_record_by_id(prepared.artifact_id)
+
+    assert repair.audit_before.prepared_artifact_ids == (prepared.artifact_id,)
+    assert repair.audit_before.committed_missing_blob_artifact_ids == (committed.artifact_id,)
+    assert repair.audit_before.orphaned_blob_paths == ("sha256/deadbeef",)
+    assert repair.abandoned_prepared_artifact_ids == (prepared.artifact_id,)
+    assert repair.removed_orphaned_blob_paths == tuple(
+        sorted((prepared.relative_path, "sha256/deadbeef"))
+    )
+    assert repair.unresolved_committed_missing_blob_artifact_ids == (committed.artifact_id,)
+    assert repair.audit_after.prepared_artifact_ids == ()
+    assert repair.audit_after.orphaned_blob_paths == ()
+    assert repair.audit_after.committed_missing_blob_artifact_ids == (committed.artifact_id,)
+    assert prepared_after is not None
+    assert prepared_after.capture_state.value == "abandoned"

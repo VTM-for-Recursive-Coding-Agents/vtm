@@ -16,10 +16,13 @@ from vtm.harness.workspace import (
     WorkspaceBackend,
     WorkspaceDriver,
 )
+from vtm.harness.workspace_docker import DockerWorkspaceBackend, DockerWorkspaceDriver
 
 __all__ = [
     "BenchmarkExecutor",
     "CommandResult",
+    "DockerWorkspaceBackend",
+    "DockerWorkspaceDriver",
     "ExecutorRequest",
     "ExecutorResult",
     "HarnessTaskPack",

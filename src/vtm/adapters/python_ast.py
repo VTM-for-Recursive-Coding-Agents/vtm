@@ -10,6 +10,7 @@ from vtm.anchors import AnchorRelocation, CodeAnchor
 
 
 def _source_offsets(source: str) -> list[int]:
+    """Return cumulative UTF-8 byte offsets for each source line boundary."""
     offsets = [0]
     running = 0
     for line in source.splitlines(keepends=True):
@@ -19,21 +20,25 @@ def _source_offsets(source: str) -> list[int]:
 
 
 def _line_start(offsets: list[int], lineno: int) -> int:
+    """Return the byte offset for the start of a 1-indexed line number."""
     return offsets[max(lineno - 1, 0)]
 
 
 def _byte_offset(offsets: list[int], lineno: int | None, col_offset: int | None) -> int | None:
+    """Translate Python AST line and column coordinates into UTF-8 byte offsets."""
     if lineno is None or col_offset is None:
         return None
     return _line_start(offsets, lineno) + col_offset
 
 
 def _node_digest(node: ast.AST) -> str:
+    """Hash a normalized AST node to produce a stable symbol digest."""
     serialized = ast.dump(node, annotate_fields=True, include_attributes=False)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 def _context_digest(source: str, start_line: int, end_line: int) -> str:
+    """Hash a small source window around an anchored symbol."""
     lines = source.splitlines()
     start_index = max(start_line - 2, 0)
     end_index = min(end_line + 1, len(lines))
@@ -42,6 +47,8 @@ def _context_digest(source: str, start_line: int, end_line: int) -> str:
 
 
 class _QualifiedSymbolFinder(ast.NodeVisitor):
+    """Locate a qualified class or function symbol inside a parsed module."""
+
     def __init__(self, target_symbol: str) -> None:
         self._target_symbol = target_symbol
         self._stack: list[str] = []

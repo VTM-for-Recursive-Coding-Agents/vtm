@@ -29,7 +29,7 @@ from vtm.adapters.tree_sitter import (
     UnavailableTreeSitterAdapter,
 )
 from vtm.anchors import AnchorAdapter, AnchorRelocation, AnchorRelocator, AnchorVerifier, CodeAnchor
-from vtm.artifacts import ArtifactIntegrityReport, ArtifactRecord
+from vtm.artifacts import ArtifactIntegrityReport, ArtifactRecord, ArtifactRepairReport
 from vtm.base import SCHEMA_VERSION, VTMModel
 from vtm.cache import CacheEntry, CacheKey
 from vtm.consolidation import ConsolidationAction, ConsolidationRunResult
@@ -51,6 +51,7 @@ from vtm.evidence import ArtifactRef, EvidenceRef
 from vtm.fingerprints import DependencyFingerprint, EnvFingerprint, RepoFingerprint, ToolVersion
 from vtm.memory_items import (
     ClaimPayload,
+    CommandValidatorConfig,
     ConstraintPayload,
     DecisionPayload,
     LineageEdge,
@@ -70,6 +71,7 @@ from vtm.services import (
     Consolidator,
     DependencyFingerprintBuilder,
     DeterministicConsolidator,
+    DockerProcedureValidator,
     EmbeddingRetriever,
     LexicalRetriever,
     MemoryKernel,
@@ -103,6 +105,7 @@ __all__ = [
     "ArtifactCaptureState",
     "ArtifactIntegrityReport",
     "ArtifactRecord",
+    "ArtifactRepairReport",
     "ArtifactRef",
     "ArtifactStore",
     "BasicVerifier",
@@ -112,6 +115,7 @@ __all__ = [
     "ClaimPayload",
     "ClaimStrength",
     "CodeAnchor",
+    "CommandValidatorConfig",
     "CommandProcedureValidator",
     "ConsolidationAction",
     "ConsolidationRunResult",
@@ -123,6 +127,7 @@ __all__ = [
     "DetailLevel",
     "DeterministicConsolidator",
     "DeterministicHashEmbeddingAdapter",
+    "DockerProcedureValidator",
     "EmbeddingAdapter",
     "EmbeddingIndexEntry",
     "EmbeddingIndexStore",

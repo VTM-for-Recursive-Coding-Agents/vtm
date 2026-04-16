@@ -22,6 +22,7 @@ def apply_artifact_migrations(conn: sqlite3.Connection, current_version: int) ->
 
 
 def _apply_schema_v1(conn: sqlite3.Connection) -> None:
+    """Create the legacy artifact table or normalize an older artifact layout."""
     if has_table(conn, "artifacts"):
         rows = conn.execute(
             "SELECT artifact_id, sha256, relative_path, data FROM artifacts"
@@ -70,6 +71,7 @@ def _apply_schema_v1(conn: sqlite3.Connection) -> None:
 
 
 def _apply_schema_v2(conn: sqlite3.Connection) -> None:
+    """Add explicit artifact-capture lifecycle columns and supporting indexes."""
     if "capture_state" not in list_columns(conn, "artifacts"):
         conn.execute(
             """

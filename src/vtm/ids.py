@@ -13,6 +13,7 @@ CacheEntryId = NewType("CacheEntryId", str)
 
 
 def _new_id(prefix: str) -> str:
+    """Generate a prefixed durable identifier."""
     return f"{prefix}_{uuid4().hex}"
 
 

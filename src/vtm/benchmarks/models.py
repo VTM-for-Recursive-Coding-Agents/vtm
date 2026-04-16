@@ -16,6 +16,9 @@ BenchmarkMode = Literal["no_memory", "lexical", "lexical_rlm_rerank", "embedding
 RepoSourceKind = Literal["git", "synthetic_python_smoke", "synthetic_terminal_smoke"]
 CodingEvaluationBackend = Literal["local_subprocess", "swebench_harness"]
 CodingExecutor = Literal["external_command", "native_agent"]
+CodingExecutionStyle = Literal["mixed_patch", "shell_command"]
+WorkspaceBackendName = Literal["local_workspace", "docker_workspace"]
+DockerNetworkMode = Literal["none", "bridge"]
 SWEbenchHarnessCacheLevel = Literal["none", "base", "env", "instance"]
 
 
@@ -103,6 +106,7 @@ class CodingTaskCase(VTMModel):
     gold_test_patch_digest: str | None = None
     task_kind: str | None = None
     difficulty: str | None = None
+    execution_style: CodingExecutionStyle = "mixed_patch"
 
     @model_validator(mode="after")
     def populate_expected_changed_paths(self) -> CodingTaskCase:
@@ -154,6 +158,10 @@ class BenchmarkRunConfig(VTMModel):
     seed: int = 0
     repo_filters: tuple[str, ...] = Field(default_factory=tuple)
     pair_filters: tuple[str, ...] = Field(default_factory=tuple)
+    workspace_backend: WorkspaceBackendName = "local_workspace"
+    docker_image: str | None = None
+    docker_binary: str = "docker"
+    docker_network: DockerNetworkMode = "none"
     coding_executor: CodingExecutor = "external_command"
     executor_command: tuple[str, ...] = Field(default_factory=tuple)
     attempt_count: int = Field(default=1, ge=1, le=32)
@@ -190,6 +198,15 @@ class BenchmarkRunConfig(VTMModel):
                 raise ValueError("attempt_count > 1 is only supported for coding suites")
             if pass_k_values != (1,):
                 raise ValueError("pass_k_values are only supported for coding suites")
+        if self.workspace_backend == "docker_workspace" and not self.docker_image:
+            raise ValueError("docker_workspace requires docker_image")
+        if self.workspace_backend == "local_workspace":
+            if self.docker_image is not None:
+                raise ValueError("docker_image is only supported with docker_workspace")
+            if self.docker_binary != "docker":
+                raise ValueError("docker_binary is only supported with docker_workspace")
+            if self.docker_network != "none":
+                raise ValueError("docker_network is only supported with docker_workspace")
         object.__setattr__(self, "pass_k_values", pass_k_values)
         return self
 
@@ -207,6 +224,8 @@ class BenchmarkCaseResult(VTMModel):
 
 
 class BenchmarkAttemptResult(VTMModel):
+    """Per-attempt metrics and metadata for coding-suite runs."""
+
     suite: BenchmarkSuite
     mode: BenchmarkMode
     case_id: str
@@ -229,4 +248,39 @@ class BenchmarkRunResult(VTMModel):
     started_at: str
     completed_at: str
     metrics: dict[str, Any] = Field(default_factory=dict)
+    artifacts: dict[str, str] = Field(default_factory=dict)
+
+
+class BenchmarkComparisonResult(VTMModel):
+    """Paired comparison metadata, metrics, and artifacts for two benchmark runs."""
+
+    comparison_id: str
+    suite: BenchmarkSuite
+    baseline_run_id: str
+    baseline_manifest_id: str
+    baseline_mode: BenchmarkMode
+    baseline_case_count: int = Field(ge=0)
+    candidate_run_id: str
+    candidate_manifest_id: str
+    candidate_mode: BenchmarkMode
+    candidate_case_count: int = Field(ge=0)
+    common_case_count: int = Field(ge=0)
+    baseline_only_case_count: int = Field(ge=0)
+    candidate_only_case_count: int = Field(ge=0)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    artifacts: dict[str, str] = Field(default_factory=dict)
+
+
+class BenchmarkMatrixResult(VTMModel):
+    """Aggregate result for one maintained benchmark matrix execution."""
+
+    matrix_id: str
+    preset_name: str | None = None
+    manifest_path: str
+    suite: BenchmarkSuite
+    output_dir: str
+    baseline_mode: BenchmarkMode
+    modes: tuple[BenchmarkMode, ...]
+    run_results: dict[str, BenchmarkRunResult] = Field(default_factory=dict)
+    comparison_results: dict[str, BenchmarkComparisonResult] = Field(default_factory=dict)
     artifacts: dict[str, str] = Field(default_factory=dict)

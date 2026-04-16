@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -9,10 +10,11 @@ import pytest
 from vtm.adapters.git import GitRepoFingerprintCollector
 from vtm.adapters.runtime import RuntimeEnvFingerprintCollector
 from vtm.enums import ArtifactCaptureState, EvidenceBudget, EvidenceKind, ValidityStatus
+from vtm.harness import DockerWorkspaceBackend
 from vtm.memory_items import ValidatorSpec
 from vtm.retrieval import RetrieveRequest
 from vtm.services.fingerprints import DependencyFingerprintBuilder
-from vtm.services.procedures import CommandProcedureValidator
+from vtm.services.procedures import CommandProcedureValidator, DockerProcedureValidator
 
 
 def _run(repo: Path, *args: str) -> str:
@@ -32,8 +34,7 @@ def _init_repo(repo: Path) -> None:
     _run(repo, "git", "config", "user.name", "VTM Tests")
     _run(repo, "git", "config", "user.email", "vtm@example.com")
     (repo / "module.py").write_text(
-        "def target():\n"
-        "    return 'ok'\n",
+        "def target():\n    return 'ok'\n",
         encoding="utf-8",
     )
     _run(repo, "git", "add", "module.py")
@@ -175,11 +176,7 @@ def test_command_validator_truncates_streams_and_records_metadata(
                 "command": [
                     sys.executable,
                     "-c",
-                    (
-                        "import sys; "
-                        "sys.stdout.write('abcdefghij'); "
-                        "sys.stderr.write('klmnopqrst')"
-                    ),
+                    ("import sys; sys.stdout.write('abcdefghij'); sys.stderr.write('klmnopqrst')"),
                 ],
                 "max_output_bytes": 4,
             },
@@ -235,9 +232,269 @@ def test_command_validator_applies_env_allowlist_and_denylist(
     assert result.success is True
     assert result.status is ValidityStatus.VERIFIED
     assert (
-        artifact_store.read_bytes_by_id(result.stdout_artifact_id)
-        == b"present|None|from-config\n"
+        artifact_store.read_bytes_by_id(result.stdout_artifact_id) == b"present|None|from-config\n"
     )
+
+
+def test_command_validator_can_drop_parent_environment(
+    tmp_path: Path,
+    artifact_store,
+    procedure_factory,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("LEAK_ME", "present")
+    validator = CommandProcedureValidator(artifact_store)
+    procedure = procedure_factory(
+        evidence=(),
+        validator=ValidatorSpec(
+            name="isolated-env-check",
+            kind="command",
+            config={
+                "command": [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import os; "
+                        "print(f\"{os.environ.get('LEAK_ME')}|{os.environ.get('ADDED')}\")"
+                    ),
+                ],
+                "inherit_parent_env": False,
+                "env": {"ADDED": "from-config"},
+            },
+        ),
+    )
+
+    result = validator.validate(procedure, repo_root=str(tmp_path))
+
+    assert result.success is True
+    assert result.metadata["inherit_parent_env"] is False
+    assert artifact_store.read_bytes_by_id(result.stdout_artifact_id) == b"None|from-config\n"
+
+
+def test_command_validator_can_restrict_cwd_to_repo_root(
+    tmp_path: Path,
+    artifact_store,
+    procedure_factory,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    validator = CommandProcedureValidator(artifact_store)
+    procedure = procedure_factory(
+        evidence=(),
+        validator=ValidatorSpec(
+            name="cwd-check",
+            kind="command",
+            config={
+                "command": [sys.executable, "-c", "print('ok')"],
+                "cwd": "..",
+                "restrict_cwd_to_repo": True,
+            },
+        ),
+    )
+
+    with pytest.raises(ValueError, match="cwd must stay within repo_root"):
+        validator.validate(procedure, repo_root=str(repo))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX resource limits only")
+def test_command_validator_can_apply_file_size_limit(
+    tmp_path: Path,
+    artifact_store,
+    procedure_factory,
+) -> None:
+    validator = CommandProcedureValidator(artifact_store)
+    procedure = procedure_factory(
+        evidence=(),
+        validator=ValidatorSpec(
+            name="file-limit-check",
+            kind="command",
+            config={
+                "command": [
+                    sys.executable,
+                    "-c",
+                    (
+                        "from pathlib import Path; "
+                        "Path('too-big.txt').write_text('abcdef', encoding='utf-8')"
+                    ),
+                ],
+                "cwd": ".",
+                "restrict_cwd_to_repo": True,
+                "rlimit_file_size_bytes": 1,
+            },
+        ),
+    )
+
+    result = validator.validate(procedure, repo_root=str(tmp_path))
+
+    assert result.success is False
+    assert result.status is ValidityStatus.REFUTED
+    assert result.metadata["resource_limits"]["rlimit_file_size_bytes"] == 1
+
+
+def test_docker_procedure_validator_runs_in_sandbox_and_records_container_metadata(
+    tmp_path: Path,
+    artifact_store,
+    procedure_factory,
+    fake_docker_binary: Path,
+    monkeypatch,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    monkeypatch.setenv("KEEP_ME", "present")
+    monkeypatch.setenv("DROP_ME", "hidden")
+    validator = DockerProcedureValidator(
+        artifact_store,
+        workspace_backend=DockerWorkspaceBackend(
+            docker_binary=str(fake_docker_binary),
+            docker_image="python:3.12",
+        ),
+    )
+    procedure = procedure_factory(
+        evidence=(),
+        validator=ValidatorSpec(
+            name="docker-check",
+            kind="command",
+            config={
+                "command": [
+                    "python3",
+                    "-c",
+                    (
+                        "import os; from pathlib import Path; "
+                        "print("
+                        'f"{Path.cwd().name}|'
+                        "{os.environ.get('KEEP_ME')}|"
+                        "{os.environ.get('DROP_ME')}|"
+                        "{os.environ.get('ADDED')}\""
+                        ")"
+                    ),
+                ],
+                "cwd": ".",
+                "env": {"ADDED": "from-config"},
+                "env_allowlist": ["KEEP_ME", "DROP_ME"],
+                "env_denylist": ["DROP_ME"],
+            },
+        ),
+    )
+
+    result = validator.validate(procedure, repo_root=str(repo))
+
+    assert result.success is True
+    assert result.status is ValidityStatus.VERIFIED
+    assert result.metadata["workspace_backend"] == "docker_workspace"
+    assert result.metadata["sandboxed"] is True
+    assert result.metadata["restrict_cwd_to_repo"] is True
+    assert result.metadata["docker_image"] == "python:3.12"
+    assert result.metadata["docker_network"] == "none"
+    assert result.metadata["docker_read_only_rootfs"] is True
+    assert result.metadata["docker_pids_limit"] == 256
+    assert result.metadata["docker_memory_limit"] == "2g"
+    assert result.metadata["docker_cpu_limit"] == 2.0
+    assert result.metadata["docker_container_id"].startswith("fake-vtm-")
+    assert result.metadata["docker_container_name"].startswith("vtm-")
+    assert (
+        artifact_store.read_bytes_by_id(result.stdout_artifact_id)
+        == b"workspace|present|None|from-config\n"
+    )
+
+
+def test_docker_procedure_validator_snapshots_dirty_worktree_state(
+    tmp_path: Path,
+    artifact_store,
+    procedure_factory,
+    fake_docker_binary: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "module.py").write_text(
+        "def target():\n    return 'dirty'\n",
+        encoding="utf-8",
+    )
+    validator = DockerProcedureValidator(
+        artifact_store,
+        workspace_backend=DockerWorkspaceBackend(
+            docker_binary=str(fake_docker_binary),
+            docker_image="python:3.12",
+        ),
+    )
+    procedure = procedure_factory(
+        evidence=(),
+        validator=ValidatorSpec(
+            name="dirty-snapshot-check",
+            kind="command",
+            config={
+                "command": [
+                    "python3",
+                    "-c",
+                    (
+                        "from pathlib import Path; "
+                        "print(Path('module.py').read_text(encoding='utf-8').splitlines()[-1].strip())"
+                    ),
+                ],
+                "cwd": ".",
+            },
+        ),
+    )
+
+    result = validator.validate(procedure, repo_root=str(repo))
+
+    assert result.success is True
+    assert artifact_store.read_bytes_by_id(result.stdout_artifact_id) == b"return 'dirty'\n"
+
+
+def test_docker_procedure_validator_requires_repo_root(
+    artifact_store,
+    procedure_factory,
+    fake_docker_binary: Path,
+) -> None:
+    validator = DockerProcedureValidator(
+        artifact_store,
+        workspace_backend=DockerWorkspaceBackend(
+            docker_binary=str(fake_docker_binary),
+            docker_image="python:3.12",
+        ),
+    )
+    procedure = procedure_factory(
+        evidence=(),
+        validator=ValidatorSpec(
+            name="missing-root-check",
+            kind="command",
+            config={"command": ["python3", "-c", "print('ok')"]},
+        ),
+    )
+
+    with pytest.raises(ValueError, match="requires repo_root"):
+        validator.validate(procedure)
+
+
+def test_docker_procedure_validator_rejects_cwd_outside_repo(
+    tmp_path: Path,
+    artifact_store,
+    procedure_factory,
+    fake_docker_binary: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    validator = DockerProcedureValidator(
+        artifact_store,
+        workspace_backend=DockerWorkspaceBackend(
+            docker_binary=str(fake_docker_binary),
+            docker_image="python:3.12",
+        ),
+    )
+    procedure = procedure_factory(
+        evidence=(),
+        validator=ValidatorSpec(
+            name="outside-cwd-check",
+            kind="command",
+            config={
+                "command": ["python3", "-c", "print('ok')"],
+                "cwd": "..",
+            },
+        ),
+    )
+
+    with pytest.raises(ValueError, match="cwd must stay within repo_root"):
+        validator.validate(procedure, repo_root=str(repo))
 
 
 @pytest.mark.parametrize(
@@ -270,6 +527,27 @@ def test_command_validator_applies_env_allowlist_and_denylist(
                 "env_denylist": [123],
             },
             "env_denylist",
+        ),
+        (
+            {
+                "command": [sys.executable, "-c", "print('ok')"],
+                "inherit_parent_env": "no",
+            },
+            "inherit_parent_env",
+        ),
+        (
+            {
+                "command": [sys.executable, "-c", "print('ok')"],
+                "restrict_cwd_to_repo": "yes",
+            },
+            "restrict_cwd_to_repo",
+        ),
+        (
+            {
+                "command": [sys.executable, "-c", "print('ok')"],
+                "rlimit_file_size_bytes": 0,
+            },
+            "rlimit_file_size_bytes",
         ),
     ],
 )
@@ -337,9 +615,10 @@ def test_validate_procedure_promotes_pending_procedure_and_attaches_evidence(
         if evidence.kind is EvidenceKind.ARTIFACT and evidence.artifact_ref is not None
     }
     assert artifact_ids == {result.stdout_artifact_id, result.stderr_artifact_id}
-    assert {
-        event.event_type for event in metadata_store.list_events()
-    } >= {"procedure_validated", "memory_expanded"}
+    assert {event.event_type for event in metadata_store.list_events()} >= {
+        "procedure_validated",
+        "memory_expanded",
+    }
 
 
 def test_validate_procedure_failure_modes_update_memory_status(
@@ -552,9 +831,7 @@ def test_procedure_end_to_end_promotion_validation_and_retrieval(
 
     assert memory_refs == {source_a.memory_id, source_b.memory_id}
     assert artifact_ids == {validation.stdout_artifact_id, validation.stderr_artifact_id}
-    assert {
-        event.event_type for event in metadata_store.list_events()
-    } >= {
+    assert {event.event_type for event in metadata_store.list_events()} >= {
         "procedure_promoted",
         "procedure_validated",
         "memory_retrieved",

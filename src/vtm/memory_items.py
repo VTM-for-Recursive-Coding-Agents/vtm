@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
 
 from vtm.base import VTMModel, utc_now
 from vtm.enums import (
@@ -29,12 +30,138 @@ class ProcedureStep(VTMModel):
     expected_outcome: str | None = None
 
 
+class CommandValidatorConfig(VTMModel):
+    """Typed configuration for `ValidatorSpec(kind="command")`."""
+
+    command: tuple[str, ...]
+    cwd: str | None = None
+    env: dict[str, str] | None = None
+    env_allowlist: tuple[str, ...] | None = None
+    env_denylist: tuple[str, ...] | None = None
+    expected_exit_code: int = 0
+    timeout_seconds: float | None = None
+    max_output_bytes: int | None = None
+    inherit_parent_env: bool = True
+    restrict_cwd_to_repo: bool = False
+    rlimit_cpu_seconds: int | None = None
+    rlimit_memory_bytes: int | None = None
+    rlimit_process_count: int | None = None
+    rlimit_file_size_bytes: int | None = None
+
+    @field_validator("command", mode="before")
+    @classmethod
+    def validate_command(cls, value: object) -> tuple[str, ...]:
+        if not isinstance(value, list | tuple) or not value or not all(
+            isinstance(part, str) and part for part in value
+        ):
+            raise ValueError("command validator config requires a non-empty command list[str]")
+        return tuple(value)
+
+    @field_validator("cwd", mode="before")
+    @classmethod
+    def validate_cwd(cls, value: object) -> object:
+        if value is not None and not isinstance(value, str):
+            raise ValueError("command validator cwd must be a string")
+        return value
+
+    @field_validator("env", mode="before")
+    @classmethod
+    def validate_env(cls, value: object) -> object:
+        if value is None:
+            return value
+        if not isinstance(value, Mapping) or not all(
+            isinstance(key, str) and isinstance(entry, str) for key, entry in value.items()
+        ):
+            raise ValueError("command validator env must be a dict[str, str]")
+        return dict(value)
+
+    @field_validator("env_allowlist", "env_denylist", mode="before")
+    @classmethod
+    def validate_env_name_list(cls, value: object, info: ValidationInfo) -> object:
+        if value is None:
+            return value
+        if not isinstance(value, list | tuple) or not all(
+            isinstance(entry, str) and entry for entry in value
+        ):
+            raise ValueError(f"command validator {info.field_name} must be a list[str]")
+        return tuple(value)
+
+    @field_validator("inherit_parent_env", "restrict_cwd_to_repo", mode="before")
+    @classmethod
+    def validate_bool_fields(cls, value: object, info: ValidationInfo) -> object:
+        if not isinstance(value, bool):
+            raise ValueError(f"command validator {info.field_name} must be a bool")
+        return value
+
+    @field_validator("expected_exit_code", mode="before")
+    @classmethod
+    def validate_expected_exit_code(cls, value: object) -> object:
+        if not isinstance(value, int):
+            raise ValueError("command validator expected_exit_code must be an int")
+        return value
+
+    @field_validator("timeout_seconds", mode="before")
+    @classmethod
+    def validate_timeout_seconds(cls, value: object) -> object:
+        if value is None:
+            return value
+        if not isinstance(value, int | float) or value <= 0:
+            raise ValueError("command validator timeout_seconds must be a positive number")
+        return float(value)
+
+    @field_validator("max_output_bytes", mode="before")
+    @classmethod
+    def validate_max_output_bytes(cls, value: object) -> object:
+        if value is None:
+            return value
+        if not isinstance(value, int) or value <= 0:
+            raise ValueError("command validator max_output_bytes must be a positive int")
+        return value
+
+    @field_validator(
+        "rlimit_cpu_seconds",
+        "rlimit_memory_bytes",
+        "rlimit_process_count",
+        "rlimit_file_size_bytes",
+        mode="before",
+    )
+    @classmethod
+    def validate_resource_limit(cls, value: object, info: ValidationInfo) -> object:
+        if value is None:
+            return value
+        if not isinstance(value, int) or value <= 0:
+            raise ValueError(f"command validator {info.field_name} must be a positive int")
+        return value
+
+    def resource_limits(self) -> dict[str, int]:
+        """Return the configured POSIX resource limits as a compact mapping."""
+        limits: dict[str, int] = {}
+        for field_name in (
+            "rlimit_cpu_seconds",
+            "rlimit_memory_bytes",
+            "rlimit_process_count",
+            "rlimit_file_size_bytes",
+        ):
+            raw_value = getattr(self, field_name)
+            if raw_value is not None:
+                limits[field_name] = raw_value
+        return limits
+
+
 class ValidatorSpec(VTMModel):
     """Validator configuration attached to a procedure payload."""
 
     name: str
     kind: str
-    config: dict[str, Any] = Field(default_factory=dict)
+    config: dict[str, Any] | CommandValidatorConfig = Field(default_factory=dict)
+
+    def command_config(self) -> CommandValidatorConfig:
+        """Return the typed command-validator config for this validator."""
+        if self.kind != "command":
+            raise ValueError(f"unsupported validator kind: {self.kind}")
+        if isinstance(self.config, CommandValidatorConfig):
+            return self.config
+        return CommandValidatorConfig.model_validate(self.config)
 
 
 class ClaimPayload(VTMModel):

@@ -93,12 +93,12 @@ def test_event_export_is_at_least_once_and_rebuild_rewrites_deduped_log(tmp_path
             store._mark_event_exported = original_mark  # type: ignore[attr-defined]
 
         assert event_log_path.read_text(encoding="utf-8").splitlines() == [first.to_json()]
-        assert store.export_events_to_jsonl() == 2
+        assert store.export_events_to_jsonl() == 1
         exported_ids = [
             MemoryEvent.from_json(line).event_id
             for line in event_log_path.read_text(encoding="utf-8").splitlines()
         ]
-        assert exported_ids == ["evt_a", "evt_a", "evt_b"]
+        assert exported_ids == ["evt_a", "evt_b"]
 
         assert store.rebuild_events_jsonl() == 2
         rebuilt_ids = [
@@ -110,5 +110,35 @@ def test_event_export_is_at_least_once_and_rebuild_rewrites_deduped_log(tmp_path
         assert state is not None
         assert state["last_exported_event_id"] == "evt_b"
         assert state["full_rebuild_count"] == 1
+    finally:
+        store.close()
+
+
+def test_event_export_truncates_partial_jsonl_tail_before_resuming(tmp_path: Path) -> None:
+    db_path = tmp_path / "metadata.sqlite"
+    event_log_path = tmp_path / "events.jsonl"
+    store = SqliteMetadataStore(db_path, event_log_path=event_log_path)
+    try:
+        first = MemoryEvent(
+            event_id="evt_a",
+            event_type="alpha",
+            occurred_at=datetime(2026, 4, 3, 12, 0, tzinfo=UTC),
+        )
+        second = MemoryEvent(
+            event_id="evt_b",
+            event_type="beta",
+            occurred_at=datetime(2026, 4, 3, 12, 1, tzinfo=UTC),
+        )
+        store.save_event(first)
+        store.save_event(second)
+
+        event_log_path.write_text(f"{first.to_json()}\n{second.to_json()[:20]}", encoding="utf-8")
+
+        assert store.export_events_to_jsonl() == 1
+        exported_ids = [
+            MemoryEvent.from_json(line).event_id
+            for line in event_log_path.read_text(encoding="utf-8").splitlines()
+        ]
+        assert exported_ids == ["evt_a", "evt_b"]
     finally:
         store.close()

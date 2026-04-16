@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib
+import tomllib
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -39,6 +41,7 @@ from vtm.events import MemoryEvent
 from vtm.evidence import EvidenceRef
 from vtm.memory_items import (
     ClaimPayload,
+    CommandValidatorConfig,
     MemoryItem,
     ProcedurePayload,
     ProcedureStep,
@@ -75,6 +78,37 @@ def test_package_root_keeps_compatibility_exports_for_non_kernel_surfaces() -> N
 
     assert BenchmarkRunner.__name__ == "BenchmarkRunner"
     assert OpenAIEmbeddingAdapter.__name__ == "OpenAIEmbeddingAdapter"
+
+
+def test_validator_spec_coerces_command_config_through_typed_accessor() -> None:
+    validator = ValidatorSpec(
+        name="parser-check",
+        kind="command",
+        config={"command": ["python3", "-c", "print('ok')"], "timeout_seconds": 1},
+    )
+
+    config = validator.command_config()
+
+    assert isinstance(config, CommandValidatorConfig)
+    assert config.command == ("python3", "-c", "print('ok')")
+    assert config.timeout_seconds == 1.0
+
+
+def test_validator_spec_accepts_prebuilt_command_config() -> None:
+    config = CommandValidatorConfig(command=("python3", "-c", "print('ok')"))
+    validator = ValidatorSpec(name="parser-check", kind="command", config=config)
+
+    assert validator.command_config() == config
+
+
+def test_project_scripts_expose_supported_cli_entrypoints() -> None:
+    project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    scripts = project["project"]["scripts"]
+    assert scripts["vtm-bench"] == "vtm.benchmarks.run:main"
+    assert (
+        scripts["vtm-prepare-swebench-lite"]
+        == "vtm.benchmarks.prepare_swebench_lite:main"
+    )
 
 
 def test_core_models_round_trip(
@@ -189,6 +223,7 @@ def test_core_models_round_trip(
             task_file=".benchmarks/task.json",
             workspace=".benchmarks/workspace",
             model_id="fake-agent",
+            tool_policy="no_file_mutation",
         ),
         AgentRunResult(
             session_id="agent_session",
@@ -337,6 +372,40 @@ def test_benchmark_run_config_validates_attempt_controls() -> None:
     )
 
     assert config.pass_k_values == (3, 1, 2)
+
+
+def test_benchmark_run_config_validates_docker_workspace_settings() -> None:
+    with pytest.raises(ValidationError):
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/terminal-shell-smoke.json",
+            suite="coding",
+            output_dir=".benchmarks/synthetic",
+            workspace_backend="docker_workspace",
+        )
+
+    with pytest.raises(ValidationError):
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/terminal-shell-smoke.json",
+            suite="coding",
+            output_dir=".benchmarks/synthetic",
+            workspace_backend="local_workspace",
+            docker_image="python:3.12",
+        )
+
+    config = BenchmarkRunConfig(
+        manifest_path="benchmarks/manifests/terminal-shell-smoke.json",
+        suite="coding",
+        output_dir=".benchmarks/synthetic",
+        workspace_backend="docker_workspace",
+        docker_image="python:3.12",
+        docker_binary="/tmp/fake-docker",
+        docker_network="bridge",
+    )
+
+    assert config.workspace_backend == "docker_workspace"
+    assert config.docker_image == "python:3.12"
+    assert config.docker_binary == "/tmp/fake-docker"
+    assert config.docker_network == "bridge"
 
 
 def test_evidence_kind_enforces_matching_target() -> None:

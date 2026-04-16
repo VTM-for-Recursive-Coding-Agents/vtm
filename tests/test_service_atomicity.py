@@ -69,6 +69,7 @@ def test_validate_procedure_rolls_back_metadata_when_event_persistence_fails(
     tmp_path: Path,
     kernel,
     metadata_store,
+    artifact_store,
     procedure_factory,
     monkeypatch,
 ) -> None:
@@ -96,6 +97,22 @@ def test_validate_procedure_rolls_back_metadata_when_event_persistence_fails(
     assert not any(
         event.event_type == "procedure_validated" for event in metadata_store.list_events()
     )
+    validation_artifacts = [
+        record
+        for record in artifact_store.list_artifact_records()
+        if record.metadata.get("memory_id") == procedure.memory_id
+    ]
+    assert len(validation_artifacts) == 2
+    assert {record.capture_state.value for record in validation_artifacts} == {"abandoned"}
+    assert {
+        record.metadata.get("abandon_reason") for record in validation_artifacts
+    } == {"procedure_validation_writeback_failed"}
+    assert {
+        tuple(sorted(record.metadata.get("abandon_provenance", {}).items()))
+        for record in validation_artifacts
+    } == {
+        (("origin", "procedure_validation"), ("stage", "metadata_or_event_writeback")),
+    }
 
 
 def test_promote_to_procedure_rolls_back_when_event_persistence_fails(
@@ -157,3 +174,28 @@ def test_retrieve_rolls_back_stats_when_event_persistence_fails(
     assert not any(
         event.event_type == "memory_retrieved" for event in metadata_store.list_events()
     )
+
+
+def test_capture_artifact_abandons_record_when_event_writeback_fails(
+    kernel,
+    metadata_store,
+    artifact_store,
+    monkeypatch,
+) -> None:
+    _fail_event_type(monkeypatch, metadata_store, "artifact_captured")
+
+    with pytest.raises(RuntimeError, match="simulated artifact_captured event failure"):
+        kernel.capture_artifact(
+            b"artifact payload",
+            content_type="text/plain",
+            tool_name="pytest",
+        )
+
+    records = artifact_store.list_artifact_records()
+    assert len(records) == 1
+    assert records[0].capture_state.value == "abandoned"
+    assert records[0].metadata.get("abandon_reason") == "artifact_capture_writeback_failed"
+    assert records[0].metadata.get("abandon_provenance") == {
+        "origin": "kernel_artifact_capture",
+        "stage": "event_writeback",
+    }

@@ -22,6 +22,7 @@ class SyntaxAnchorAdapter(AnchorAdapter, Protocol):
 
 
 def _context_digest(source: str, start_line: int, end_line: int) -> str:
+    """Hash a small source window around an anchored symbol."""
     lines = source.splitlines()
     start_index = max(start_line - 2, 0)
     end_index = min(end_line + 1, len(lines))

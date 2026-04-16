@@ -70,6 +70,7 @@ def _read(
     context: ToolExecutionContext,
     call_id: str,
 ) -> AgentToolResult:
+    """Read a workspace file slice and persist the rendered output as an artifact."""
     raw_path = str(arguments.get("path", ""))
     start_line = _coerce_required_int(arguments.get("start_line"), default=1)
     end_line = _coerce_optional_int(arguments.get("end_line"))
@@ -102,6 +103,7 @@ def _read(
 
 
 def _coerce_optional_int(value: object) -> int | None:
+    """Coerce an optional tool argument into an integer."""
     if value is None:
         return None
     if isinstance(value, bool):
@@ -112,6 +114,7 @@ def _coerce_optional_int(value: object) -> int | None:
 
 
 def _coerce_required_int(value: object, *, default: int) -> int:
+    """Coerce a required-or-default tool argument into an integer."""
     if value is None:
         return default
     if isinstance(value, bool):
@@ -126,6 +129,7 @@ def _search(
     context: ToolExecutionContext,
     call_id: str,
 ) -> AgentToolResult:
+    """Run workspace text search and persist the raw search output."""
     pattern = str(arguments.get("pattern", "")).strip()
     if not pattern:
         return AgentToolResult(success=False, content="search pattern must be non-empty")
@@ -167,6 +171,7 @@ def _apply_patch(
     context: ToolExecutionContext,
     call_id: str,
 ) -> AgentToolResult:
+    """Apply a unified patch inside the workspace and record the command result."""
     patch_text = str(arguments.get("patch", ""))
     if not patch_text.strip():
         return AgentToolResult(success=False, content="patch must be non-empty")

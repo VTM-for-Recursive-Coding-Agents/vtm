@@ -29,6 +29,7 @@ class ToolExecutionContext:
     durable_scope: VisibilityScope | None = None
     dependency_builder: DependencyFingerprintBuilder | None = None
     tool_name_prefix: str = "agent-tool"
+    tool_policy: str = "full"
 
 
 class AgentTool:

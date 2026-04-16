@@ -27,11 +27,14 @@ The type system is designed to make incorrect memory states hard to represent.
 
 - Payloads are discriminated by `kind`: `ClaimPayload`, `ProcedurePayload`, `ConstraintPayload`, `DecisionPayload`, `SummaryCardPayload`.
 - `MemoryItem` is the canonical persisted memory record and carries visibility, validity, evidence, lineage, and retrieval stats.
+- `ValidatorSpec` is the durable procedure-validator envelope.
+- `CommandValidatorConfig` is the typed config model behind `ValidatorSpec(kind="command")`.
 - `VisibilityScope` is a single write scope. Retrieval can query across multiple scopes.
 - `ValidityState` stores the current status and the dependency fingerprint it was checked against.
 - `LineageEdge` captures provenance between transactions and committed memories.
 - `ArtifactRecord` carries first-class capture lifecycle and provenance fields: state, capture group, actor, and session id.
-- `ArtifactIntegrityReport` is a non-mutating diagnostic record for prepared captures, committed missing blobs, and orphaned blob paths.
+- `ArtifactIntegrityReport` is a non-mutating diagnostic record for prepared captures, committed missing blobs, orphaned blob paths, and abandoned-capture summaries by reason/origin.
+- `ArtifactRepairReport` records one repair pass over the store: audit before, audit after, abandoned prepared captures, removed orphaned blobs, and unresolved committed-missing-blob cases.
 
 ## Retrieval, embedding, and consolidation records
 

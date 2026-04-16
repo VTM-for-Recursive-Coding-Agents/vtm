@@ -5,6 +5,7 @@ Purpose: public harness boundary for task-pack contracts, workspace preparation,
 Start here
 - `models.py`: the public task-pack and executor/result contracts.
 - `workspace.py`: local workspace preparation and the reference `WorkspaceDriver`.
+- `workspace_docker.py`: Docker-backed workspace preparation and driver lifecycle.
 - `executors.py`: subprocess and native-agent executor implementations.
 
 Contents
@@ -13,12 +14,16 @@ Contents
 - `models.py`: Typed task-pack, executor request/result, and trace-manifest records.
 - `scoring.py`: Changed-path and patch-similarity helpers used by coding evaluation.
 - `workspace.py`: Local workspace backend, persistent workspace driver, and command-result records.
+- `workspace_docker.py`: Docker-backed workspace backend and persistent in-container driver.
 
 Important contract details
-- `HarnessTaskPack`: canonical per-case task file, including optional `retrieval_query`.
-- `ExecutorRequest`: per-attempt execution request, including `attempt_index` and `artifact_root`.
-- `ExecutorResult`: per-attempt execution output used for `attempts.jsonl`.
+- `HarnessTaskPack`: canonical per-case task file, including optional `retrieval_query` and `execution_style`.
+- `ExecutorRequest`: per-attempt execution request, including `attempt_index`, `artifact_root`, and `workspace_backend`.
+- `ExecutorResult`: per-attempt execution output used for `attempts.jsonl`, plus normalized Docker metadata when applicable.
 - Local layout:
   - `task-packs/<case-id>.json`
   - `workspaces/<mode>/<case-id>/attempt-01`
   - `executor-artifacts/<case-id>/attempt-01`
+- Docker-backed attempts default to `--network none` and keep one long-lived container per attempt.
+- Docker-backed attempts also default to a read-only root filesystem, `pids-limit=256`, `memory=2g`, `cpus=2`, hardened tmpfs mounts, and persisted `docker-run.stdout` / `docker-run.stderr` startup logs.
+- Native-agent shell-command tasks enforce `tool_policy="no_file_mutation"` so terminal/read/search/memory tools remain available while direct file-mutation tools are blocked.

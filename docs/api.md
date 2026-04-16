@@ -108,6 +108,12 @@ That topology preserves atomic SQLite semantics for metadata and events because 
   - wrapper over an existing retriever using `RLMAdapter`
 - `CommandProcedureValidator`
   - command-based validation with committed stdout/stderr artifact capture
+  - consumes typed `CommandValidatorConfig` models through `ValidatorSpec(kind="command")`
+  - supports optional cwd confinement, parent-env suppression, and POSIX resource limits for tighter local execution
+- `DockerProcedureValidator`
+  - command-based validation through `DockerWorkspaceBackend`
+  - snapshots the current repo working tree into a Docker-backed workspace and records container metadata on the validation result
+  - confines execution to `repo_root` and reuses the harness Docker sandbox defaults
 - `DeterministicConsolidator`
   - deterministic duplicate superseding and optional summary-card generation
 
@@ -133,8 +139,10 @@ Optional provider-specific implementations live in `vtm.adapters`:
 ## Recovery model
 
 - SQLite is the canonical event ledger.
-- JSONL event export is at-least-once and repaired through `rebuild_events_jsonl()`.
-- Artifact capture uses explicit prepared/committed states so recovery is inspectable through `audit_integrity()`.
+- JSONL event export is still derived and repaired through `rebuild_events_jsonl()`, but export now resumes from complete on-disk lines before appending new rows.
+- Artifact capture uses explicit prepared/committed/abandoned states so recovery is inspectable through `audit_integrity()`.
+- Abandoned captures now retain structured provenance in `metadata["abandon_provenance"]`, so operator tooling can distinguish kernel capture writeback fallout, procedure-validation writeback fallout, validator-side capture fallout, and janitor cleanup.
+- `repair_integrity()` applies the safe repair steps in one pass: abandon lingering prepared captures and delete orphaned blobs, while leaving committed-missing-blob cases as unresolved diagnostics.
 
 ## Related packages
 

@@ -38,3 +38,18 @@ class ArtifactIntegrityReport(VTMModel):
     prepared_artifact_ids: tuple[str, ...] = Field(default_factory=tuple)
     committed_missing_blob_artifact_ids: tuple[str, ...] = Field(default_factory=tuple)
     orphaned_blob_paths: tuple[str, ...] = Field(default_factory=tuple)
+    abandoned_artifact_ids_by_reason: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    abandoned_artifact_ids_by_origin: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+    abandoned_artifact_ids_without_reason: tuple[str, ...] = Field(default_factory=tuple)
+
+
+class ArtifactRepairReport(VTMModel):
+    """Outcome of applying safe repair actions to the artifact store."""
+
+    audit_before: ArtifactIntegrityReport
+    audit_after: ArtifactIntegrityReport
+    abandoned_prepared_artifact_ids: tuple[str, ...] = Field(default_factory=tuple)
+    removed_orphaned_blob_paths: tuple[str, ...] = Field(default_factory=tuple)
+    unresolved_committed_missing_blob_artifact_ids: tuple[str, ...] = Field(
+        default_factory=tuple
+    )

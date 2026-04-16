@@ -1,0 +1,314 @@
+{
+  "description": "Deterministic shell-command coding benchmark track with Docker-capable workspace isolation.",
+  "manifest_id": "synthetic_terminal_shell_smoke",
+  "repos": [
+    {
+      "branch": "main",
+      "commit_pairs": [
+        {
+          "base_ref": "terminal-shell-daily-report-bug",
+          "description": "Daily report output is stale relative to its generator inputs.",
+          "head_ref": "terminal-shell-daily-report-fix",
+          "label": "shell_daily_report",
+          "pair_id": "shell_daily_report"
+        },
+        {
+          "base_ref": "terminal-shell-dependency-lock-bug",
+          "description": "Dependency lock output is stale relative to declared dependencies.",
+          "head_ref": "terminal-shell-dependency-lock-fix",
+          "label": "shell_dependency_lock",
+          "pair_id": "shell_dependency_lock"
+        },
+        {
+          "base_ref": "terminal-shell-runtime-snapshot-bug",
+          "description": "Runtime snapshot output is stale relative to checked-in flags.",
+          "head_ref": "terminal-shell-runtime-snapshot-fix",
+          "label": "shell_runtime_snapshot",
+          "pair_id": "shell_runtime_snapshot"
+        },
+        {
+          "base_ref": "terminal-shell-cleanup-inventory-bug",
+          "description": "Cleanup inventory output still includes ignored paths.",
+          "head_ref": "terminal-shell-cleanup-inventory-fix",
+          "label": "shell_cleanup_inventory",
+          "pair_id": "shell_cleanup_inventory"
+        },
+        {
+          "base_ref": "terminal-shell-release-manifest-bug",
+          "description": "Release manifest output is stale relative to release inputs.",
+          "head_ref": "terminal-shell-release-manifest-fix",
+          "label": "shell_release_manifest",
+          "pair_id": "shell_release_manifest"
+        },
+        {
+          "base_ref": "terminal-shell-docs-index-bug",
+          "description": "Docs index output is stale relative to source notes.",
+          "head_ref": "terminal-shell-docs-index-fix",
+          "label": "shell_docs_index",
+          "pair_id": "shell_docs_index"
+        },
+        {
+          "base_ref": "terminal-shell-service-bundle-bug",
+          "description": "Service bundle outputs are stale relative to service configs.",
+          "head_ref": "terminal-shell-service-bundle-fix",
+          "label": "shell_service_bundle",
+          "pair_id": "shell_service_bundle"
+        },
+        {
+          "base_ref": "terminal-shell-command-matrix-bug",
+          "description": "Command matrix outputs are stale relative to environment and command inputs.",
+          "head_ref": "terminal-shell-command-matrix-fix",
+          "label": "shell_command_matrix",
+          "pair_id": "shell_command_matrix"
+        },
+        {
+          "base_ref": "terminal-shell-team-roster-bug",
+          "description": "Team roster output is stale relative to roster inputs.",
+          "head_ref": "terminal-shell-team-roster-fix",
+          "label": "shell_team_roster",
+          "pair_id": "shell_team_roster"
+        },
+        {
+          "base_ref": "terminal-shell-incident-rollup-bug",
+          "description": "Incident rollup output is stale relative to incident inputs.",
+          "head_ref": "terminal-shell-incident-rollup-fix",
+          "label": "shell_incident_rollup",
+          "pair_id": "shell_incident_rollup"
+        },
+        {
+          "base_ref": "terminal-shell-alert-routes-bug",
+          "description": "Alert route outputs are stale relative to enabled alert configs.",
+          "head_ref": "terminal-shell-alert-routes-fix",
+          "label": "shell_alert_routes",
+          "pair_id": "shell_alert_routes"
+        },
+        {
+          "base_ref": "terminal-shell-environment-catalog-bug",
+          "description": "Environment catalog outputs are stale relative to enabled environment configs.",
+          "head_ref": "terminal-shell-environment-catalog-fix",
+          "label": "shell_environment_catalog",
+          "pair_id": "shell_environment_catalog"
+        }
+      ],
+      "repo_name": "synthetic_terminal_smoke",
+      "source_kind": "synthetic_terminal_smoke"
+    }
+  ],
+  "coding_tasks": [
+    {
+      "case_id": "terminal_shell_daily_report_unittest",
+      "commit_pair_id": "shell_daily_report",
+      "difficulty": "easy",
+      "execution_style": "shell_command",
+      "expected_changed_paths": ["generated/daily_report.txt"],
+      "failing_tests": [
+        "tests.test_daily_report_refresh.DailyReportRefreshTests.test_daily_report_matches_generator_inputs"
+      ],
+      "repo_name": "synthetic_terminal_smoke",
+      "retrieval_query": "daily report generator stale generated output inputs report metrics",
+      "task_kind": "generated_report",
+      "task_statement": "Refresh the checked-in daily report output by running the report generator.",
+      "test_command": ["python3", "-m", "unittest", "tests.test_daily_report_refresh", "-q"],
+      "touched_paths": ["generated/daily_report.txt"]
+    },
+    {
+      "case_id": "terminal_shell_dependency_lock_unittest",
+      "commit_pair_id": "shell_dependency_lock",
+      "difficulty": "easy",
+      "execution_style": "shell_command",
+      "expected_changed_paths": ["generated/dependency.lock"],
+      "failing_tests": [
+        "tests.test_dependency_lock_refresh.DependencyLockRefreshTests.test_dependency_lock_matches_declared_versions"
+      ],
+      "repo_name": "synthetic_terminal_smoke",
+      "retrieval_query": "dependency lock generator stale declared versions",
+      "task_kind": "generated_lockfile",
+      "task_statement": "Refresh the checked-in dependency lock output from the declared dependency list.",
+      "test_command": ["python3", "-m", "unittest", "tests.test_dependency_lock_refresh", "-q"],
+      "touched_paths": ["generated/dependency.lock"]
+    },
+    {
+      "case_id": "terminal_shell_runtime_snapshot_unittest",
+      "commit_pair_id": "shell_runtime_snapshot",
+      "difficulty": "easy",
+      "execution_style": "shell_command",
+      "expected_changed_paths": ["generated/runtime_snapshot.env"],
+      "failing_tests": [
+        "tests.test_runtime_snapshot_refresh.RuntimeSnapshotRefreshTests.test_runtime_snapshot_matches_flags"
+      ],
+      "repo_name": "synthetic_terminal_smoke",
+      "retrieval_query": "runtime snapshot env stale config flags generator",
+      "task_kind": "generated_config",
+      "task_statement": "Rebuild the checked-in runtime snapshot from the canonical runtime flags file.",
+      "test_command": ["python3", "-m", "unittest", "tests.test_runtime_snapshot_refresh", "-q"],
+      "touched_paths": ["generated/runtime_snapshot.env"]
+    },
+    {
+      "case_id": "terminal_shell_cleanup_inventory_unittest",
+      "commit_pair_id": "shell_cleanup_inventory",
+      "difficulty": "medium",
+      "execution_style": "shell_command",
+      "expected_changed_paths": ["generated/cleanup_inventory.txt"],
+      "failing_tests": [
+        "tests.test_cleanup_inventory_refresh.CleanupInventoryRefreshTests.test_cleanup_inventory_filters_ignored_prefixes"
+      ],
+      "repo_name": "synthetic_terminal_smoke",
+      "task_kind": "generated_cleanup_inventory",
+      "task_statement": "Regenerate the cleanup inventory so ignored prefixes are excluded from the tracked output.",
+      "test_command": ["python3", "-m", "unittest", "tests.test_cleanup_inventory_refresh", "-q"],
+      "touched_paths": ["generated/cleanup_inventory.txt"]
+    },
+    {
+      "case_id": "terminal_shell_release_manifest_unittest",
+      "commit_pair_id": "shell_release_manifest",
+      "difficulty": "medium",
+      "execution_style": "shell_command",
+      "expected_changed_paths": ["generated/release_manifest.json"],
+      "failing_tests": [
+        "tests.test_release_manifest_refresh.ReleaseManifestRefreshTests.test_release_manifest_matches_inputs"
+      ],
+      "repo_name": "synthetic_terminal_smoke",
+      "retrieval_query": "release manifest generated json stale release inputs",
+      "task_kind": "generated_manifest",
+      "task_statement": "Refresh the checked-in release manifest from the canonical release input file.",
+      "test_command": ["python3", "-m", "unittest", "tests.test_release_manifest_refresh", "-q"],
+      "touched_paths": ["generated/release_manifest.json"]
+    },
+    {
+      "case_id": "terminal_shell_docs_index_unittest",
+      "commit_pair_id": "shell_docs_index",
+      "difficulty": "medium",
+      "execution_style": "shell_command",
+      "expected_changed_paths": ["generated/docs_index.json"],
+      "failing_tests": [
+        "tests.test_docs_index_refresh.DocsIndexRefreshTests.test_docs_index_matches_source_titles"
+      ],
+      "repo_name": "synthetic_terminal_smoke",
+      "retrieval_query": "docs index generator source notes titles stale output",
+      "task_kind": "generated_index",
+      "task_statement": "Rebuild the docs index so it reflects the checked-in source note titles.",
+      "test_command": ["python3", "-m", "unittest", "tests.test_docs_index_refresh", "-q"],
+      "touched_paths": ["generated/docs_index.json"]
+    },
+    {
+      "case_id": "terminal_shell_service_bundle_unittest",
+      "commit_pair_id": "shell_service_bundle",
+      "difficulty": "hard",
+      "execution_style": "shell_command",
+      "expected_changed_paths": [
+        "generated/service_bundle.json",
+        "generated/service_targets.txt"
+      ],
+      "failing_tests": [
+        "tests.test_service_bundle_refresh.ServiceBundleRefreshTests.test_service_bundle_matches_enabled_service_configs"
+      ],
+      "repo_name": "synthetic_terminal_smoke",
+      "retrieval_query": "service bundle generated outputs enabled services configs stale",
+      "task_kind": "multi_file_generation",
+      "task_statement": "Refresh both checked-in service bundle outputs from the enabled service configs.",
+      "test_command": ["python3", "-m", "unittest", "tests.test_service_bundle_refresh", "-q"],
+      "touched_paths": [
+        "generated/service_bundle.json",
+        "generated/service_targets.txt"
+      ]
+    },
+    {
+      "case_id": "terminal_shell_command_matrix_unittest",
+      "commit_pair_id": "shell_command_matrix",
+      "difficulty": "hard",
+      "execution_style": "shell_command",
+      "expected_changed_paths": [
+        "generated/command_matrix.json",
+        "generated/command_matrix.md"
+      ],
+      "failing_tests": [
+        "tests.test_command_matrix_refresh.CommandMatrixRefreshTests.test_command_matrix_matches_inputs"
+      ],
+      "repo_name": "synthetic_terminal_smoke",
+      "retrieval_query": "command matrix nested rebuild script stale generated markdown json",
+      "task_kind": "nested_generator",
+      "task_statement": "Rebuild the checked-in command matrix outputs from the nested shell-task generator.",
+      "test_command": ["python3", "-m", "unittest", "tests.test_command_matrix_refresh", "-q"],
+      "touched_paths": [
+        "generated/command_matrix.json",
+        "generated/command_matrix.md"
+      ]
+    },
+    {
+      "case_id": "terminal_shell_team_roster_unittest",
+      "commit_pair_id": "shell_team_roster",
+      "difficulty": "easy",
+      "execution_style": "shell_command",
+      "expected_changed_paths": ["generated/team_roster.txt"],
+      "failing_tests": [
+        "tests.test_team_roster_refresh.TeamRosterRefreshTests.test_team_roster_matches_generator_inputs"
+      ],
+      "repo_name": "synthetic_terminal_smoke",
+      "retrieval_query": "team roster generated output stale roster input members",
+      "task_kind": "generated_roster",
+      "task_statement": "Refresh the checked-in team roster output from the canonical roster input.",
+      "test_command": ["python3", "-m", "unittest", "tests.test_team_roster_refresh", "-q"],
+      "touched_paths": ["generated/team_roster.txt"]
+    },
+    {
+      "case_id": "terminal_shell_incident_rollup_unittest",
+      "commit_pair_id": "shell_incident_rollup",
+      "difficulty": "medium",
+      "execution_style": "shell_command",
+      "expected_changed_paths": ["generated/incident_rollup.json"],
+      "failing_tests": [
+        "tests.test_incident_rollup_refresh.IncidentRollupRefreshTests.test_incident_rollup_matches_open_incidents"
+      ],
+      "repo_name": "synthetic_terminal_smoke",
+      "retrieval_query": "incident rollup generated json stale open incidents severity counts",
+      "task_kind": "generated_rollup",
+      "task_statement": "Rebuild the checked-in incident rollup so it reflects the current open incidents.",
+      "test_command": ["python3", "-m", "unittest", "tests.test_incident_rollup_refresh", "-q"],
+      "touched_paths": ["generated/incident_rollup.json"]
+    },
+    {
+      "case_id": "terminal_shell_alert_routes_unittest",
+      "commit_pair_id": "shell_alert_routes",
+      "difficulty": "hard",
+      "execution_style": "shell_command",
+      "expected_changed_paths": [
+        "generated/alert_routes.json",
+        "generated/alert_routes.md"
+      ],
+      "failing_tests": [
+        "tests.test_alert_routes_refresh.AlertRoutesRefreshTests.test_alert_routes_match_enabled_configs"
+      ],
+      "repo_name": "synthetic_terminal_smoke",
+      "retrieval_query": "alert routes enabled configs generated markdown json stale outputs",
+      "task_kind": "generated_alert_routes",
+      "task_statement": "Refresh both checked-in alert route outputs from the enabled alert configs.",
+      "test_command": ["python3", "-m", "unittest", "tests.test_alert_routes_refresh", "-q"],
+      "touched_paths": [
+        "generated/alert_routes.json",
+        "generated/alert_routes.md"
+      ]
+    },
+    {
+      "case_id": "terminal_shell_environment_catalog_unittest",
+      "commit_pair_id": "shell_environment_catalog",
+      "difficulty": "hard",
+      "execution_style": "shell_command",
+      "expected_changed_paths": [
+        "generated/environment_catalog.json",
+        "generated/environment_catalog.txt"
+      ],
+      "failing_tests": [
+        "tests.test_environment_catalog_refresh.EnvironmentCatalogRefreshTests.test_environment_catalog_matches_enabled_configs"
+      ],
+      "repo_name": "synthetic_terminal_smoke",
+      "retrieval_query": "environment catalog nested generator enabled configs stale outputs",
+      "task_kind": "nested_environment_catalog",
+      "task_statement": "Rebuild the checked-in environment catalog outputs from the nested environment generator.",
+      "test_command": ["python3", "-m", "unittest", "tests.test_environment_catalog_refresh", "-q"],
+      "touched_paths": [
+        "generated/environment_catalog.json",
+        "generated/environment_catalog.txt"
+      ]
+    }
+  ]
+}

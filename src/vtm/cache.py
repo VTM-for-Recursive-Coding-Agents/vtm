@@ -17,6 +17,7 @@ from vtm.ids import new_cache_entry_id
 
 
 def _normalize_value(value: Any) -> Any:
+    """Recursively normalize structured values into JSON-stable primitives."""
     if isinstance(value, BaseModel):
         return value.model_dump(mode="json")
     if isinstance(value, dict):
@@ -27,6 +28,7 @@ def _normalize_value(value: Any) -> Any:
 
 
 def _normalize_args(args: Mapping[str, Any]) -> str:
+    """Serialize tool arguments into a deterministic JSON string."""
     normalized = {key: _normalize_value(args[key]) for key in sorted(args)}
     return json.dumps(normalized, separators=(",", ":"), sort_keys=True)
 

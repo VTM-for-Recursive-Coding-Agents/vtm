@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from dataclasses import dataclass
 
 from vtm.adapters.git import GitRepoFingerprintCollector
@@ -101,85 +102,89 @@ class ValidationKernelOps:
         self._require_procedure_payload(item)
 
         result = self._procedure_validator.validate(item, repo_root=repo_root)
-        fingerprint_refresh = self._procedure_dependency_fingerprint(item, repo_root=repo_root)
-        dependency_fingerprint = fingerprint_refresh.fingerprint
-        if fingerprint_refresh.error is not None:
-            metadata = {
-                **result.metadata,
-                "dependency_fingerprint_refresh_failed": True,
-                "dependency_fingerprint_error": fingerprint_refresh.error,
-            }
-            if result.status is ValidityStatus.VERIFIED:
-                result = result.model_copy(
-                    update={
-                        "success": False,
-                        "status": ValidityStatus.UNKNOWN,
-                        "reason": (
-                            "procedure validator command succeeded but "
-                            "dependency fingerprint refresh failed"
-                        ),
-                        "metadata": metadata,
-                    }
+        try:
+            fingerprint_refresh = self._procedure_dependency_fingerprint(item, repo_root=repo_root)
+            dependency_fingerprint = fingerprint_refresh.fingerprint
+            if fingerprint_refresh.error is not None:
+                metadata = {
+                    **result.metadata,
+                    "dependency_fingerprint_refresh_failed": True,
+                    "dependency_fingerprint_error": fingerprint_refresh.error,
+                }
+                if result.status is ValidityStatus.VERIFIED:
+                    result = result.model_copy(
+                        update={
+                            "success": False,
+                            "status": ValidityStatus.UNKNOWN,
+                            "reason": (
+                                "procedure validator command succeeded but "
+                                "dependency fingerprint refresh failed"
+                            ),
+                            "metadata": metadata,
+                        }
+                    )
+                else:
+                    result = result.model_copy(update={"metadata": metadata})
+            if dependency_fingerprint is None and result.status is ValidityStatus.VERIFIED:
+                raise ValueError(
+                    "successful procedure validation requires repo_root or "
+                    "an existing dependency fingerprint"
                 )
-            else:
-                result = result.model_copy(update={"metadata": metadata})
-        if dependency_fingerprint is None and result.status is ValidityStatus.VERIFIED:
-            raise ValueError(
-                "successful procedure validation requires repo_root or "
-                "an existing dependency fingerprint"
-            )
 
-        stdout_record = self._require_artifact_record(result.stdout_artifact_id)
-        stderr_record = self._require_artifact_record(result.stderr_artifact_id)
-        validation_evidence = (
-            self._artifact_evidence(
-                stdout_record,
-                label="procedure-validator-stdout",
-                summary="Procedure validator stdout",
-            ),
-            self._artifact_evidence(
-                stderr_record,
-                label="procedure-validator-stderr",
-                summary="Procedure validator stderr",
-            ),
-        )
-        merged_evidence = self._merge_evidence(item.evidence, validation_evidence)
-        updated_memory = item.model_copy(
-            update={
-                "evidence": merged_evidence,
-                "validity": item.validity.model_copy(
-                    update={
-                        "status": result.status,
-                        "dependency_fingerprint": dependency_fingerprint
-                        or item.validity.dependency_fingerprint,
-                        "checked_at": result.checked_at,
-                        "reason": result.reason,
-                    }
+            stdout_record = self._require_artifact_record(result.stdout_artifact_id)
+            stderr_record = self._require_artifact_record(result.stderr_artifact_id)
+            validation_evidence = (
+                self._artifact_evidence(
+                    stdout_record,
+                    label="procedure-validator-stdout",
+                    summary="Procedure validator stdout",
                 ),
-                "stats": item.stats.model_copy(
-                    update={
-                        "verification_count": item.stats.verification_count + 1,
-                        "last_verified_at": result.checked_at,
-                    }
+                self._artifact_evidence(
+                    stderr_record,
+                    label="procedure-validator-stderr",
+                    summary="Procedure validator stderr",
                 ),
-                "metadata": {
-                    **item.metadata,
-                    "latest_procedure_validation": result.model_dump(mode="json"),
-                },
-                "updated_at": result.checked_at,
-            }
-        )
-        self._mutations.run(
-            lambda: self._persist_validated_procedure(updated_memory),
-            build_events=lambda persisted: (
-                MemoryEvent(
-                    event_type="procedure_validated",
-                    memory_id=memory_id,
-                    payload=result.model_dump(mode="json"),
+            )
+            merged_evidence = self._merge_evidence(item.evidence, validation_evidence)
+            updated_memory = item.model_copy(
+                update={
+                    "evidence": merged_evidence,
+                    "validity": item.validity.model_copy(
+                        update={
+                            "status": result.status,
+                            "dependency_fingerprint": dependency_fingerprint
+                            or item.validity.dependency_fingerprint,
+                            "checked_at": result.checked_at,
+                            "reason": result.reason,
+                        }
+                    ),
+                    "stats": item.stats.model_copy(
+                        update={
+                            "verification_count": item.stats.verification_count + 1,
+                            "last_verified_at": result.checked_at,
+                        }
+                    ),
+                    "metadata": {
+                        **item.metadata,
+                        "latest_procedure_validation": result.model_dump(mode="json"),
+                    },
+                    "updated_at": result.checked_at,
+                }
+            )
+            self._mutations.run(
+                lambda: self._persist_validated_procedure(updated_memory),
+                build_events=lambda persisted: (
+                    MemoryEvent(
+                        event_type="procedure_validated",
+                        memory_id=memory_id,
+                        payload=result.model_dump(mode="json"),
+                    ),
                 ),
-            ),
-        )
-        return result
+            )
+            return result
+        except Exception:
+            self._best_effort_abandon_validation_artifacts(result)
+            raise
 
     def promote_to_procedure(
         self,
@@ -300,6 +305,21 @@ class ValidationKernelOps:
             raise ValueError(f"artifact is not committed: {artifact_id}")
         return record
 
+    def _best_effort_abandon_validation_artifacts(
+        self,
+        result: ProcedureValidationResult,
+    ) -> None:
+        for artifact_id in {result.stdout_artifact_id, result.stderr_artifact_id}:
+            with suppress(Exception):
+                self._artifact_store.abandon_artifact(
+                    artifact_id,
+                    reason="procedure_validation_writeback_failed",
+                    provenance={
+                        "origin": "procedure_validation",
+                        "stage": "metadata_or_event_writeback",
+                    },
+                )
+
     def _require_procedure_payload(self, item: MemoryItem) -> ProcedurePayload:
         if item.kind is not MemoryKind.PROCEDURE or not isinstance(item.payload, ProcedurePayload):
             raise ValueError("operation requires a procedure memory item")
@@ -318,9 +338,9 @@ class ValidationKernelOps:
         if repo_candidate is None:
             payload = self._require_procedure_payload(item)
             if payload.validator is not None:
-                raw_cwd = payload.validator.config.get("cwd")
-                if isinstance(raw_cwd, str):
-                    repo_candidate = raw_cwd
+                config = payload.validator.command_config()
+                if config.cwd is not None:
+                    repo_candidate = config.cwd
         if repo_candidate is None:
             return ProcedureDependencyFingerprintRefresh(fingerprint=existing)
 
