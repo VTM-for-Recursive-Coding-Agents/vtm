@@ -4,19 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import shlex
-from datetime import datetime
+from pathlib import Path
 from typing import Literal, Protocol, cast
 
-from vtm.adapters.agent_model import AgentModelAdapter
-from vtm.agents import (
-    AgentRunRequest,
-    AgentRunResult,
-    AgentRunStatus,
-    AgentRuntimeContext,
-    TerminalCodingAgent,
-)
-from vtm.harness.models import ExecutorRequest, ExecutorResult, TraceManifest
+from vtm.harness.models import ExecutorRequest, ExecutorResult, HarnessTaskPack
 from vtm.harness.workspace import PreparedWorkspace
+from vtm_rlm.context import RLMRuntimeContext
+from vtm_rlm.execution import run_vendored_rlm
+from vtm_rlm.writeback import write_success_memory
 
 
 class BenchmarkExecutor(Protocol):
@@ -27,8 +22,7 @@ class BenchmarkExecutor(Protocol):
         *,
         request: ExecutorRequest,
         prepared_workspace: PreparedWorkspace,
-        run_request: AgentRunRequest | None = None,
-        runtime_context: AgentRuntimeContext | None = None,
+        runtime_context: RLMRuntimeContext | None = None,
     ) -> ExecutorResult: ...
 
 
@@ -40,11 +34,10 @@ class SubprocessBenchmarkExecutor:
         *,
         request: ExecutorRequest,
         prepared_workspace: PreparedWorkspace,
-        run_request: AgentRunRequest | None = None,
-        runtime_context: AgentRuntimeContext | None = None,
+        runtime_context: RLMRuntimeContext | None = None,
     ) -> ExecutorResult:
         """Execute a non-agent coding task and collect output artifacts."""
-        del run_request, runtime_context
+        del runtime_context
         if not request.command:
             raise ValueError("subprocess benchmark executor requires a command")
         artifact_root = prepared_workspace.artifact_root
@@ -139,49 +132,66 @@ class SubprocessBenchmarkExecutor:
         return cast(Literal["none", "bridge"] | None, value)
 
 
-class NativeAgentBenchmarkExecutor:
-    """Runs a coding task through the native single-agent runtime."""
+class RLMBenchmarkExecutor:
+    """Runs a coding task through the vendored upstream RLM runtime."""
 
-    def __init__(self, *, model_adapter: AgentModelAdapter) -> None:
-        """Bind the executor to the model adapter used by the agent."""
-        self._model_adapter = model_adapter
+    def __init__(
+        self,
+        *,
+        model_id: str,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        max_iterations: int = 12,
+        max_timeout_seconds: int = 600,
+        max_depth: int = 2,
+    ) -> None:
+        if not model_id:
+            raise ValueError("RLM benchmark executor requires a non-empty model_id")
+        self._model_id = model_id
+        self._base_url = base_url
+        self._api_key = api_key
+        self._max_iterations = max_iterations
+        self._max_timeout_seconds = max_timeout_seconds
+        self._max_depth = max_depth
 
     def execute(
         self,
         *,
         request: ExecutorRequest,
         prepared_workspace: PreparedWorkspace,
-        run_request: AgentRunRequest | None = None,
-        runtime_context: AgentRuntimeContext | None = None,
+        runtime_context: RLMRuntimeContext | None = None,
     ) -> ExecutorResult:
-        """Execute the task through `TerminalCodingAgent` and normalize outputs."""
-        if run_request is None or runtime_context is None:
-            raise ValueError(
-                "native agent benchmark executor requires run_request and runtime_context"
-            )
+        """Execute the task through the vendored RLM runtime and normalize outputs."""
+        if runtime_context is None:
+            raise ValueError("RLM benchmark executor requires runtime_context")
         artifact_root = prepared_workspace.artifact_root
-        agent_artifact_root = artifact_root / "agent"
-        agent_artifact_root.mkdir(parents=True, exist_ok=True)
+        rlm_artifact_root = artifact_root / "rlm"
+        rlm_artifact_root.mkdir(parents=True, exist_ok=True)
         verification_stdout_path = artifact_root / "final-verification.stdout"
         verification_stderr_path = artifact_root / "final-verification.stderr"
         produced_patch_path = artifact_root / "produced.patch"
         final_git_status_path = artifact_root / "final-git-status.txt"
+        task_pack = HarnessTaskPack.model_validate_json(
+            Path(request.task_file).read_text(encoding="utf-8")
+        )
+        scopes = tuple(
+            scope
+            for scope in (runtime_context.task_scope, runtime_context.durable_scope)
+            if scope is not None
+        )
         try:
-            agent = TerminalCodingAgent(model_adapter=self._model_adapter)
-            agent_result = agent.run(
-                run_request,
-                AgentRuntimeContext(
-                    task_file=runtime_context.task_file,
-                    workspace_root=runtime_context.workspace_root,
-                    artifact_root=agent_artifact_root,
-                    task_payload=runtime_context.task_payload,
-                    test_command=runtime_context.test_command,
-                    workspace_driver=runtime_context.workspace_driver,
-                    kernel=runtime_context.kernel,
-                    task_scope=runtime_context.task_scope,
-                    durable_scope=runtime_context.durable_scope,
-                    dependency_builder=runtime_context.dependency_builder,
-                ),
+            rlm_result = run_vendored_rlm(
+                task_pack=task_pack,
+                workspace_root=prepared_workspace.workspace_root,
+                artifact_root=rlm_artifact_root,
+                model_id=self._model_id,
+                kernel=runtime_context.kernel,
+                scopes=scopes,
+                max_iterations=self._max_iterations,
+                max_depth=self._max_depth,
+                max_timeout_seconds=self._max_timeout_seconds,
+                base_url=self._base_url,
+                api_key=self._api_key,
             )
 
             test_result = None
@@ -199,20 +209,30 @@ class NativeAgentBenchmarkExecutor:
             changed_paths = prepared_workspace.driver.capture_changed_paths()
             final_git_status = prepared_workspace.driver.git_status()
             final_git_status_path.write_text(final_git_status, encoding="utf-8")
-            trace_manifest = TraceManifest(
-                session=agent_result.artifacts["session"],
-                turns_jsonl=agent_result.artifacts["turns_jsonl"],
-                tool_calls_jsonl=agent_result.artifacts["tool_calls_jsonl"],
-                compactions_jsonl=agent_result.artifacts["compactions_jsonl"],
-                tool_results_dir=agent_result.artifacts["tool_results_dir"],
-            )
+            memory_id = None
+            if (
+                test_result is not None
+                and test_result.exit_code == 0
+                and not test_result.timed_out
+            ):
+                memory_id = write_success_memory(
+                    kernel=runtime_context.kernel,
+                    dependency_builder=runtime_context.dependency_builder,
+                    workspace_root=prepared_workspace.workspace_root,
+                    task_statement=task_pack.task_statement,
+                    case_id=task_pack.case_id,
+                    scope=runtime_context.durable_scope,
+                    produced_patch_text=produced_patch,
+                    run_result=rlm_result,
+                )
+            usage_summary = dict(rlm_result.usage_summary)
             return ExecutorResult(
-                command=("native_agent",),
-                command_exit_code=0 if agent_result.status is AgentRunStatus.COMPLETED else 1,
-                command_stdout_path=None,
+                command=("rlm",),
+                command_exit_code=0,
+                command_stdout_path=rlm_result.response_path,
                 command_stderr_path=None,
                 attempt_index=request.attempt_index,
-                runtime_ms=self._runtime_ms(agent_result),
+                runtime_ms=rlm_result.runtime_ms,
                 workspace=request.workspace,
                 task_file=request.task_file,
                 test_command=request.test_command,
@@ -227,79 +247,70 @@ class NativeAgentBenchmarkExecutor:
                 ),
                 final_git_status_path=str(final_git_status_path),
                 command_events_path=str(prepared_workspace.command_events_path),
-                workspace_backend=self._workspace_backend(prepared_workspace),
-                docker_image=self._workspace_metadata(
-                    prepared_workspace,
-                    "docker_image",
+                workspace_backend=_workspace_backend(prepared_workspace),
+                docker_image=_workspace_metadata(prepared_workspace, "docker_image"),
+                docker_container_id=_workspace_metadata(
+                    prepared_workspace, "docker_container_id"
                 ),
-                docker_container_id=self._workspace_metadata(
-                    prepared_workspace,
-                    "docker_container_id",
+                docker_container_name=_workspace_metadata(
+                    prepared_workspace, "docker_container_name"
                 ),
-                docker_container_name=self._workspace_metadata(
-                    prepared_workspace,
-                    "docker_container_name",
-                ),
-                docker_network=self._docker_network(prepared_workspace),
+                docker_network=_docker_network(prepared_workspace),
                 produced_patch_path=str(produced_patch_path),
                 produced_patch_digest=produced_patch_digest,
                 produced_patch_text=produced_patch,
                 produced_changed_paths=changed_paths,
-                trace_manifest=trace_manifest,
                 agent_metrics={
-                    "turn_count": agent_result.turn_count,
-                    "tool_call_count": agent_result.tool_call_count,
-                    "tool_failure_count": agent_result.tool_failure_count,
-                    "terminal_command_count": agent_result.terminal_command_count,
-                    "command_timeout_count": agent_result.command_timeout_count,
-                    "compaction_count": agent_result.compaction_count,
-                    "test_iterations": agent_result.test_iterations,
-                    "first_passing_turn": agent_result.first_passing_turn,
-                    "memory_write_count": agent_result.memory_write_count,
-                    "memory_promotion_count": agent_result.memory_promotion_count,
-                    "guardrail_blocks": agent_result.guardrail_blocks,
+                    "rlm_total_input_tokens": usage_summary.get("total_input_tokens", 0),
+                    "rlm_total_output_tokens": usage_summary.get("total_output_tokens", 0),
+                    "rlm_total_cost": usage_summary.get("total_cost"),
                 },
-                agent_artifacts=dict(agent_result.artifacts),
+                agent_artifacts={
+                    "rlm_response_path": rlm_result.response_path,
+                    "rlm_completion_json_path": rlm_result.completion_json_path,
+                    "rlm_trajectory_dir": rlm_result.trajectory_dir or "",
+                    **(
+                        {"rlm_trajectory_json_path": rlm_result.metadata_json_path}
+                        if rlm_result.metadata_json_path is not None
+                        else {}
+                    ),
+                },
                 agent_metadata={
-                    "agent_status": agent_result.status.value,
-                    "agent_final_message": agent_result.final_message,
-                    "agent_model_id": agent_result.model_id,
-                    "agent_mode": agent_result.mode.value,
-                    **agent_result.metadata,
+                    "agent_status": "completed",
+                    "agent_final_message": rlm_result.response,
+                    "agent_model_id": self._model_id,
+                    "agent_mode": "vendored_rlm",
+                    "rlm_memory_id": memory_id,
+                    "rlm_usage_summary": usage_summary,
+                    "rlm_metadata": rlm_result.metadata,
                 },
             )
         finally:
             prepared_workspace.driver.close()
 
-    def _runtime_ms(self, result: AgentRunResult) -> float:
-        """Convert agent ISO timestamps into a runtime measurement."""
-        started = datetime.fromisoformat(result.started_at)
-        completed = datetime.fromisoformat(result.completed_at)
-        return (completed - started).total_seconds() * 1000
 
-    def _workspace_metadata(
-        self,
-        prepared_workspace: PreparedWorkspace,
-        key: str,
-    ) -> str | None:
-        return prepared_workspace.metadata.get(key)
+def _workspace_metadata(
+    prepared_workspace: PreparedWorkspace,
+    key: str,
+) -> str | None:
+    return prepared_workspace.metadata.get(key)
 
-    def _workspace_backend(
-        self,
-        prepared_workspace: PreparedWorkspace,
-    ) -> Literal["local_workspace", "docker_workspace"]:
-        return prepared_workspace.backend_name
 
-    def _docker_network(
-        self,
-        prepared_workspace: PreparedWorkspace,
-    ) -> Literal["none", "bridge"] | None:
-        value = prepared_workspace.metadata.get("docker_network")
-        return cast(Literal["none", "bridge"] | None, value)
+def _workspace_backend(
+    prepared_workspace: PreparedWorkspace,
+) -> Literal["local_workspace", "docker_workspace"]:
+    return prepared_workspace.backend_name
+
+
+def _docker_network(
+    prepared_workspace: PreparedWorkspace,
+) -> Literal["none", "bridge"] | None:
+    value = prepared_workspace.metadata.get("docker_network")
+    return cast(Literal["none", "bridge"] | None, value)
 
 
 __all__ = [
     "BenchmarkExecutor",
-    "NativeAgentBenchmarkExecutor",
+    "RLMBenchmarkExecutor",
     "SubprocessBenchmarkExecutor",
 ]

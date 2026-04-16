@@ -6,12 +6,12 @@ Start here
 - `models.py`: the public task-pack and executor/result contracts.
 - `workspace.py`: local workspace preparation and the reference `WorkspaceDriver`.
 - `workspace_docker.py`: Docker-backed workspace preparation and driver lifecycle.
-- `executors.py`: subprocess and native-agent executor implementations.
+- `executors.py`: subprocess and vendored-RLM executor implementations.
 
 Contents
 - `__init__.py`: Re-exports the public harness contracts and local reference implementations.
-- `executors.py`: Local subprocess and native-agent executor implementations.
-- `models.py`: Typed task-pack, executor request/result, and trace-manifest records.
+- `executors.py`: Local subprocess and vendored-RLM executor implementations.
+- `models.py`: Typed task-pack plus executor request/result records.
 - `scoring.py`: Changed-path and patch-similarity helpers used by coding evaluation.
 - `workspace.py`: Local workspace backend, persistent workspace driver, and command-result records.
 - `workspace_docker.py`: Docker-backed workspace backend and persistent in-container driver.
@@ -26,4 +26,4 @@ Important contract details
   - `executor-artifacts/<case-id>/attempt-01`
 - Docker-backed attempts default to `--network none` and keep one long-lived container per attempt.
 - Docker-backed attempts also default to a read-only root filesystem, `pids-limit=256`, `memory=2g`, `cpus=2`, hardened tmpfs mounts, and persisted `docker-run.stdout` / `docker-run.stderr` startup logs.
-- Native-agent shell-command tasks enforce `tool_policy="no_file_mutation"` so terminal/read/search/memory tools remain available while direct file-mutation tools are blocked.
+- Vendored-RLM runs reuse the same workspace contract and write benchmark-local artifacts under `executor-artifacts/<case-id>/attempt-01/rlm/`.

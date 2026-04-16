@@ -7,7 +7,6 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
-from vtm.agents.models import AgentMode
 from vtm.base import VTMModel
 from vtm.enums import ValidityStatus
 
@@ -15,7 +14,7 @@ BenchmarkSuite = Literal["retrieval", "drift", "coding"]
 BenchmarkMode = Literal["no_memory", "lexical", "lexical_rlm_rerank", "embedding"]
 RepoSourceKind = Literal["git", "synthetic_python_smoke", "synthetic_terminal_smoke"]
 CodingEvaluationBackend = Literal["local_subprocess", "swebench_harness"]
-CodingExecutor = Literal["external_command", "native_agent"]
+CodingExecutor = Literal["external_command", "rlm"]
 CodingExecutionStyle = Literal["mixed_patch", "shell_command"]
 WorkspaceBackendName = Literal["local_workspace", "docker_workspace"]
 DockerNetworkMode = Literal["none", "bridge"]
@@ -167,16 +166,10 @@ class BenchmarkRunConfig(VTMModel):
     attempt_count: int = Field(default=1, ge=1, le=32)
     pass_k_values: tuple[int, ...] = (1,)
     agent_model_id: str | None = None
-    agent_mode: AgentMode = AgentMode.BENCHMARK_AUTONOMOUS
-    agent_prompt_profile: str = "vtm-native-agent-v1"
     agent_max_turns: int = Field(default=12, ge=1, le=128)
-    agent_max_tool_failures: int = Field(default=8, ge=1, le=128)
     agent_max_runtime_seconds: int = Field(default=600, ge=1, le=7200)
-    agent_compaction_window: int = Field(default=10, ge=4, le=128)
     agent_command_timeout_seconds: int = Field(default=120, ge=1, le=3600)
     agent_max_output_chars: int = Field(default=20000, ge=256, le=200000)
-    agent_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
-    agent_seed_base: int | None = None
     swebench_dataset_name: str | None = None
     swebench_harness_workers: int = Field(default=4, ge=0)
     swebench_harness_cache_level: SWEbenchHarnessCacheLevel = "env"

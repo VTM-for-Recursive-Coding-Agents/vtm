@@ -39,6 +39,11 @@ dev = [
 openai = [
   "openai>=2.26,<3.0",
 ]
+rlm = [
+  "openai>=2.26,<3.0",
+  "python-dotenv>=1.0,<2.0",
+  "rich>=13.0,<14.0",
+]
 bench = [
   "datasets>=4.0,<5.0",
   "swebench>=4.1,<5.0",
@@ -51,7 +56,10 @@ vtm-bench-matrix = "vtm.benchmarks.matrix:main"
 vtm-prepare-swebench-lite = "vtm.benchmarks.prepare_swebench_lite:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/vtm"]
+packages = ["src/vtm", "src/vtm_rlm"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"vendor/rlm" = "vendor/rlm"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
@@ -67,4 +75,4 @@ select = ["E", "F", "I", "N", "UP", "B"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-packages = ["vtm"]
+packages = ["vtm", "vtm_rlm"]

@@ -126,7 +126,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--coding-executor",
-        choices=("external_command", "native_agent"),
+        choices=("external_command", "rlm"),
         default="external_command",
         help="Coding-task execution path to use.",
     )
@@ -154,71 +154,33 @@ def build_parser() -> argparse.ArgumentParser:
         "--agent-model",
         default="",
         help=(
-            "Model id for native-agent coding runs. Falls back to VTM_AGENT_MODEL "
+            "Model id for vendored-RLM coding runs. Falls back to VTM_AGENT_MODEL "
             "or VTM_LOCAL_LLM_MODEL."
-        ),
-    )
-    parser.add_argument(
-        "--agent-mode",
-        choices=("interactive_guarded", "benchmark_autonomous"),
-        default="benchmark_autonomous",
-        help="Permission mode for native-agent coding runs.",
-    )
-    parser.add_argument(
-        "--agent-prompt-profile",
-        default="vtm-native-agent-v1",
-        help=(
-            "Prompt profile for native-agent coding runs. "
-            "Use vtm-native-agent-rlm-v1 for a stronger memory-oriented prompt."
         ),
     )
     parser.add_argument(
         "--agent-max-turns",
         type=int,
         default=12,
-        help="Maximum number of turns for the native agent.",
-    )
-    parser.add_argument(
-        "--agent-max-tool-failures",
-        type=int,
-        default=8,
-        help="Maximum number of failed tool calls before the native agent stops.",
+        help="Maximum number of vendored-RLM iterations.",
     )
     parser.add_argument(
         "--agent-max-runtime-seconds",
         type=int,
         default=600,
-        help="Maximum runtime budget for the native agent.",
-    )
-    parser.add_argument(
-        "--agent-compaction-window",
-        type=int,
-        default=10,
-        help="Conversation message window for deterministic native-agent compaction.",
+        help="Maximum runtime budget for vendored RLM.",
     )
     parser.add_argument(
         "--agent-command-timeout-seconds",
         type=int,
         default=120,
-        help="Per-command timeout for native-agent workspace operations.",
+        help="Per-command timeout for workspace operations.",
     )
     parser.add_argument(
         "--agent-max-output-chars",
         type=int,
         default=20000,
-        help="Maximum characters captured from a single native-agent command.",
-    )
-    parser.add_argument(
-        "--agent-temperature",
-        type=float,
-        default=0.0,
-        help="Sampling temperature for native-agent turns.",
-    )
-    parser.add_argument(
-        "--agent-seed-base",
-        type=int,
-        default=None,
-        help="Optional base seed used to derive one sampling seed per attempt.",
+        help="Maximum characters captured from a single workspace command.",
     )
     parser.add_argument(
         "--rlm-model",
@@ -311,16 +273,10 @@ def run_matrix_from_args(args: argparse.Namespace) -> BenchmarkMatrixResult:
             attempt_count=args.attempts,
             pass_k_values=_resolve_pass_k_values(args.pass_k, attempts=args.attempts, suite=suite),
             agent_model_id=args.agent_model or None,
-            agent_mode=args.agent_mode,
-            agent_prompt_profile=args.agent_prompt_profile,
             agent_max_turns=args.agent_max_turns,
-            agent_max_tool_failures=args.agent_max_tool_failures,
             agent_max_runtime_seconds=args.agent_max_runtime_seconds,
-            agent_compaction_window=args.agent_compaction_window,
             agent_command_timeout_seconds=args.agent_command_timeout_seconds,
             agent_max_output_chars=args.agent_max_output_chars,
-            agent_temperature=args.agent_temperature,
-            agent_seed_base=args.agent_seed_base,
             swebench_dataset_name=args.swebench_dataset_name or None,
             swebench_harness_workers=args.swebench_harness_workers,
             swebench_harness_cache_level=args.swebench_cache_level,

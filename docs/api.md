@@ -2,7 +2,7 @@
 
 This document covers the stable kernel-facing API.
 
-Benchmark orchestration lives under `vtm.benchmarks`. Executor and task-pack contracts live under `vtm.harness`. The native agent runtime lives under `vtm.agents`.
+Benchmark orchestration lives under `vtm.benchmarks`. Executor and task-pack contracts live under `vtm.harness`. Vendored-RLM integration lives under `vtm_rlm`.
 
 ## Recommended root imports
 
@@ -55,7 +55,7 @@ That topology preserves atomic SQLite semantics for metadata and events because 
 
 - Import from `vtm` for stable kernel records, stores, and services.
 - Import from `vtm.harness` for task packs, workspaces, executors, and trace records.
-- Import from `vtm.agents` for the native runtime, tool policy, and prompt records.
+- Import from `vtm_rlm` for vendored-RLM execution helpers and runtime context.
 - Import from `vtm.benchmarks` for manifest models and `BenchmarkRunner`.
 - Import from `vtm.adapters` only when you need provider or environment integrations directly.
 
@@ -147,5 +147,5 @@ Optional provider-specific implementations live in `vtm.adapters`:
 ## Related packages
 
 - `vtm.harness`: typed task packs, workspace backends, executors, and trace manifests
-- `vtm.agents`: single-agent runtime, permission policies, and built-in tools
+- `vtm_rlm`: vendored-RLM bridge, runtime context, prompt shaping, and writeback helpers
 - `vtm.benchmarks`: manifests, runner, reporting, and SWE-bench preparation/integration

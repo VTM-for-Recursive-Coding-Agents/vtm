@@ -6,7 +6,7 @@ The repo now has four explicit public surfaces:
 
 - `vtm`: the stable kernel, records, stores, and retrieval/verification services
 - `vtm.harness`: typed task-pack, workspace, executor, and scoring contracts
-- `vtm.agents`: the native single-agent coding runtime
+- `vtm_rlm`: the vendored-RLM execution bridge layered on top of VTM memory
 - `vtm.benchmarks`: manifest models and the benchmark runner
 
 Compatibility re-exports still exist for some older import paths, but new code should import from the subpackage that actually owns the behavior.
@@ -20,8 +20,8 @@ Compatibility re-exports still exist for some older import paths, but new code s
 - verification, procedure validation, and deterministic consolidation
 - typed harness task packs plus local workspace and executor contracts
 - typed harness task packs plus local and Docker-backed workspace contracts
-- native single-agent terminal runtime with built-in file, patch, terminal, and memory tools
-- retrieval, drift, coding-task, native-agent, and SWE-bench Lite benchmark workflows
+- vendored upstream `rlm` as the active recursive execution engine
+- retrieval, drift, coding-task, vendored-RLM, and SWE-bench Lite benchmark workflows
 - checked-in `terminal-smoke` coding tasks for harder local terminal-style evaluation
 - checked-in `terminal-shell-smoke` coding tasks for shell-command-driven evaluation
 - repeated-attempt coding benchmarks with `attempts.jsonl`, `pass_at_k`, `resolved_at_k`, and `patch_applied_at_k`
@@ -34,7 +34,6 @@ Compatibility re-exports still exist for some older import paths, but new code s
 - JSONL export is derived from SQLite, not in the same atomic commit boundary
 - filesystem artifact writes and SQLite writes are still separate failure domains, even though failed writeback paths now record abandonment provenance and `repair_integrity()` applies the safe janitor steps
 - `CommandProcedureValidator` is still restricted local-process execution; `DockerProcedureValidator` is the only built-in sandboxed procedure-validation backend today
-- the native runtime is still single-agent and local
 - the default workspace backend is still local; Docker is the only built-in sandbox today
 - repeated attempts are only implemented for coding suites
 - remote sandbox execution and multi-agent orchestration are still future work
@@ -109,14 +108,15 @@ For a complete executable example that stages memory, captures artifacts, retrie
 - Navigating the repository: start with [docs/codebase-guide.md](docs/codebase-guide.md).
 - Looking for a per-file inventory: use [docs/code-reference.md](docs/code-reference.md).
 - Running coding tasks in isolated workspaces: read [docs/harness.md](docs/harness.md) and [`src/vtm/harness/README.md`](src/vtm/harness/README.md).
-- Using the native agent runtime: start in [`src/vtm/agents/README.md`](src/vtm/agents/README.md).
+- Using the vendored-RLM runtime bridge: start in [`src/vtm_rlm/__init__.py`](src/vtm_rlm/__init__.py).
 - Running evaluations: start in [docs/benchmark-recipes.md](docs/benchmark-recipes.md) and [`src/vtm/benchmarks/README.md`](src/vtm/benchmarks/README.md).
 
 ## Layout
 
-- `src/vtm/`: kernel package plus harness, agents, benchmarks, adapters, services, and stores
+- `src/vtm/`: kernel package plus harness, benchmarks, adapters, services, and stores
+- `src/vtm_rlm/`: vendored-RLM execution bridge and memory writeback helpers
 - `docs/`: source-of-truth architecture, API, harness, audit, recipes, and ADR docs
-- `tests/`: regression coverage for kernel, harness, agents, benchmarks, migrations, and docs parity
+- `tests/`: regression coverage for kernel, harness, vendored-RLM integration, benchmarks, migrations, and docs parity
 - `benchmarks/manifests/`: checked-in synthetic and pinned OSS manifests
 
 ## Development

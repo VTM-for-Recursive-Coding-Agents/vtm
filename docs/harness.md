@@ -19,8 +19,6 @@ It owns the contracts that should stay stable even when benchmark orchestration,
   - typed execution result and artifact summary
   - includes the normalized `attempt_index`
   - normalizes `workspace_backend` plus optional Docker sandbox metadata
-- `TraceManifest`
-  - stable pointer set for native-agent trace files
 
 ## Workspace contracts
 
@@ -59,8 +57,8 @@ Docker-backed attempts run one long-lived container per attempt with:
 
 - `SubprocessBenchmarkExecutor`
   - runs a caller-provided external command against a prepared workspace
-- `NativeAgentBenchmarkExecutor`
-  - runs `TerminalCodingAgent` against the same workspace contract
+- `RLMBenchmarkExecutor`
+  - runs the vendored upstream `rlm` runtime against the same workspace contract
 
 Both executors currently produce the same case-local artifact backbone:
 
@@ -70,13 +68,12 @@ Both executors currently produce the same case-local artifact backbone:
 - `final-verification.stdout`
 - `final-verification.stderr`
 
-Native-agent runs also populate a `TraceManifest` over:
+Vendored-RLM runs also populate benchmark-local artifacts under `rlm/`:
 
-- `session.json`
-- `turns.jsonl`
-- `tool_calls.jsonl`
-- `compactions.jsonl`
-- `tool-results/`
+- `response.txt`
+- `completion.json`
+- optional `trajectory.json`
+- `trajectory/`
 
 When coding benchmarks run repeated attempts, the layout is stable:
 
@@ -92,16 +89,6 @@ External executor templates may reference:
 - `{workspace}`
 - `{attempt}`
 - `{artifact_root}`
-
-Native-agent shell-command tasks use the same executor surface but switch the
-runtime to `tool_policy="no_file_mutation"`. That keeps:
-
-- `terminal`
-- `read`
-- `search`
-- memory tools
-
-and excludes direct file-mutation tools such as `apply_patch`.
 
 ## Task-pack contract
 
@@ -126,12 +113,11 @@ the on-disk task-pack file.
 ## Ownership boundary
 
 - `vtm.harness` owns typed execution contracts and local reference implementations.
-- `vtm.agents` owns the native agent loop and tool semantics.
+- `vtm_rlm` owns the vendored-RLM execution bridge and memory writeback behavior.
 - `vtm.benchmarks` owns suite selection, reporting, and manifest-driven orchestration.
 
 Compatibility shims remain at:
 
-- `vtm.agents.workspace`
 - `vtm.benchmarks.executor`
 
 New code should import from `vtm.harness`.

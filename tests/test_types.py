@@ -8,17 +8,6 @@ import pytest
 from pydantic import ValidationError
 
 from vtm.adapters.rlm import RLMRankedCandidate, RLMRankRequest, RLMRankResponse
-from vtm.agents import (
-    AgentMode,
-    AgentRunRequest,
-    AgentRunResult,
-    AgentRunStatus,
-    AgentSessionRecord,
-    AgentToolCall,
-    AgentToolSpec,
-    AgentTurnRecord,
-    CompactionRecord,
-)
 from vtm.artifacts import ArtifactRecord
 from vtm.benchmarks import (
     BenchmarkManifest,
@@ -216,56 +205,6 @@ def test_core_models_round_trip(
                     task_statement="Fix the synthetic task.",
                 ),
             ),
-        ),
-        AgentRunRequest(
-            session_id="agent_session",
-            case_id="task",
-            task_file=".benchmarks/task.json",
-            workspace=".benchmarks/workspace",
-            model_id="fake-agent",
-            tool_policy="no_file_mutation",
-        ),
-        AgentRunResult(
-            session_id="agent_session",
-            status=AgentRunStatus.COMPLETED,
-            model_id="fake-agent",
-            mode=AgentMode.BENCHMARK_AUTONOMOUS,
-            started_at="2026-04-05T00:00:00+00:00",
-            completed_at="2026-04-05T00:00:01+00:00",
-        ),
-        AgentSessionRecord(
-            session_id="agent_session",
-            case_id="task",
-            model_id="fake-agent",
-            mode=AgentMode.BENCHMARK_AUTONOMOUS,
-            workspace=".benchmarks/workspace",
-            task_file=".benchmarks/task.json",
-            prompt_profile="vtm-native-agent-v1",
-            tool_registry=("read", "terminal"),
-        ),
-        AgentTurnRecord(
-            turn_index=1,
-            started_at="2026-04-05T00:00:00+00:00",
-            completed_at="2026-04-05T00:00:01+00:00",
-            prompt_chars=42,
-            assistant_message="Inspecting workspace",
-            tool_call_count=1,
-            status="completed",
-        ),
-        AgentToolSpec(
-            name="terminal",
-            description="Run a command",
-            input_schema={"type": "object"},
-        ),
-        AgentToolCall(tool_name="terminal", arguments={"command": "pwd"}),
-        CompactionRecord(
-            compaction_id="compact-1",
-            turn_index=1,
-            created_at="2026-04-05T00:00:00+00:00",
-            trigger_message_count=8,
-            dropped_message_count=4,
-            kept_message_count=4,
-            summary="compacted prior context",
         ),
         BenchmarkRunConfig(
             manifest_path="benchmarks/manifests/synthetic-smoke.json",

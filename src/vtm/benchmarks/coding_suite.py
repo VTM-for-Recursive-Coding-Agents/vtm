@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from vtm.adapters.agent_model import AgentModelAdapter
-from vtm.agents import AgentRunRequest, AgentRuntimeContext, AgentToolPolicy
 from vtm.benchmarks.kernel_factory import BenchmarkKernelFactory
 from vtm.benchmarks.models import (
     BenchmarkAttemptResult,
@@ -25,7 +24,10 @@ from vtm.benchmarks.repo_materialization import RepoWorkspaceManager
 from vtm.benchmarks.swebench_harness import SWEbenchHarnessRunner
 from vtm.benchmarks.symbol_index import SymbolIndexer
 from vtm.enums import EvidenceBudget, EvidenceKind, ScopeKind
-from vtm.harness.executors import NativeAgentBenchmarkExecutor, SubprocessBenchmarkExecutor
+from vtm.harness.executors import (
+    RLMBenchmarkExecutor,
+    SubprocessBenchmarkExecutor,
+)
 from vtm.harness.models import ExecutorRequest, HarnessTaskPack, TaskMemoryContextItem
 from vtm.harness.scoring import changed_path_metrics, patch_similarity
 from vtm.harness.workspace import (
@@ -43,6 +45,7 @@ from vtm.stores import (
     SqliteEmbeddingIndexStore,
     SqliteMetadataStore,
 )
+from vtm_rlm.context import RLMRuntimeContext
 
 
 @dataclass(frozen=True)
@@ -68,7 +71,6 @@ def run_coding_suite(
     repo_manager: RepoWorkspaceManager,
     symbol_indexer: SymbolIndexer,
     kernel_factory: BenchmarkKernelFactory,
-    agent_model_adapter: AgentModelAdapter | None,
     require_pair: Callable[[RepoSpec, str], CommitPair],
     swebench_harness_runner: Any | None = None,
 ) -> tuple[list[CodingTaskCase], list[BenchmarkCaseResult], list[BenchmarkAttemptResult]]:
@@ -118,7 +120,6 @@ def run_coding_suite(
                 config=config,
                 workspace_backend=workspace_backend,
                 kernel_factory=kernel_factory,
-                agent_model_adapter=agent_model_adapter,
                 attempt_index=attempt_index,
             )
             for attempt_index in range(1, config.attempt_count + 1)
@@ -293,7 +294,6 @@ def evaluate_coding_attempt(
     config: BenchmarkRunConfig,
     workspace_backend: WorkspaceBackend,
     kernel_factory: BenchmarkKernelFactory,
-    agent_model_adapter: AgentModelAdapter | None,
     attempt_index: int,
 ) -> BenchmarkAttemptResult:
     """Execute one concrete attempt for a coding task."""
@@ -327,11 +327,7 @@ def evaluate_coding_attempt(
     durable_scope: VisibilityScope | None = None
 
     try:
-        if config.coding_executor == "native_agent":
-            if agent_model_adapter is None:
-                raise ValueError(
-                    "native_agent coding executor requires an agent_model_adapter"
-                )
+        if config.coding_executor == "rlm":
             prepared_workspace = workspace_backend.prepare_workspace(
                 case_id=task.case_id,
                 attempt_index=attempt_index,
@@ -341,11 +337,6 @@ def evaluate_coding_attempt(
                 mode=config.mode,
                 command_timeout_seconds=config.agent_command_timeout_seconds,
                 max_output_chars=config.agent_max_output_chars,
-            )
-            task_payload = attempt_task_payload(
-                prepared_task.task_pack,
-                attempt_index=attempt_index,
-                artifact_root=prepared_workspace.artifact_root,
             )
             executor_request = ExecutorRequest(
                 case_id=task.case_id,
@@ -368,43 +359,37 @@ def evaluate_coding_attempt(
                         output_dir=output_dir,
                     )
                 )
-            outcome = NativeAgentBenchmarkExecutor(model_adapter=agent_model_adapter).execute(
+            runtime_context = RLMRuntimeContext(
+                kernel=kernel,
+                task_scope=task_scope if kernel is not None else None,
+                durable_scope=durable_scope,
+                dependency_builder=(
+                    kernel_factory.dependency_builder() if kernel is not None else None
+                ),
+            )
+            if not config.agent_model_id:
+                raise ValueError(
+                    "rlm coding executor requires --agent-model, VTM_AGENT_MODEL, "
+                    "or VTM_LOCAL_LLM_MODEL"
+                )
+            outcome = RLMBenchmarkExecutor(
+                model_id=config.agent_model_id,
+                base_url=(
+                    os.getenv("VTM_AGENT_BASE_URL")
+                    or os.getenv("VTM_LOCAL_LLM_BASE_URL")
+                    or None
+                ),
+                api_key=(
+                    os.getenv("VTM_AGENT_API_KEY")
+                    or os.getenv("VTM_LOCAL_LLM_API_KEY")
+                    or None
+                ),
+                max_iterations=config.agent_max_turns,
+                max_timeout_seconds=config.agent_max_runtime_seconds,
+            ).execute(
                 request=executor_request,
                 prepared_workspace=prepared_workspace,
-                run_request=AgentRunRequest(
-                    session_id=session_id,
-                    case_id=task.case_id,
-                    task_file=str(prepared_task.task_file),
-                    workspace=str(prepared_workspace.workspace_root),
-                    model_id=config.agent_model_id or agent_model_adapter.model_id,
-                    attempt_index=attempt_index,
-                    mode=config.agent_mode,
-                    prompt_profile=config.agent_prompt_profile,
-                    tool_policy=tool_policy_for_task(task),
-                    task_payload=task_payload,
-                    max_turns=config.agent_max_turns,
-                    max_tool_failures=config.agent_max_tool_failures,
-                    max_runtime_seconds=config.agent_max_runtime_seconds,
-                    compaction_window=config.agent_compaction_window,
-                    command_timeout_seconds=config.agent_command_timeout_seconds,
-                    max_command_output_chars=config.agent_max_output_chars,
-                    sampling_temperature=config.agent_temperature,
-                    sampling_seed=attempt_seed(config, attempt_index),
-                ),
-                runtime_context=AgentRuntimeContext(
-                    task_file=prepared_task.task_file,
-                    workspace_root=prepared_workspace.workspace_root,
-                    artifact_root=prepared_workspace.artifact_root / "agent",
-                    task_payload=task_payload,
-                    test_command=task.test_command,
-                    workspace_driver=prepared_workspace.driver,
-                    kernel=kernel,
-                    task_scope=task_scope if kernel is not None else None,
-                    durable_scope=durable_scope,
-                    dependency_builder=(
-                        kernel_factory.dependency_builder() if kernel is not None else None
-                    ),
-                ),
+                runtime_context=runtime_context,
             )
             executed = True
         elif config.executor_command:
@@ -504,11 +489,6 @@ def evaluate_coding_attempt(
                 "produced_patch_digest": outcome.produced_patch_digest,
                 "produced_changed_paths": list(outcome.produced_changed_paths),
                 "produced_patch_text": outcome.produced_patch_text,
-                "trace_manifest": (
-                    outcome.trace_manifest.model_dump(mode="json")
-                    if outcome.trace_manifest is not None
-                    else None
-                ),
                 "docker_image": outcome.docker_image,
                 "docker_container_id": outcome.docker_container_id,
                 "docker_container_name": outcome.docker_container_name,
@@ -739,21 +719,6 @@ def aggregate_attempt_results(
         metrics=aggregate_metrics,
         metadata=aggregate_metadata,
     )
-
-
-def attempt_task_payload(
-    task_pack: HarnessTaskPack,
-    *,
-    attempt_index: int,
-    artifact_root: Path,
-) -> dict[str, Any]:
-    """Augment the canonical task-pack payload with attempt-local metadata."""
-    payload = task_pack.model_dump(mode="json")
-    payload["attempt_index"] = attempt_index
-    payload["artifact_root"] = str(artifact_root)
-    return payload
-
-
 def build_workspace_backend(config: BenchmarkRunConfig) -> WorkspaceBackend:
     """Construct the configured workspace backend for coding execution."""
     if config.workspace_backend == "docker_workspace":
@@ -763,20 +728,6 @@ def build_workspace_backend(config: BenchmarkRunConfig) -> WorkspaceBackend:
             docker_network=config.docker_network,
         )
     return LocalWorkspaceBackend()
-
-
-def tool_policy_for_task(task: CodingTaskCase) -> AgentToolPolicy:
-    """Return the native-agent tool policy for the task's execution style."""
-    if task.execution_style == "shell_command":
-        return "no_file_mutation"
-    return "full"
-
-
-def attempt_seed(config: BenchmarkRunConfig, attempt_index: int) -> int | None:
-    """Derive a stable per-attempt seed when configured."""
-    if config.agent_seed_base is None:
-        return None
-    return config.agent_seed_base + (attempt_index - 1)
 
 
 def harness_attempt_output_dir(

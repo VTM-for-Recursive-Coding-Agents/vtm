@@ -9,7 +9,7 @@ from textwrap import dedent
 from vtm.benchmarks import matrix, run
 
 
-def test_run_cli_parser_accepts_agent_prompt_profile() -> None:
+def test_run_cli_parser_accepts_rlm_coding_executor() -> None:
     args = run.build_parser().parse_args(
         [
             "--manifest",
@@ -18,25 +18,25 @@ def test_run_cli_parser_accepts_agent_prompt_profile() -> None:
             "coding",
             "--output",
             "out",
-            "--agent-prompt-profile",
-            "vtm-native-agent-rlm-v1",
+            "--coding-executor",
+            "rlm",
         ]
     )
 
-    assert args.agent_prompt_profile == "vtm-native-agent-rlm-v1"
+    assert args.coding_executor == "rlm"
 
 
-def test_matrix_cli_parser_accepts_agent_prompt_profile() -> None:
+def test_matrix_cli_parser_accepts_rlm_coding_executor() -> None:
     args = matrix.build_parser().parse_args(
         [
             "--output",
             "out",
-            "--agent-prompt-profile",
-            "vtm-native-agent-rlm-v1",
+            "--coding-executor",
+            "rlm",
         ]
     )
 
-    assert args.agent_prompt_profile == "vtm-native-agent-rlm-v1"
+    assert args.coding_executor == "rlm"
 
 
 def test_benchmark_cli_runs_synthetic_retrieval(tmp_path: Path) -> None:
