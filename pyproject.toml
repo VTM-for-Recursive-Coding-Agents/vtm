@@ -1,70 +1,83 @@
-[build-system]
-requires = ["hatchling>=1.27.0"]
-build-backend = "hatchling.build"
-
 [project]
-name = "vtm"
-version = "0.1.0"
-description = "Verified Transactional Memory kernel for coding agents in mutable repositories."
-readme = "README.md"
-requires-python = ">=3.12,<3.13"
-license = { text = "MIT" }
-authors = [{ name = "Josh Schell", email = "98379773+JoshuaSchell@users.noreply.github.com" }]
-maintainers = [{ name = "Josh Schell", email = "98379773+JoshuaSchell@users.noreply.github.com" }]
-keywords = ["agents", "benchmarks", "memory", "retrieval", "verification"]
-classifiers = [
-  "Development Status :: 3 - Alpha",
-  "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
-  "Programming Language :: Python :: 3.12",
-  "Topic :: Software Development :: Libraries :: Python Modules",
+name = "rlms"
+authors = [
+    {name = "Alex Zhang", email = "altzhang@mit.edu"},
 ]
+version = "0.1.1"
+description = "Recursive Language Models."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
 dependencies = [
-  "pydantic>=2.12,<3.0",
-  "tree-sitter>=0.25,<0.26",
-  "tree-sitter-python>=0.25,<0.26",
+    "anthropic>=0.75.0",
+    "google-genai>=1.56.0",
+    "openai>=2.14.0",
+    "portkey-ai>=2.1.0",
+    "pytest>=9.0.2",
+    "python-dotenv>=1.2.1",
+    "requests>=2.32.5",
+    "rich>=13.0.0",
 ]
 
 [project.urls]
-Homepage = "https://github.com/VTM-for-Recursive-Coding-Agents/vtm"
-Repository = "https://github.com/VTM-for-Recursive-Coding-Agents/vtm"
-Issues = "https://github.com/VTM-for-Recursive-Coding-Agents/vtm/issues"
+Homepage = "https://github.com/alexzhang13/rlm"
+Repository = "https://github.com/alexzhang13/rlm"
+Issues = "https://github.com/alexzhang13/rlm/issues"
 
 [project.optional-dependencies]
+modal = ["modal>=0.73.0", "dill>=0.3.7"]
+e2b = ["e2b-code-interpreter>=0.0.11", "dill>=0.3.7"]
+daytona = ["daytona>=0.128.1", "dill>=0.3.7"]
+prime = ["prime-sandboxes>=0.2.0", "dill>=0.3.7"]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["rlm", "rlm.*"]
+
+[dependency-groups]
 dev = [
-  "mypy>=1.14",
-  "pytest>=8.3",
-  "ruff>=0.8",
+    "pre-commit>=4.5.1",
+    "ruff>=0.14.10",
+    "ty>=0.0.7",
 ]
-openai = [
-  "openai>=2.26,<3.0",
+test = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
 ]
-bench = [
-  "datasets>=4.0,<5.0",
-  "swebench>=4.1,<5.0",
-]
-
-[project.scripts]
-vtm-bench = "vtm.benchmarks.run:main"
-vtm-bench-compare = "vtm.benchmarks.compare:main"
-vtm-bench-matrix = "vtm.benchmarks.matrix:main"
-vtm-prepare-swebench-lite = "vtm.benchmarks.prepare_swebench_lite:main"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/vtm"]
-
-[tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "UP", "B"]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+]
 
-[tool.mypy]
-python_version = "3.12"
-strict = true
-packages = ["vtm"]
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

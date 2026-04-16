@@ -1,178 +1,163 @@
-# VTM
 
-VTM is a typed memory kernel for coding agents that operate inside mutable repositories.
+---
 
-The repo now has four explicit public surfaces:
+<h1 align="center" style="font-size:2.8em">
+<span>Recursive Language Models (<span style="color:orange">RLM</span>s)</span>
+</h1>
 
-- `vtm`: the stable kernel, records, stores, and retrieval/verification services
-- `vtm.harness`: typed task-pack, workspace, executor, and scoring contracts
-- `vtm.agents`: the native single-agent coding runtime
-- `vtm.benchmarks`: manifest models and the benchmark runner
+<p align="center" style="font-size:1.3em">
+  <a href="https://arxiv.org/abs/2512.24601">Full Paper</a> •
+  <a href="https://alexzhang13.github.io/blog/2025/rlm/">Blogpost</a> •
+  <a href="https://alexzhang13.github.io/rlm/">Documentation</a> •
+  <a href="https://github.com/alexzhang13/rlm-minimal">RLM Minimal</a>
+</p>
 
-Compatibility re-exports still exist for some older import paths, but new code should import from the subpackage that actually owns the behavior.
+<p align="center">
+  <a href="https://github.com/alexzhang13/rlm/actions/workflows/style.yml">
+    <img src="https://github.com/alexzhang13/rlm/actions/workflows/style.yml/badge.svg" alt="Style" />
+  </a>
+  <a href="https://github.com/alexzhang13/rlm/actions/workflows/test.yml">
+    <img src="https://github.com/alexzhang13/rlm/actions/workflows/test.yml/badge.svg" alt="Test" />
+  </a>
+</p>
 
-## Stable Today
+<p align="center">
+  <a href="https://arxiv.org/abs/2512.24601">
+    <img src="media/paper_preview.png" alt="Paper Preview" width="300"/>
+  </a>
+</p>
 
-- frozen Pydantic v2 records for the durable memory and storage layer
-- SQLite metadata/events, cache storage, and derived embedding index storage
-- filesystem artifact capture with prepared/committed states and integrity audits
-- deterministic lexical retrieval, derived embedding retrieval, and optional RLM reranking
-- verification, procedure validation, and deterministic consolidation
-- typed harness task packs plus local workspace and executor contracts
-- typed harness task packs plus local and Docker-backed workspace contracts
-- native single-agent terminal runtime with built-in file, patch, terminal, and memory tools
-- retrieval, drift, coding-task, native-agent, and SWE-bench Lite benchmark workflows
-- checked-in `terminal-smoke` coding tasks for harder local terminal-style evaluation
-- checked-in `terminal-shell-smoke` coding tasks for shell-command-driven evaluation
-- repeated-attempt coding benchmarks with `attempts.jsonl`, `pass_at_k`, `resolved_at_k`, and `patch_applied_at_k`
-- Docker-sandboxed coding attempts with per-attempt container metadata and backend breakdowns
-- offline benchmark comparison via `vtm-bench-compare`, including paired case deltas and coding `pass_at_k` comparisons
-- preset-driven benchmark matrices via `vtm-bench-matrix`
+## Overview
+Recursive Language Models (RLMs) are a task-agnostic inference paradigm for language models (LMs) to handle near-infinite length contexts by enabling the LM to *programmatically* examine, decompose, and recursively call itself over its input. RLMs replace the canonical `llm.completion(prompt, model)` call with a `rlm.completion(prompt, model)` call. RLMs offload the context as a variable in a REPL environment that the LM can interact with and launch sub-LM calls inside of.
 
-## Intentionally Limited
+This repository provides an extensible inference engine for using RLMs around standard API-based and local LLMs. The initial experiments and idea were proposed in a [blogpost](https://alexzhang13.github.io/blog/2025/rlm/) in 2025, with expanded results in an [arXiv preprint](https://arxiv.org/abs/2512.24601).
 
-- JSONL export is derived from SQLite, not in the same atomic commit boundary
-- filesystem artifact writes and SQLite writes are still separate failure domains, even though failed writeback paths now record abandonment provenance and `repair_integrity()` applies the safe janitor steps
-- `CommandProcedureValidator` is still restricted local-process execution; `DockerProcedureValidator` is the only built-in sandboxed procedure-validation backend today
-- the native runtime is still single-agent and local
-- the default workspace backend is still local; Docker is the only built-in sandbox today
-- repeated attempts are only implemented for coding suites
-- remote sandbox execution and multi-agent orchestration are still future work
+> [!NOTE]
+> This repository contains inference code for RLMs with support for various sandbox environments. Open-source contributions are welcome. This repository is maintained by the authors of the paper from the MIT OASYS lab.
 
-## Import Boundaries
+## Quick Setup
+You can try out RLMs quickly by installing from PyPi:
+```bash
+pip install rlms
+```
 
-Kernel-first imports:
+The default RLM client uses a REPL environment that runs on the host process through Python `exec` calls. It uses the same virtual environment as the host process (i.e. it will have access to the same dependencies), but with some limitations in its available global modules. As an example, we can call RLM completions using GPT-5-nano:
+```python
+from rlm import RLM
+
+rlm = RLM(
+    backend="openai",
+    backend_kwargs={"model_name": "gpt-5-nano"},
+    verbose=True,  # For printing to console with rich, disabled by default.
+)
+
+print(rlm.completion("Print me the first 100 powers of two, each on a newline.").response)
+```
+
+<details>
+<summary><b>Manual Setup</b></summary>
+
+Set up the dependencies with `uv` (or your virtual environment of choice):
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv init && uv venv --python 3.12  # change version as needed
+uv pip install -e .
+```
+
+This project includes a `Makefile` to simplify common tasks.
+
+- `make install`: Install base dependencies.
+- `make check`: Run linter, formatter, and tests.
+
+To run a quick test, the following will run an RLM query with the OpenAI client using your environment variable `OPENAI_API_KEY` (feel free to change this). This will generate console output as well as a log which you can use with the visualizer to explore the trajectories.
+```bash
+make quickstart
+```
+
+</details>
+
+## REPL Environments
+We support two types of REPL environments -- isolated, and non-isolated. Non-isolated environments (default) run code execution on the same machine as the RLM (e.g. through `exec`), which is pretty reasonable for some local low-risk tasks, like simple benchmarking, but can be problematic if the prompts or tool calls can interact with malicious users. Fully isolated environments use cloud-based sandboxes (e.g. Prime Sandboxes, [Modal Sandboxes](https://modal.com/docs/guide/sandboxes)) to run code generated by the RLM, ensuring complete isolation from the host process. Environments can be added, but we natively support the following: `local` (default), `docker`, `modal`, `prime`, `daytona`, `e2b`.
 
 ```python
-from vtm import (
-    FilesystemArtifactStore,
-    LexicalRetriever,
-    SqliteMetadataStore,
-    TransactionalMemoryKernel,
+rlm = RLM(
+    environment="...", # "local", "docker", "modal", "prime", "daytona", "e2b"
+    environment_kwargs={...},
 )
 ```
 
-Harness imports:
+### Local Environments
+The default `local` environment `LocalREPL` runs in the same process as the RLM itself, with specified global and local namespaces for minimal security. Using this REPL is generally safe, but should not be used for production settings. It also shares the same virtual environment (e.g. Conda or uv) as the host process.
 
+#### Docker <img src="https://github.com/docker.png" alt="Docker" height="20" style="vertical-align: middle;"/> (*requires [Docker installed](https://docs.docker.com/desktop/setup/install/)*)
+We also support a Docker-based environment called `DockerREPL` that launches the REPL environment as a Docker image. By default, we use the `python:3.11-slim` image, but the user can specify custom images as well.
+
+### Isolated Environments
+We support several different REPL environments that run on separate, cloud-based machines. Whenever a recursive sub-call is made in these instances, it is requested from the host process.
+
+#### Modal Sandboxes <img src="https://github.com/modal-labs.png" alt="Modal" height="20" style="vertical-align: middle;"/>
+To use [Modal Sandboxes](https://modal.com/docs/guide/sandboxes) as the REPL environment, you need to install and authenticate your Modal account.
+```bash
+uv add modal  # add modal library
+modal setup   # authenticate account
+```
+
+#### Prime Intellect Sandboxes <img src="https://github.com/PrimeIntellect-ai.png" alt="Prime Intellect" height="20" style="vertical-align: middle;"/>
+> [!NOTE]
+> **Prime Intellect Sandboxes** are currently a beta feature. See the [documentation](https://docs.primeintellect.ai/sandboxes/overview) for more information. We noticed slow runtimes when using these sandboxes, which is currently an open issue.
+
+
+To use [Prime Sandboxes](https://docs.primeintellect.ai/sandboxes/sdk), install the SDK and set your API key:
+```bash
+uv pip install -e ".[prime]"
+export PRIME_API_KEY=...
+```
+
+
+### Model Providers
+We currently support most major clients (OpenAI, Anthropic), as well as the router platforms (OpenRouter, Portkey). For local models, we recommend using vLLM (which interfaces with the [OpenAI client](https://github.com/alexzhang13/rlm/blob/main/rlm/clients/openai.py)). To view or add support for more clients, start by looking at [`rlm/clients/`](https://github.com/alexzhang13/rlm/tree/main/rlm/clients).
+
+## Relevant Reading
+* **[Dec '25]** [Recursive Language Models arXiv](https://arxiv.org/abs/2512.24601)
+* **[Oct '25]** [Recursive Language Models Blogpost](https://alexzhang13.github.io/blog/2025/rlm/)
+
+If you use this code or repository in your research, please cite:
+
+```bibtex
+@misc{zhang2026recursivelanguagemodels,
+      title={Recursive Language Models},
+      author={Alex L. Zhang and Tim Kraska and Omar Khattab},
+      year={2026},
+      eprint={2512.24601},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2512.24601},
+}
+```
+
+## Optional: Trajectory metadata and logging
+`RLMChatCompletion` has an optional `metadata` field (default `None`) that holds the full trajectory (run config + all iterations and sub-calls) so you can reconstruct the run. Pass an `RLMLogger` to capture it:
+
+- **In-memory only** (trajectory on `completion.metadata`): `logger=RLMLogger()` (no `log_dir`).
+- **Also save to disk** (JSONL for the visualizer): `logger=RLMLogger(log_dir="./logs")`.
+
+## Optional Debugging: Visualizing RLM Trajectories
+We provide a simple visualizer to inspect code, sub-LM, and root-LM calls. Use `RLMLogger(log_dir="./logs")` so each completion writes a `.jsonl` file:
 ```python
-from vtm.harness import DockerWorkspaceBackend, HarnessTaskPack, LocalWorkspaceBackend
+from rlm.logger import RLMLogger
+from rlm import RLM
+
+logger = RLMLogger(log_dir="./logs")
+rlm = RLM(..., logger=logger)
 ```
 
-Benchmark imports:
-
-```python
-from vtm.benchmarks import BenchmarkRunner
+To run the visualizer locally, we use Node.js and shadcn/ui:
+```
+cd visualizer/
+npm run dev        # default localhost:3001
 ```
 
-Benchmark credibility now has two checked-in tracks:
-
-- `benchmarks/manifests/terminal-smoke.json`: patch-oriented terminal tasks with repeated attempts
-- `benchmarks/manifests/terminal-shell-smoke.json`: shell-command tasks intended to be solved from the terminal, optionally under Docker isolation
-
-## Quick Start
-
-Minimal kernel wiring:
-
-```python
-from pathlib import Path
-
-from vtm import LexicalRetriever, TransactionalMemoryKernel
-from vtm.adapters import PythonAstSyntaxAdapter, PythonTreeSitterSyntaxAdapter
-from vtm.services import BasicVerifier
-from vtm.stores import FilesystemArtifactStore, SqliteCacheStore, SqliteMetadataStore
-
-repo_root = Path(".").resolve()
-metadata = SqliteMetadataStore(
-    repo_root / ".vtm" / "metadata.sqlite",
-    event_log_path=repo_root / ".vtm" / "events.jsonl",
-)
-artifacts = FilesystemArtifactStore(repo_root / ".vtm" / "artifacts")
-cache = SqliteCacheStore(repo_root / ".vtm" / "cache.sqlite", event_store=metadata)
-anchor_adapter = PythonTreeSitterSyntaxAdapter(fallback=PythonAstSyntaxAdapter())
-
-kernel = TransactionalMemoryKernel(
-    metadata_store=metadata,
-    event_store=metadata,
-    artifact_store=artifacts,
-    cache_store=cache,
-    verifier=BasicVerifier(relocator=anchor_adapter),
-    retriever=LexicalRetriever(metadata),
-    anchor_adapter=anchor_adapter,
-)
-```
-
-For a complete executable example that stages memory, captures artifacts, retrieves, and verifies drift, see [docs/runtime-example.md](docs/runtime-example.md).
-
-## Where To Start
-
-- Building against the kernel: start with [docs/api.md](docs/api.md) and [`src/vtm/__init__.py`](src/vtm/__init__.py).
-- Navigating the repository: start with [docs/codebase-guide.md](docs/codebase-guide.md).
-- Looking for a per-file inventory: use [docs/code-reference.md](docs/code-reference.md).
-- Running coding tasks in isolated workspaces: read [docs/harness.md](docs/harness.md) and [`src/vtm/harness/README.md`](src/vtm/harness/README.md).
-- Using the native agent runtime: start in [`src/vtm/agents/README.md`](src/vtm/agents/README.md).
-- Running evaluations: start in [docs/benchmark-recipes.md](docs/benchmark-recipes.md) and [`src/vtm/benchmarks/README.md`](src/vtm/benchmarks/README.md).
-
-## Layout
-
-- `src/vtm/`: kernel package plus harness, agents, benchmarks, adapters, services, and stores
-- `docs/`: source-of-truth architecture, API, harness, audit, recipes, and ADR docs
-- `tests/`: regression coverage for kernel, harness, agents, benchmarks, migrations, and docs parity
-- `benchmarks/manifests/`: checked-in synthetic and pinned OSS manifests
-
-## Development
-
-Target runtime: Python 3.12.
-
-```bash
-uv sync --dev --all-extras
-uv run pytest -q
-uv run python -m ruff check .
-uv run python -m mypy src
-```
-
-Installed CLI entrypoints:
-
-```bash
-vtm-bench --help
-vtm-bench-compare --help
-vtm-bench-matrix --help
-vtm-prepare-swebench-lite --help
-```
-
-Nix workflow:
-
-```bash
-nix develop
-uv sync --dev --all-extras
-```
-
-Package and app entrypoints through the flake:
-
-```bash
-nix build .#vtm
-nix run .#vtm-bench -- --help
-nix shell .#vtm
-```
-
-## Docs
-
-- [docs/architecture.md](docs/architecture.md): system boundary and data-flow reference
-- [docs/api.md](docs/api.md): kernel API and stable root imports
-- [docs/codebase-guide.md](docs/codebase-guide.md): maintainer-oriented repository map and ownership guide
-- [docs/code-reference.md](docs/code-reference.md): generated inventory of every Python file and top-level symbols
-- [docs/harness.md](docs/harness.md): task packs, executors, workspace backends, and traces
-- [docs/current-state-audit.md](docs/current-state-audit.md): guarantees, gaps, and explicit limits
-- [docs/benchmark-recipes.md](docs/benchmark-recipes.md): repeatable benchmark commands
-- [docs/runtime-example.md](docs/runtime-example.md): executable end-to-end kernel example
-- [docs/decisions/README.md](docs/decisions/README.md): ADR index
-
-## Documentation Policy
-
-Documentation moves in lockstep with behavior changes.
-
-If a change affects a public contract, file layout, artifact layout, CLI surface, or durable example, update:
-
-- `README.md` if the change is user-facing
-- the relevant source-of-truth doc in `docs/`
-- the affected package README
-- the relevant ADR if the boundary or policy is durable
+You'll have the option to select saved `.jsonl` files 
+<p align="center">
+  <img src="media/visualizer.png" alt="RLM Visualizer Example" width="800"/>
+</p>
