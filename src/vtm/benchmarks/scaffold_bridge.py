@@ -134,7 +134,10 @@ class ScaffoldBridge:
                 "Inspect the expected changed paths and failing tests first.",
                 "Use retrieved memory as hints, but verify against repository files.",
                 "Patch the smallest set of files necessary.",
-                "Run targeted verification for fail_to_pass tests, then spot-check pass_to_pass tests.",
+                (
+                    "Run targeted verification for fail_to_pass tests, then "
+                    "spot-check pass_to_pass tests."
+                ),
             ],
         }
 
@@ -142,6 +145,7 @@ class ScaffoldBridge:
         """Render a markdown brief from a scaffold bundle."""
         task = dict(bundle.get("task", {}))
         targets = dict(bundle.get("targets", {}))
+        failing_tests = targets.get("fail_to_pass_tests") or targets.get("failing_tests", [])
         lines = [
             "# VTM Scaffold Brief",
             "",
@@ -154,7 +158,7 @@ class ScaffoldBridge:
             "",
             "## Constraints",
             f"- Expected changed paths: {json.dumps(targets.get('expected_changed_paths', []))}",
-            f"- Failing tests: {json.dumps(targets.get('fail_to_pass_tests') or targets.get('failing_tests', []))}",
+            f"- Failing tests: {json.dumps(failing_tests)}",
             f"- Pass-to-pass tests: {json.dumps(targets.get('pass_to_pass_tests', []))}",
             "",
             "## Memory Context",

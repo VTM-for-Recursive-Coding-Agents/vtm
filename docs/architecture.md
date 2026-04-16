@@ -76,9 +76,7 @@ Docker-backed attempts are prepared with:
 - `--security-opt no-new-privileges`
 - writable `tmpfs` mounted at `/tmp`
 
-Compatibility shims remain at `vtm.benchmarks.executor`.
-
-That shim is transitional; new code should import from `vtm.harness`.
+New code should import from `vtm.harness`.
 
 ## Core flows
 

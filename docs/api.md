@@ -54,7 +54,7 @@ That topology preserves atomic SQLite semantics for metadata and events because 
 ## Choosing imports
 
 - Import from `vtm` for stable kernel records, stores, and services.
-- Import from `vtm.harness` for task packs, workspaces, executors, and trace records.
+- Import from `vtm.harness` for task packs, workspaces, executors, and scoring contracts.
 - Import from `vtm_rlm` for vendored-RLM execution helpers and runtime context.
 - Import from `vtm.benchmarks` for manifest models and `BenchmarkRunner`.
 - Import from `vtm.adapters` only when you need provider or environment integrations directly.
@@ -146,6 +146,6 @@ Optional provider-specific implementations live in `vtm.adapters`:
 
 ## Related packages
 
-- `vtm.harness`: typed task packs, workspace backends, executors, and trace manifests
+- `vtm.harness`: typed task packs, workspace backends, executors, and scoring helpers
 - `vtm_rlm`: vendored-RLM bridge, runtime context, prompt shaping, and writeback helpers
 - `vtm.benchmarks`: manifests, runner, reporting, and SWE-bench preparation/integration

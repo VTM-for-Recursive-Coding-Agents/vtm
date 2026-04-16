@@ -2,6 +2,9 @@
 
 Purpose: public harness boundary for task-pack contracts, workspace preparation, executor implementations, and coding-benchmark scoring helpers.
 
+Use this README for the stable execution contract.
+For runnable benchmark commands, use [`docs/benchmark-recipes.md`](../../../docs/benchmark-recipes.md).
+
 Start here
 - `models.py`: the public task-pack and executor/result contracts.
 - `workspace.py`: local workspace preparation and the reference `WorkspaceDriver`.

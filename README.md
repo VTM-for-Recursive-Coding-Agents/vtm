@@ -18,8 +18,7 @@ Compatibility re-exports still exist for some older import paths, but new code s
 - filesystem artifact capture with prepared/committed states and integrity audits
 - deterministic lexical retrieval, derived embedding retrieval, and optional RLM reranking
 - verification, procedure validation, and deterministic consolidation
-- typed harness task packs plus local workspace and executor contracts
-- typed harness task packs plus local and Docker-backed workspace contracts
+- typed harness task packs plus local and Docker-backed workspace/executor contracts
 - vendored upstream `rlm` as the active recursive execution engine
 - retrieval, drift, coding-task, vendored-RLM, and SWE-bench Lite benchmark workflows
 - checked-in `terminal-smoke` coding tasks for harder local terminal-style evaluation
@@ -109,7 +108,7 @@ For a complete executable example that stages memory, captures artifacts, retrie
 - Looking for a per-file inventory: use [docs/code-reference.md](docs/code-reference.md).
 - Running coding tasks in isolated workspaces: read [docs/harness.md](docs/harness.md) and [`src/vtm/harness/README.md`](src/vtm/harness/README.md).
 - Using the vendored-RLM runtime bridge: start in [`src/vtm_rlm/__init__.py`](src/vtm_rlm/__init__.py).
-- Running evaluations: start in [docs/benchmark-recipes.md](docs/benchmark-recipes.md) and [`src/vtm/benchmarks/README.md`](src/vtm/benchmarks/README.md).
+- Running evaluations: use [docs/benchmark-recipes.md](docs/benchmark-recipes.md) as the primary benchmark entrypoint, then [`src/vtm/benchmarks/README.md`](src/vtm/benchmarks/README.md) for package ownership.
 
 ## Layout
 
@@ -160,7 +159,7 @@ nix shell .#vtm
 - [docs/api.md](docs/api.md): kernel API and stable root imports
 - [docs/codebase-guide.md](docs/codebase-guide.md): maintainer-oriented repository map and ownership guide
 - [docs/code-reference.md](docs/code-reference.md): generated inventory of every Python file and top-level symbols
-- [docs/harness.md](docs/harness.md): task packs, executors, workspace backends, and traces
+- [docs/harness.md](docs/harness.md): task packs, executors, and workspace backends
 - [docs/current-state-audit.md](docs/current-state-audit.md): guarantees, gaps, and explicit limits
 - [docs/benchmark-recipes.md](docs/benchmark-recipes.md): repeatable benchmark commands
 - [docs/runtime-example.md](docs/runtime-example.md): executable end-to-end kernel example

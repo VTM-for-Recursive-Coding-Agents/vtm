@@ -14,10 +14,10 @@ from vtm.benchmarks.local_patcher import LocalOpenAIPatcher, LocalPatcherConfig
 from vtm.benchmarks.models import BenchmarkCaseResult, CodingTaskCase, CommitPair, RepoSpec
 from vtm.benchmarks.repo_materialization import RepoWorkspaceManager
 from vtm.benchmarks.scaffold_bridge import ScaffoldBridge
-from vtm.benchmarks.swebench_harness import SWEbenchHarnessRunner
 from vtm.benchmarks.swebench_harness import (
     SWEbenchHarnessInstanceResult,
     SWEbenchHarnessRunArtifacts,
+    SWEbenchHarnessRunner,
 )
 
 
@@ -356,7 +356,10 @@ def test_scaffold_bridge_cli_writes_bundle_and_runs_delegate(tmp_path: Path) -> 
             "--artifact-root",
             str(artifact_root),
             "--delegate-command",
-            f"{sys.executable} {delegate_script} --bundle {{scaffold_bundle}} --brief {{brief_file}}",
+            (
+                f"{sys.executable} {delegate_script} "
+                "--bundle {scaffold_bundle} --brief {brief_file}"
+            ),
         ],
         cwd=Path.cwd(),
         check=True,
