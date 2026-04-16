@@ -15,6 +15,7 @@ from vtm.retrieval import RetrieveRequest
 from vtm.services import DependencyFingerprintBuilder
 from vtm_rlm._vendored import vendored_rlm_root
 from vtm_rlm.context import RLMRuntimeContext
+from vtm_rlm.execution import run_vendored_rlm
 from vtm_rlm.memory_bridge import VTMMemoryBridge
 from vtm_rlm.prompting import build_phase1_task_prompt
 
@@ -120,6 +121,78 @@ class _FakeOpenAIClient:
     def __init__(self, **kwargs) -> None:  # noqa: ANN003
         self.base_url = kwargs.get("base_url")
         self.chat = _FakeChat()
+
+
+def test_run_vendored_rlm_sets_ollama_think_false(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeLogger:
+        def __init__(self, *, log_dir: str) -> None:
+            captured["log_dir"] = log_dir
+
+    class _FakeCompletion:
+        def __init__(self) -> None:
+            self.response = "FINAL(ok)"
+            self.execution_time = 0.1
+            self.metadata = {}
+            usage_payload = {"total_input_tokens": 1, "total_output_tokens": 1}
+            self.usage_summary = type(
+                "_UsageSummary",
+                (),
+                {"to_dict": staticmethod(lambda: usage_payload)},
+            )()
+
+        def to_dict(self) -> dict[str, object]:
+            return {"response": self.response}
+
+    class _FakeRLM:
+        def __init__(self, **kwargs) -> None:  # noqa: ANN003
+            captured["backend_kwargs"] = kwargs["backend_kwargs"]
+            captured["custom_tools"] = kwargs["custom_tools"]
+
+        def completion(self, prompt: str, root_prompt: str | None = None) -> _FakeCompletion:
+            captured["prompt"] = prompt
+            captured["root_prompt"] = root_prompt
+            return _FakeCompletion()
+
+    monkeypatch.setattr("vtm_rlm.execution.load_rlm_runtime", lambda: (_FakeRLM, _FakeLogger))
+    task_pack = HarnessTaskPack(
+        case_id="task-1",
+        repo_name="repo",
+        commit_pair_id="pair",
+        evaluation_backend="local_subprocess",
+        base_ref="base",
+        head_ref="head",
+        task_statement="Fix the bug.",
+        expected_changed_paths=("bug.py",),
+        touched_paths=("bug.py",),
+        target_patch_digest="deadbeef",
+        memory_mode="lexical",
+        top_k=5,
+        memory_context=(),
+    )
+    artifact_root = tmp_path / "artifacts"
+    result = run_vendored_rlm(
+        task_pack=task_pack,
+        workspace_root=tmp_path,
+        artifact_root=artifact_root,
+        model_id="qwen3-coder:30b",
+        kernel=None,
+        scopes=(),
+        max_iterations=2,
+        max_depth=1,
+        max_timeout_seconds=30,
+        base_url="http://127.0.0.1:11434/v1",
+        api_key="ollama",
+    )
+
+    assert result.response == "FINAL(ok)"
+    assert captured["backend_kwargs"] == {
+        "model_name": "qwen3-coder:30b",
+        "base_url": "http://127.0.0.1:11434/v1",
+        "completion_extra_body": {"think": False},
+        "api_key": "ollama",
+    }
 
 
 def _build_bugfix_repo(repo: Path) -> None:
