@@ -86,6 +86,26 @@ uv run python -m vtm.benchmarks.run \
   --output .benchmarks/drift-verified-lexical
 ```
 
+## Matrix Presets
+
+Retrieval paper preset:
+
+```bash
+uv run python -m vtm.benchmarks.matrix \
+  --preset synthetic_retrieval \
+  --output .benchmarks/matrix-retrieval
+```
+
+Coding paper preset:
+
+```bash
+uv run python -m vtm.benchmarks.matrix \
+  --preset synthetic_coding \
+  --output .benchmarks/matrix-coding \
+  --pair bugfix \
+  --execution-model "$VTM_EXECUTION_MODEL"
+```
+
 ## Synthetic Coding Smoke
 
 No-memory baseline:

@@ -10,7 +10,12 @@ from vtm.benchmarks.models import (
     BenchmarkRunConfig,
     BenchmarkRunResult,
 )
-from vtm.benchmarks.openrouter import execution_model, rerank_model
+from vtm.benchmarks.openrouter import (
+    execution_model,
+    openrouter_api_key,
+    openrouter_base_url,
+    rerank_model,
+)
 from vtm.benchmarks.runner import BenchmarkRunner
 
 
@@ -33,7 +38,10 @@ def build_parser() -> argparse.ArgumentParser:
             "lexical_rlm_rerank",
         ),
         default="verified_lexical",
-        help="Retrieval mode to evaluate.",
+        help=(
+            "Maintained study mode to evaluate: no_memory, naive_lexical, "
+            "verified_lexical, or optional lexical_rlm_rerank."
+        ),
     )
     parser.add_argument("--output", required=True, help="Directory for benchmark outputs.")
     parser.add_argument("--top-k", type=int, default=5, help="Top K memories to evaluate.")
@@ -61,23 +69,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--workspace-backend",
         choices=("local_workspace", "docker_workspace"),
         default="local_workspace",
-        help="Workspace backend used for coding-task execution.",
+        help=(
+            "Workspace backend for coding execution. Maintained: local_workspace. "
+            "docker_workspace is legacy/non-maintained."
+        ),
     )
     parser.add_argument(
         "--docker-image",
         default="",
-        help="Docker image for docker_workspace coding runs.",
+        help="Legacy docker_workspace image override. Non-maintained.",
     )
     parser.add_argument(
         "--docker-binary",
         default="docker",
-        help="Docker CLI binary to use for docker_workspace runs.",
+        help="Legacy docker_workspace Docker CLI override. Non-maintained.",
     )
     parser.add_argument(
         "--docker-network",
         choices=("none", "bridge"),
         default="none",
-        help="Docker network mode for docker_workspace runs.",
+        help="Legacy docker_workspace network mode. Non-maintained.",
     )
     parser.add_argument(
         "--attempts",
@@ -243,7 +254,11 @@ def execute_benchmark_run(
 
     if config.mode == "lexical_rlm_rerank":
         model_name = rerank_model(rerank_model_name)
-        rlm_adapter = OpenAIRLMAdapter(model=model_name)
+        rlm_adapter = OpenAIRLMAdapter(
+            model=model_name,
+            base_url=openrouter_base_url(),
+            api_key=openrouter_api_key(),
+        )
     if config.suite == "coding":
         resolved_config = resolved_config.model_copy(
             update={

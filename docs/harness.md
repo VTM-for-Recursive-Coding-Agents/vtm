@@ -9,7 +9,7 @@ It owns the contracts that should stay stable even when benchmark orchestration,
 - `HarnessTaskPack`
   - typed on-disk task definition used by the vendored-RLM coding executor
   - includes `retrieval_query`, which is either author-provided or derived from visible task signals
-  - includes `execution_style` so patch-oriented and shell-command tasks can share the same suite
+  - retains `execution_style` for task-pack compatibility, but the maintained paper path is the patch-oriented vendored-RLM executor
   - includes optional `verifier_output` and `localization_notes` for visible, non-oracle task context
 - `TaskMemoryContextItem`
   - normalized retrieval context embedded in a task pack
@@ -19,7 +19,7 @@ It owns the contracts that should stay stable even when benchmark orchestration,
 - `ExecutorResult`
   - typed execution result and artifact summary
   - includes the normalized `attempt_index`
-  - normalizes `workspace_backend` plus optional Docker sandbox metadata
+  - normalizes `workspace_backend`; legacy Docker metadata can still appear in non-maintained runs
 
 ## Workspace contracts
 
@@ -36,27 +36,17 @@ Built-in workspace backends:
 
 - `LocalWorkspaceBackend`
 - `LocalWorkspaceDriver`
+
+Legacy/non-maintained backend kept in-tree for compatibility:
+
 - `DockerWorkspaceBackend`
 - `DockerWorkspaceDriver`
-
-Docker-backed attempts run one long-lived container per attempt with:
-
-- bind-mounted workspace and artifact roots
-- `--network none` by default
-- `--read-only` root filesystem by default
-- `--cap-drop ALL`
-- `--security-opt no-new-privileges`
-- `--pids-limit 256`
-- `--memory 2g`
-- `--cpus 2`
-- writable `tmpfs` at `/tmp` and `/run` with `noexec`, `nosuid`, and `nodev`
-- startup logs persisted at `docker-run.stdout` and `docker-run.stderr`
 
 ## Executor contracts
 
 - `RLMBenchmarkExecutor`
-  - runs the vendored upstream `rlm` runtime against the workspace contract
-  - is the only built-in coding executor
+  - runs the vendored upstream `rlm` runtime against the local workspace contract
+  - is the only maintained built-in coding executor
 
 The RLM executor produces the stable case-local artifact backbone:
 
