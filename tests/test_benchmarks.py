@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import subprocess
 from pathlib import Path
 
@@ -110,7 +109,7 @@ def test_manifest_lock_is_deterministic_for_identical_runs(tmp_path: Path) -> No
     config_one = BenchmarkRunConfig(
         manifest_path="benchmarks/manifests/synthetic-smoke.json",
         suite="retrieval",
-        mode="lexical",
+        mode="verified_lexical",
         output_dir=str(tmp_path / "run-one"),
         top_k=3,
         max_cases=3,
@@ -119,7 +118,7 @@ def test_manifest_lock_is_deterministic_for_identical_runs(tmp_path: Path) -> No
     config_two = BenchmarkRunConfig(
         manifest_path="benchmarks/manifests/synthetic-smoke.json",
         suite="retrieval",
-        mode="lexical",
+        mode="verified_lexical",
         output_dir=str(tmp_path / "run-two"),
         top_k=3,
         max_cases=3,
@@ -141,7 +140,7 @@ def test_synthetic_benchmark_retrieval_and_drift_runs(tmp_path: Path) -> None:
         BenchmarkRunConfig(
             manifest_path="benchmarks/manifests/synthetic-smoke.json",
             suite="retrieval",
-            mode="lexical",
+            mode="verified_lexical",
             output_dir=str(tmp_path / "retrieval"),
             top_k=3,
             max_cases=4,
@@ -152,7 +151,7 @@ def test_synthetic_benchmark_retrieval_and_drift_runs(tmp_path: Path) -> None:
         BenchmarkRunConfig(
             manifest_path="benchmarks/manifests/synthetic-smoke.json",
             suite="drift",
-            mode="lexical",
+            mode="verified_lexical",
             output_dir=str(tmp_path / "drift"),
             top_k=3,
             max_cases=4,
@@ -169,27 +168,6 @@ def test_synthetic_benchmark_retrieval_and_drift_runs(tmp_path: Path) -> None:
     retrieval_results = Path(retrieval.artifacts["results_jsonl"]).read_text(encoding="utf-8")
     assert len(retrieval_cases.splitlines()) == 4
     assert len(retrieval_results.splitlines()) == 4
-
-
-def test_synthetic_benchmark_embedding_run(tmp_path: Path) -> None:
-    manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
-
-    result = BenchmarkRunner(
-        manifest,
-        BenchmarkRunConfig(
-            manifest_path="benchmarks/manifests/synthetic-smoke.json",
-            suite="retrieval",
-            mode="embedding",
-            output_dir=str(tmp_path / "embedding"),
-            top_k=3,
-            max_cases=2,
-        ),
-    ).run()
-
-    assert result.case_count == 2
-    assert "slice_metrics" in result.metrics
-    assert Path(result.artifacts["results_jsonl"]).exists()
-
 
 def test_git_repo_checkout_supports_local_remote(tmp_path: Path) -> None:
     remote_repo = tmp_path / "remote"
@@ -238,7 +216,7 @@ def test_coding_suite_writes_task_pack_and_executes_rlm(
         BenchmarkRunConfig(
             manifest_path="benchmarks/manifests/synthetic-smoke.json",
             suite="coding",
-            mode="lexical",
+            mode="verified_lexical",
             output_dir=str(tmp_path / "coding"),
             top_k=3,
             max_cases=1,
@@ -256,71 +234,44 @@ def test_coding_suite_writes_task_pack_and_executes_rlm(
     assert task_pack.base_ref == "smoke-bug"
     assert task_pack.head_ref == "smoke-bugfix"
     assert task_pack.expected_changed_paths == ("bugfix_module.py",)
-    assert task_pack.memory_mode == "lexical"
+    assert task_pack.memory_mode == "verified_lexical"
     assert task_pack.top_k == 3
     assert task_pack.memory_context
-    assert task_pack.memory_context[0].raw_anchor_path is not None
+    assert any(item.title.startswith("Verifier signal for ") for item in task_pack.memory_context)
 
 
-def test_coding_suite_executes_codex_engine(tmp_path: Path, monkeypatch) -> None:
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_codex = fake_bin / "codex"
-    fake_codex.write_text(
-        "#!/usr/bin/env python3\n"
-        "import pathlib\n"
-        "import sys\n"
-        "\n"
-        "args = sys.argv[1:]\n"
-        "cwd = pathlib.Path.cwd()\n"
-        "output = None\n"
-        "index = 0\n"
-        "while index < len(args):\n"
-        "    if args[index] == '-C':\n"
-        "        cwd = pathlib.Path(args[index + 1])\n"
-        "        index += 2\n"
-        "        continue\n"
-        "    if args[index] == '-o':\n"
-        "        output = pathlib.Path(args[index + 1])\n"
-        "        index += 2\n"
-        "        continue\n"
-        "    index += 1\n"
-        "prompt = sys.stdin.read()\n"
-        "assert 'Verification Command' in prompt\n"
-        "(cwd / 'bugfix_module.py').write_text(\n"
-        "    'def buggy_increment(value: int) -> int:\\n'\n"
-        "    '    return value + 1\\n',\n"
-        "    encoding='utf-8',\n"
-        ")\n"
-        "if output is not None:\n"
-        "    output.write_text('Codex fixed the bug', encoding='utf-8')\n"
-        "print('{\"event\":\"completed\"}')\n",
-        encoding="utf-8",
-    )
-    fake_codex.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ['PATH']}")
-
+def test_coding_suite_supports_naive_lexical_mode(
+    tmp_path: Path,
+    install_fake_vendored_rlm,
+) -> None:
+    install_fake_vendored_rlm()
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
     result = BenchmarkRunner(
         manifest,
         BenchmarkRunConfig(
             manifest_path="benchmarks/manifests/synthetic-smoke.json",
             suite="coding",
-            mode="lexical",
-            output_dir=str(tmp_path / "coding-codex"),
+            mode="naive_lexical",
+            output_dir=str(tmp_path / "coding-naive"),
             top_k=3,
             max_cases=1,
-            rlm_model_id="gpt-5.4",
-            coding_engine="codex",
+            rlm_model_id="fake-model",
         ),
     ).run()
 
+    task_pack = HarnessTaskPack.from_json(
+        (tmp_path / "coding-naive" / "task-packs" / "synthetic_bugfix_unittest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
     assert result.case_count == 1
     assert result.metrics["executed_count"] == 1
-    attempt = json.loads(
-        (tmp_path / "coding-codex" / "attempts.jsonl").read_text(encoding="utf-8").splitlines()[0]
-    )
-    assert attempt["metadata"]["execution_engine"] == "codex"
+    assert result.metrics["retrieval_usage_rate"] == 1.0
+    assert result.metrics["mean_verified_count"] == 0.0
+    assert task_pack.memory_mode == "naive_lexical"
+    assert task_pack.memory_context
+
 
 
 def test_coding_suite_executor_writes_benchmark_local_artifacts(
@@ -334,7 +285,7 @@ def test_coding_suite_executor_writes_benchmark_local_artifacts(
         BenchmarkRunConfig(
             manifest_path="benchmarks/manifests/synthetic-smoke.json",
             suite="coding",
-            mode="lexical",
+            mode="verified_lexical",
             output_dir=str(tmp_path / "coding-exec"),
             top_k=3,
             max_cases=1,
@@ -448,59 +399,6 @@ def test_coding_summary_compares_modes(tmp_path: Path, install_fake_vendored_rlm
             rlm_model_id="fake-model",
         ),
     ).run()
-    lexical = BenchmarkRunner(
-        manifest,
-        BenchmarkRunConfig(
-            manifest_path="benchmarks/manifests/synthetic-smoke.json",
-            suite="coding",
-            mode="lexical",
-            output_dir=str(tmp_path / "coding-lexical"),
-            pair_filters=("bugfix",),
-            max_cases=1,
-            rlm_model_id="fake-model",
-        ),
-    ).run()
-    embedding = BenchmarkRunner(
-        manifest,
-        BenchmarkRunConfig(
-            manifest_path="benchmarks/manifests/synthetic-smoke.json",
-            suite="coding",
-            mode="embedding",
-            output_dir=str(tmp_path / "coding-embedding"),
-            pair_filters=("bugfix",),
-            max_cases=1,
-            rlm_model_id="fake-model",
-        ),
-    ).run()
-
-    assert no_memory.case_count == 1
-    assert lexical.case_count == 1
-    assert embedding.case_count == 1
-    assert no_memory.metrics["retrieval_usage_rate"] == 0.0
-    assert lexical.metrics["retrieval_usage_rate"] == 1.0
-    assert embedding.metrics["retrieval_usage_rate"] == 1.0
-    assert lexical.metrics["testable_task_count"] == 1
-    assert embedding.metrics["testable_task_count"] == 1
-
-
-def test_coding_benchmark_supports_naive_and_verified_lexical_modes(
-    tmp_path: Path,
-    install_fake_vendored_rlm,
-) -> None:
-    install_fake_vendored_rlm()
-    manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
-    naive = BenchmarkRunner(
-        manifest,
-        BenchmarkRunConfig(
-            manifest_path="benchmarks/manifests/synthetic-smoke.json",
-            suite="coding",
-            mode="naive_lexical",
-            output_dir=str(tmp_path / "coding-naive"),
-            pair_filters=("bugfix",),
-            max_cases=1,
-            rlm_model_id="fake-model",
-        ),
-    ).run()
     verified = BenchmarkRunner(
         manifest,
         BenchmarkRunConfig(
@@ -514,11 +412,10 @@ def test_coding_benchmark_supports_naive_and_verified_lexical_modes(
         ),
     ).run()
 
-    assert naive.case_count == 1
+    assert no_memory.case_count == 1
     assert verified.case_count == 1
-    assert naive.metrics["retrieval_usage_rate"] == 1.0
+    assert no_memory.metrics["retrieval_usage_rate"] == 0.0
     assert verified.metrics["retrieval_usage_rate"] == 1.0
-    assert naive.metrics["mean_verified_count"] == 0.0
     assert verified.metrics["mean_verified_count"] >= 1.0
 
 
@@ -529,10 +426,10 @@ def test_coding_runner_rejects_unknown_pair_filters(tmp_path: Path) -> None:
         BenchmarkRunner(
             manifest,
             BenchmarkRunConfig(
-                manifest_path="benchmarks/manifests/synthetic-smoke.json",
-                suite="coding",
-                mode="lexical",
-                output_dir=str(tmp_path / "coding-bad-pair"),
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="coding",
+            mode="verified_lexical",
+            output_dir=str(tmp_path / "coding-bad-pair"),
                 pair_filters=("missing_pair",),
                 rlm_model_id="fake-model",
             ),
@@ -574,7 +471,7 @@ def test_coding_changed_path_metrics_detect_extra_paths(
         BenchmarkRunConfig(
             manifest_path="benchmarks/manifests/synthetic-smoke.json",
             suite="coding",
-            mode="lexical",
+            mode="verified_lexical",
             output_dir=str(tmp_path / "coding-extra-path"),
             pair_filters=("bugfix",),
             max_cases=1,
@@ -602,7 +499,7 @@ def test_coding_changed_path_metrics_detect_missing_patch(
         BenchmarkRunConfig(
             manifest_path="benchmarks/manifests/synthetic-smoke.json",
             suite="coding",
-            mode="lexical",
+            mode="verified_lexical",
             output_dir=str(tmp_path / "coding-empty-patch"),
             pair_filters=("bugfix",),
             max_cases=1,
@@ -639,7 +536,7 @@ def test_duplicate_symbol_case_ids_stay_unique_and_counts_align(tmp_path: Path) 
         BenchmarkRunConfig(
             manifest_path="duplicate-symbol.json",
             suite="retrieval",
-            mode="lexical",
+            mode="verified_lexical",
             output_dir=str(tmp_path / "duplicate-run"),
             max_cases=3,
         ),
@@ -766,6 +663,33 @@ def test_synthetic_reranking_benchmark_run_works_with_fake_adapter(tmp_path: Pat
     assert result.case_count == 2
     assert rows[0]["metadata"]["slice_name"] in {"smoke_identity", "taskish_behavior"}
     assert rows[0]["metrics"]["rank"] is not None
+
+
+def test_synthetic_naive_lexical_benchmark_run_uses_plain_lexical_retrieval(
+    tmp_path: Path,
+) -> None:
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
+
+    result = BenchmarkRunner(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="retrieval",
+            mode="naive_lexical",
+            output_dir=str(tmp_path / "naive-lexical"),
+            max_cases=2,
+        ),
+    ).run()
+
+    rows = [
+        json.loads(line)
+        for line in Path(result.artifacts["results_jsonl"]).read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert result.case_count == 2
+    assert rows[0]["metrics"]["rank"] is not None
+    assert rows[0]["metrics"]["verified_count"] == 0
+    assert rows[0]["metrics"]["stale_filtered_count"] == 0
 
 
 def test_synthetic_reranking_benchmark_run_falls_back_on_adapter_failure(tmp_path: Path) -> None:

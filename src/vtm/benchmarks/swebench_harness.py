@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from vtm.benchmarks.models import BenchmarkCaseResult, BenchmarkRunConfig, CodingTaskCase
+from vtm.benchmarks.openrouter import execution_model
 
 
 @dataclass(frozen=True)
@@ -89,7 +90,7 @@ class SWEbenchHarnessRunner:
             cases=cases,
             results=results,
             output_dir=output_dir,
-            model_name_or_path=os.getenv("VTM_LOCAL_LLM_MODEL", "vtm-local-model"),
+            model_name_or_path=config.rlm_model_id or execution_model(),
         )
 
         run_id = config.swebench_harness_run_id or f"vtm-{config.mode}"

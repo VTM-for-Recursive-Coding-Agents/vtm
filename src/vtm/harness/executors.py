@@ -3,27 +3,17 @@
 from __future__ import annotations
 
 import hashlib
-import subprocess
 import traceback
 from dataclasses import dataclass
 from pathlib import Path
-from time import monotonic
 from typing import Any, Literal, Protocol, cast
 
 from vtm.harness.models import ExecutorRequest, ExecutorResult, HarnessTaskPack
 from vtm.harness.workspace import PreparedWorkspace
 from vtm_rlm.context import RLMRuntimeContext
 from vtm_rlm.execution import VendoredRLMRunResult, run_vendored_rlm
-from vtm_rlm.prompting import build_codex_task_prompt
+from vtm_rlm.prompting import model_visible_task_pack
 from vtm_rlm.writeback import write_success_memory
-
-
-def _coerce_subprocess_output_text(value: str | bytes | None) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return value
 
 
 class BenchmarkExecutor(Protocol):
@@ -50,32 +40,6 @@ class _PhaseRunSnapshot:
     runtime_error: str | None
     corrective_retry_used: bool = False
     corrective_retry_reason: str | None = None
-
-    @property
-    def passed(self) -> bool:
-        return (
-            self.test_result is not None
-            and self.test_result.exit_code == 0
-            and not self.test_result.timed_out
-        )
-
-
-@dataclass(frozen=True)
-class _CodexPhaseSnapshot:
-    phase_name: str
-    used_memory: bool
-    command: tuple[str, ...]
-    command_exit_code: int | None
-    command_timed_out: bool
-    runtime_ms: float
-    prompt_path: str
-    response_path: str
-    stdout_path: str
-    stderr_path: str
-    test_result: Any | None
-    produced_patch: str
-    produced_changed_paths: tuple[str, ...]
-    final_git_status: str
 
     @property
     def passed(self) -> bool:
@@ -477,6 +441,7 @@ class RLMBenchmarkExecutor:
         corrective_reason: str,
         phase_snapshot: _PhaseRunSnapshot,
     ) -> HarnessTaskPack:
+        visible_task_pack = model_visible_task_pack(task_pack)
         verification_excerpt = ""
         if phase_snapshot.test_result is not None and phase_snapshot.test_result.stderr:
             verification_excerpt = phase_snapshot.test_result.stderr.strip().splitlines()[0][:200]
@@ -489,14 +454,14 @@ class RLMBenchmarkExecutor:
             ),
             "Do not stop at explaining the fix.",
         ]
-        if task_pack.expected_changed_paths:
+        if visible_task_pack.expected_changed_paths:
             guidance_lines.append(
-                "Focus on these files: " + ", ".join(task_pack.expected_changed_paths)
+                "Focus on these files: " + ", ".join(visible_task_pack.expected_changed_paths)
             )
         if verification_excerpt:
             guidance_lines.append("Latest verifier signal: " + verification_excerpt)
         guidance = "\n".join(guidance_lines)
-        updated_hint = task_pack.hints_text or ""
+        updated_hint = visible_task_pack.hints_text or ""
         if updated_hint:
             updated_hint = f"{updated_hint}\n\n{guidance}"
         else:
@@ -504,7 +469,7 @@ class RLMBenchmarkExecutor:
         return task_pack.model_copy(
             update={
                 "hints_text": updated_hint,
-                "task_statement": f"{task_pack.task_statement}\n\n{guidance}",
+                "task_statement": f"{visible_task_pack.task_statement}\n\n{guidance}",
             }
         )
 
@@ -522,268 +487,6 @@ class RLMBenchmarkExecutor:
         if final_phase.test_result is not None:
             verification_stdout_path.write_text(final_phase.test_result.stdout, encoding="utf-8")
             verification_stderr_path.write_text(final_phase.test_result.stderr, encoding="utf-8")
-
-
-class CodexBenchmarkExecutor:
-    """Runs a coding task through the local Codex CLI."""
-
-    def __init__(
-        self,
-        *,
-        model_id: str,
-        codex_binary: str = "codex",
-        max_timeout_seconds: int = 600,
-    ) -> None:
-        if not model_id:
-            raise ValueError("Codex benchmark executor requires a non-empty model_id")
-        self._model_id = model_id
-        self._codex_binary = codex_binary
-        self._max_timeout_seconds = max_timeout_seconds
-
-    def execute(
-        self,
-        *,
-        request: ExecutorRequest,
-        prepared_workspace: PreparedWorkspace,
-        runtime_context: RLMRuntimeContext | None = None,
-    ) -> ExecutorResult:
-        """Execute the task through Codex CLI and normalize outputs."""
-        del runtime_context
-        artifact_root = prepared_workspace.artifact_root
-        artifact_root.mkdir(parents=True, exist_ok=True)
-        verification_stdout_path = artifact_root / "final-verification.stdout"
-        verification_stderr_path = artifact_root / "final-verification.stderr"
-        produced_patch_path = artifact_root / "produced.patch"
-        final_git_status_path = artifact_root / "final-git-status.txt"
-        task_pack = HarnessTaskPack.model_validate_json(
-            Path(request.task_file).read_text(encoding="utf-8")
-        )
-        phase_runs: list[_CodexPhaseSnapshot] = []
-        verified_memory_context = tuple(
-            item
-            for item in task_pack.memory_context
-            if item.status in {"verified", "relocated"}
-        )
-        use_memory_fallback = bool(verified_memory_context)
-        grounding_task_pack = (
-            task_pack.model_copy(update={"memory_context": ()})
-            if use_memory_fallback
-            else task_pack
-        )
-        grounding_phase = self._run_phase(
-            phase_name="grounding",
-            task_pack=grounding_task_pack,
-            request=request,
-            prepared_workspace=prepared_workspace,
-            artifact_root=artifact_root / "codex" / "phase-1-grounding"
-            if use_memory_fallback
-            else artifact_root,
-        )
-        phase_runs.append(grounding_phase)
-        final_phase = grounding_phase
-        if use_memory_fallback and self._should_retry_with_memory(grounding_phase, request):
-            memory_phase = self._run_phase(
-                phase_name="memory_fallback",
-                task_pack=task_pack.model_copy(update={"memory_context": verified_memory_context}),
-                request=request,
-                prepared_workspace=prepared_workspace,
-                artifact_root=artifact_root / "codex" / "phase-2-memory",
-            )
-            phase_runs.append(memory_phase)
-            final_phase = memory_phase
-
-        if final_phase.test_result is not None:
-            verification_stdout_path.write_text(
-                final_phase.test_result.stdout,
-                encoding="utf-8",
-            )
-            verification_stderr_path.write_text(
-                final_phase.test_result.stderr,
-                encoding="utf-8",
-            )
-        produced_patch_path.write_text(final_phase.produced_patch, encoding="utf-8")
-        final_git_status_path.write_text(final_phase.final_git_status, encoding="utf-8")
-        phase_metadata = [
-            {
-                "phase_name": phase.phase_name,
-                "used_memory": phase.used_memory,
-                "passed": phase.passed,
-                "command_exit_code": phase.command_exit_code,
-                "command_timed_out": phase.command_timed_out,
-                "produced_changed_paths": list(phase.produced_changed_paths),
-                "prompt_path": phase.prompt_path,
-                "response_path": phase.response_path,
-                "stdout_path": phase.stdout_path,
-                "stderr_path": phase.stderr_path,
-            }
-            for phase in phase_runs
-        ]
-        return ExecutorResult(
-            command=final_phase.command,
-            command_exit_code=final_phase.command_exit_code,
-            command_stdout_path=final_phase.stdout_path,
-            command_stderr_path=final_phase.stderr_path,
-            attempt_index=request.attempt_index,
-            command_timed_out=final_phase.command_timed_out,
-            runtime_ms=sum(phase.runtime_ms for phase in phase_runs),
-            workspace=request.workspace,
-            task_file=request.task_file,
-            test_command=request.test_command,
-            test_exit_code=(
-                final_phase.test_result.exit_code if final_phase.test_result is not None else None
-            ),
-            test_stdout_path=(
-                str(verification_stdout_path) if final_phase.test_result is not None else None
-            ),
-            test_stderr_path=(
-                str(verification_stderr_path) if final_phase.test_result is not None else None
-            ),
-            final_verification_runtime_ms=(
-                final_phase.test_result.duration_ms if final_phase.test_result is not None else None
-            ),
-            final_verification_timed_out=(
-                final_phase.test_result.timed_out if final_phase.test_result is not None else False
-            ),
-            final_git_status_path=str(final_git_status_path),
-            command_events_path=None,
-            workspace_backend=_workspace_backend(prepared_workspace),
-            docker_image=_workspace_metadata(prepared_workspace, "docker_image"),
-            docker_container_id=_workspace_metadata(
-                prepared_workspace,
-                "docker_container_id",
-            ),
-            docker_container_name=_workspace_metadata(
-                prepared_workspace,
-                "docker_container_name",
-            ),
-            docker_network=_docker_network(prepared_workspace),
-            produced_patch_path=str(produced_patch_path),
-            produced_patch_digest=hashlib.sha256(final_phase.produced_patch.encode("utf-8")).hexdigest(),
-            produced_patch_text=final_phase.produced_patch,
-            produced_changed_paths=final_phase.produced_changed_paths,
-            agent_artifacts={
-                "codex_prompt_path": final_phase.prompt_path,
-                "codex_last_message_path": final_phase.response_path,
-                "codex_stdout_jsonl_path": final_phase.stdout_path,
-            },
-            agent_metadata={
-                "agent_status": (
-                    "completed"
-                    if final_phase.command_exit_code == 0 and not final_phase.command_timed_out
-                    else "failed"
-                ),
-                "agent_mode": "codex_cli",
-                "codex_model_id": self._model_id,
-                "execution_engine": "codex",
-                "codex_execution_strategy": (
-                    "ground_then_verified_memory" if use_memory_fallback else "single_pass"
-                ),
-                "codex_phases": phase_metadata,
-            },
-        )
-
-    def _should_retry_with_memory(
-        self,
-        phase: _CodexPhaseSnapshot,
-        request: ExecutorRequest,
-    ) -> bool:
-        if phase.command_exit_code != 0 or phase.command_timed_out:
-            return True
-        if not request.test_command:
-            return False
-        return not phase.passed
-
-    def _run_phase(
-        self,
-        *,
-        phase_name: str,
-        task_pack: HarnessTaskPack,
-        request: ExecutorRequest,
-        prepared_workspace: PreparedWorkspace,
-        artifact_root: Path,
-    ) -> _CodexPhaseSnapshot:
-        artifact_root.mkdir(parents=True, exist_ok=True)
-        prompt_path = artifact_root / "codex-prompt.txt"
-        response_path = artifact_root / "codex-last-message.txt"
-        stdout_path = artifact_root / "codex.stdout.jsonl"
-        stderr_path = artifact_root / "codex.stderr.txt"
-        prompt = build_codex_task_prompt(task_pack)
-        prompt_path.write_text(prompt, encoding="utf-8")
-        command = [
-            self._codex_binary,
-            "exec",
-            "-m",
-            self._model_id,
-            "--color",
-            "never",
-            "--json",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "-C",
-            str(prepared_workspace.workspace_root),
-            "-o",
-            str(response_path),
-            "-",
-        ]
-        command_exit_code: int | None = None
-        command_timed_out = False
-        runtime_ms = 0.0
-        started_at = monotonic()
-        try:
-            completed = subprocess.run(
-                command,
-                input=prompt,
-                text=True,
-                capture_output=True,
-                timeout=self._max_timeout_seconds,
-                check=False,
-            )
-            runtime_ms = (monotonic() - started_at) * 1000.0
-            command_exit_code = completed.returncode
-            stdout_path.write_text(
-                _coerce_subprocess_output_text(completed.stdout),
-                encoding="utf-8",
-            )
-            stderr_path.write_text(
-                _coerce_subprocess_output_text(completed.stderr),
-                encoding="utf-8",
-            )
-        except subprocess.TimeoutExpired as exc:
-            command_timed_out = True
-            runtime_ms = (monotonic() - started_at) * 1000.0
-            stdout_path.write_text(
-                _coerce_subprocess_output_text(exc.stdout),
-                encoding="utf-8",
-            )
-            stderr_path.write_text(
-                _coerce_subprocess_output_text(exc.stderr),
-                encoding="utf-8",
-            )
-
-        test_result = None
-        if request.test_command:
-            test_result = prepared_workspace.driver.run_verification(
-                request.test_command,
-                label=f"codex_{phase_name}_verification",
-            )
-            runtime_ms += test_result.duration_ms
-        return _CodexPhaseSnapshot(
-            phase_name=phase_name,
-            used_memory=bool(task_pack.memory_context),
-            command=tuple(command),
-            command_exit_code=command_exit_code,
-            command_timed_out=command_timed_out,
-            runtime_ms=runtime_ms,
-            prompt_path=str(prompt_path),
-            response_path=str(response_path),
-            stdout_path=str(stdout_path),
-            stderr_path=str(stderr_path),
-            test_result=test_result,
-            produced_patch=prepared_workspace.driver.capture_patch(),
-            produced_changed_paths=prepared_workspace.driver.capture_changed_paths(),
-            final_git_status=prepared_workspace.driver.git_status(),
-        )
-
-
 def _workspace_metadata(
     prepared_workspace: PreparedWorkspace,
     key: str,
@@ -806,6 +509,5 @@ def _docker_network(
 
 __all__ = [
     "BenchmarkExecutor",
-    "CodexBenchmarkExecutor",
     "RLMBenchmarkExecutor",
 ]

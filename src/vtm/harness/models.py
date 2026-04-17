@@ -10,11 +10,9 @@ from vtm.base import VTMModel
 
 HarnessMemoryMode = Literal[
     "no_memory",
-    "lexical",
     "naive_lexical",
     "verified_lexical",
     "lexical_rlm_rerank",
-    "embedding",
 ]
 HarnessEvaluationBackend = Literal["local_subprocess", "swebench_harness"]
 HarnessExecutionStyle = Literal["mixed_patch", "shell_command"]

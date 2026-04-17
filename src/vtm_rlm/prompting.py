@@ -149,93 +149,6 @@ def build_phase1_task_prompt(task_pack: HarnessTaskPack, workspace_root: Path) -
     return "\n".join(sections)
 
 
-def build_codex_task_prompt(task_pack: HarnessTaskPack) -> str:
-    """Build a direct Codex CLI prompt for coding-task execution."""
-    task_pack = model_visible_task_pack(task_pack)
-    compact_external_prompt = _should_compact_external_prompt(task_pack)
-    sections = [
-        "You are solving a coding benchmark task inside the current Git repository.",
-        "Inspect repository files directly, make the smallest correct edit, and verify it.",
-        (
-            "Do not stop at describing the fix. Edit files in this repository and run "
-            "the provided checks."
-        ),
-        (
-            "Any VTM memory below is advisory context only. Trust the repository files "
-            "if there is any conflict."
-        ),
-        "",
-        "Task",
-        _compact_task_summary(task_pack) if compact_external_prompt else task_pack.task_statement,
-    ]
-    if compact_external_prompt:
-        sections.extend(
-            [
-                "",
-                "Compact Task Policy",
-                (
-                    "This is an external benchmark task. Start from the failing test and visible "
-                    "localization notes. Avoid re-reading long issue narrative unless the "
-                    "code is still ambiguous."
-                ),
-            ]
-        )
-    if task_pack.problem_statement and not compact_external_prompt:
-        sections.extend(["", "Problem Statement", task_pack.problem_statement])
-    if task_pack.hints_text:
-        sections.extend(
-            [
-                "",
-                "Hint" if compact_external_prompt else "Hints",
-                _compact_hint_text(task_pack.hints_text)
-                if compact_external_prompt
-                else task_pack.hints_text,
-            ]
-        )
-    if task_pack.fail_to_pass_tests:
-        sections.extend(["", "Fail-to-Pass Tests", "\n".join(task_pack.fail_to_pass_tests)])
-    elif task_pack.failing_tests:
-        sections.extend(["", "Failing Tests", "\n".join(task_pack.failing_tests)])
-    if task_pack.pass_to_pass_tests and not compact_external_prompt:
-        sections.extend(["", "Pass-to-Pass Tests", "\n".join(task_pack.pass_to_pass_tests)])
-    if task_pack.localization_notes:
-        sections.extend(["", "Localization Notes", "\n".join(task_pack.localization_notes)])
-    if task_pack.verifier_output:
-        sections.extend(
-            [
-                "",
-                "Verifier Output",
-                _clip_text(task_pack.verifier_output, max_chars=500),
-            ]
-        )
-    if _should_render_expected_changed_paths(task_pack):
-        sections.extend(
-            ["", "Expected Changed Paths", "\n".join(task_pack.expected_changed_paths)]
-        )
-    if task_pack.test_command:
-        sections.extend(["", "Verification Command", " ".join(task_pack.test_command)])
-    if task_pack.memory_context:
-        sections.extend(
-            [
-                "",
-                "Advisory VTM Memory",
-                summarize_memory_context(task_pack.memory_context),
-            ]
-        )
-    sections.extend(
-        [
-            "",
-            "Execution Rules",
-            "- Read the relevant files before editing.",
-            "- Prefer narrow, task-relevant edits near the failing tests and localization notes.",
-            "- Run the verification command if it is present and cheap enough.",
-            "- Leave the repository with a valid patch; a prose-only answer is insufficient.",
-            "- In the final response, concisely state what changed and what check you ran.",
-        ]
-    )
-    return "\n".join(sections)
-
-
 def _should_compact_external_prompt(task_pack: HarnessTaskPack) -> bool:
     return (
         task_pack.evaluation_backend == "swebench_harness"
@@ -373,7 +286,6 @@ def _clip_text(text: str, *, max_chars: int) -> str:
 
 __all__ = [
     "CODING_RLM_SYSTEM_PROMPT",
-    "build_codex_task_prompt",
     "build_phase1_task_prompt",
     "model_visible_task_pack",
 ]

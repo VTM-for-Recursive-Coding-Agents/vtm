@@ -7,7 +7,6 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
-from vtm.adapters.embeddings import EmbeddingAdapter
 from vtm.adapters.rlm import RLMAdapter
 from vtm.base import utc_now
 from vtm.benchmarks.models import (
@@ -35,19 +34,16 @@ class BenchmarkRunner:
         config: BenchmarkRunConfig,
         *,
         rlm_adapter: RLMAdapter | None = None,
-        embedding_adapter: EmbeddingAdapter | None = None,
     ) -> None:
         """Bind the runner to a manifest, config, and optional adapters."""
         self._manifest = manifest
         self._config = config
-        self._embedding_adapter = embedding_adapter
         self._executor = BenchmarkSuiteExecutor(
             manifest=manifest,
             config=config,
             repo_manager=RepoWorkspaceManager(),
             symbol_indexer=SymbolIndexer(),
             rlm_adapter=rlm_adapter,
-            embedding_adapter=embedding_adapter,
         )
         self._reporter = BenchmarkReporter()
 
@@ -90,11 +86,6 @@ class BenchmarkRunner:
         manifest_lock["swebench_harness_cache_level"] = self._config.swebench_harness_cache_level
         if self._config.swebench_harness_run_id:
             manifest_lock["swebench_harness_run_id"] = self._config.swebench_harness_run_id
-        if self._config.mode == "embedding":
-            manifest_lock["embedding_adapter"] = (
-                getattr(self._embedding_adapter, "adapter_id", None)
-                or "deterministic_hash:64"
-            )
         manifest_digest = hashlib.sha256(
             json.dumps(manifest_lock, separators=(",", ":"), sort_keys=True).encode("utf-8")
         ).hexdigest()

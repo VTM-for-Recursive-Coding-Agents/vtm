@@ -18,7 +18,6 @@ from vtm.benchmarks import (
 )
 from vtm.cache import CacheEntry, CacheKey
 from vtm.consolidation import ConsolidationAction, ConsolidationRunResult
-from vtm.embeddings import EmbeddingIndexEntry
 from vtm.enums import (
     DetailLevel,
     EvidenceBudget,
@@ -60,13 +59,6 @@ def test_package_root_exports_core_implementations() -> None:
     assert LexicalRetriever.__name__ == "LexicalRetriever"
     assert SqliteMetadataStore.__name__ == "SqliteMetadataStore"
     assert FilesystemArtifactStore.__name__ == "FilesystemArtifactStore"
-
-
-def test_package_root_keeps_compatibility_exports_for_non_kernel_surfaces() -> None:
-    from vtm import BenchmarkRunner, OpenAIEmbeddingAdapter
-
-    assert BenchmarkRunner.__name__ == "BenchmarkRunner"
-    assert OpenAIEmbeddingAdapter.__name__ == "OpenAIEmbeddingAdapter"
 
 
 def test_validator_spec_coerces_command_config_through_typed_accessor() -> None:
@@ -211,12 +203,6 @@ def test_core_models_round_trip(
             suite="retrieval",
             output_dir=".benchmarks/synthetic",
         ),
-        EmbeddingIndexEntry(
-            memory_id=memory.memory_id,
-            adapter_id="deterministic_hash:64",
-            content_digest="digest",
-            vector=(0.1, 0.2, 0.3),
-        ),
         ConsolidationAction(
             action_type="memory_superseded",
             canonical_memory_id=memory.memory_id,
@@ -316,7 +302,7 @@ def test_benchmark_run_config_validates_attempt_controls() -> None:
 def test_benchmark_run_config_validates_docker_workspace_settings() -> None:
     with pytest.raises(ValidationError):
         BenchmarkRunConfig(
-            manifest_path="benchmarks/manifests/terminal-shell-smoke.json",
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
             suite="coding",
             output_dir=".benchmarks/synthetic",
             workspace_backend="docker_workspace",
@@ -324,7 +310,7 @@ def test_benchmark_run_config_validates_docker_workspace_settings() -> None:
 
     with pytest.raises(ValidationError):
         BenchmarkRunConfig(
-            manifest_path="benchmarks/manifests/terminal-shell-smoke.json",
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
             suite="coding",
             output_dir=".benchmarks/synthetic",
             workspace_backend="local_workspace",
@@ -332,7 +318,7 @@ def test_benchmark_run_config_validates_docker_workspace_settings() -> None:
         )
 
     config = BenchmarkRunConfig(
-        manifest_path="benchmarks/manifests/terminal-shell-smoke.json",
+        manifest_path="benchmarks/manifests/synthetic-smoke.json",
         suite="coding",
         output_dir=".benchmarks/synthetic",
         workspace_backend="docker_workspace",

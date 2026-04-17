@@ -3,20 +3,14 @@
 from __future__ import annotations
 
 import argparse
-import os
 
-from vtm.adapters import (
-    DeterministicHashEmbeddingAdapter,
-    EmbeddingAdapter,
-    OpenAIEmbeddingAdapter,
-    OpenAIRLMAdapter,
-)
+from vtm.adapters import OpenAIRLMAdapter
 from vtm.benchmarks.models import (
     BenchmarkManifest,
     BenchmarkRunConfig,
     BenchmarkRunResult,
-    resolved_benchmark_mode,
 )
+from vtm.benchmarks.openrouter import execution_model, rerank_model
 from vtm.benchmarks.runner import BenchmarkRunner
 
 
@@ -34,11 +28,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode",
         choices=(
             "no_memory",
-            "lexical",
             "naive_lexical",
             "verified_lexical",
             "lexical_rlm_rerank",
-            "embedding",
         ),
         default="verified_lexical",
         help="Retrieval mode to evaluate.",
@@ -61,9 +53,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--coding-engine",
-        choices=("vendored_rlm", "codex"),
+        choices=("vendored_rlm",),
         default="vendored_rlm",
-        help="Coding execution engine used for coding-task runs.",
+        help="Maintained coding execution engine. Only the OpenRouter-backed RLM path is supported.",
     )
     parser.add_argument(
         "--workspace-backend",
@@ -100,11 +92,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Additional pass@k checkpoints to report for coding tasks. Repeat to add more.",
     )
     parser.add_argument(
+        "--execution-model",
         "--rlm-model-id",
+        dest="rlm_model_id",
         default="",
         help=(
-            "Model id for vendored-RLM coding runs. Falls back to "
-            "VTM_AGENT_MODEL or VTM_LOCAL_LLM_MODEL."
+            "Execution model id for coding runs. Falls back to VTM_EXECUTION_MODEL "
+            "or the maintained OpenRouter default."
         ),
     )
     parser.add_argument(
@@ -132,14 +126,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum characters captured from a single workspace command.",
     )
     parser.add_argument(
+        "--rerank-model",
         "--rlm-model",
+        dest="rlm_model",
         default="",
-        help="Model name for lexical_rlm_rerank mode. Falls back to VTM_OPENAI_MODEL.",
-    )
-    parser.add_argument(
-        "--embedding-model",
-        default="",
-        help="Optional model name for embedding mode. Falls back to VTM_OPENAI_EMBEDDING_MODEL.",
+        help="Model id for lexical_rlm_rerank mode. Falls back to VTM_RERANK_MODEL.",
     )
     parser.add_argument(
         "--swebench-dataset-name",
@@ -230,8 +221,7 @@ def main() -> int:
         result = execute_benchmark_run(
             manifest,
             config,
-            rlm_model_name=args.rlm_model or None,
-            embedding_model_name=args.embedding_model or None,
+            rerank_model_name=args.rlm_model or None,
             execution_model_name=args.rlm_model_id or None,
         )
     except ValueError as exc:
@@ -244,51 +234,29 @@ def execute_benchmark_run(
     manifest: BenchmarkManifest,
     config: BenchmarkRunConfig,
     *,
-    rlm_model_name: str | None = None,
-    embedding_model_name: str | None = None,
+    rerank_model_name: str | None = None,
     execution_model_name: str | None = None,
 ) -> BenchmarkRunResult:
-    """Execute one benchmark run with environment-aware optional adapters."""
+    """Execute one benchmark run with maintained optional adapters."""
     rlm_adapter = None
-    embedding_adapter: EmbeddingAdapter | None = None
     resolved_config = config
-    resolved_mode = resolved_benchmark_mode(config.mode)
 
-    if resolved_mode == "lexical_rlm_rerank":
-        model_name = rlm_model_name or os.getenv("VTM_OPENAI_MODEL")
-        if not model_name:
-            raise ValueError("lexical_rlm_rerank mode requires --rlm-model or VTM_OPENAI_MODEL")
+    if config.mode == "lexical_rlm_rerank":
+        model_name = rerank_model(rerank_model_name)
         rlm_adapter = OpenAIRLMAdapter(model=model_name)
-    if resolved_mode == "embedding":
-        resolved_embedding_model = embedding_model_name or os.getenv(
-            "VTM_OPENAI_EMBEDDING_MODEL"
-        )
-        if resolved_embedding_model:
-            embedding_adapter = OpenAIEmbeddingAdapter(model=resolved_embedding_model)
-        else:
-            embedding_adapter = DeterministicHashEmbeddingAdapter()
     if config.suite == "coding":
-        resolved_rlm_model = (
-            execution_model_name
-            or config.rlm_model_id
-            or os.getenv("VTM_AGENT_MODEL")
-            or os.getenv("VTM_LOCAL_LLM_MODEL")
-        )
-        if not resolved_rlm_model:
-            raise ValueError(
-                "coding runs require --rlm-model-id, "
-                "VTM_AGENT_MODEL, or "
-                "VTM_LOCAL_LLM_MODEL"
-            )
         resolved_config = resolved_config.model_copy(
-            update={"rlm_model_id": resolved_rlm_model}
+            update={
+                "rlm_model_id": execution_model(
+                    execution_model_name or config.rlm_model_id
+                )
+            }
         )
 
     return BenchmarkRunner(
         manifest,
         resolved_config,
         rlm_adapter=rlm_adapter,
-        embedding_adapter=embedding_adapter,
     ).run()
 
 

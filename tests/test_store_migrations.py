@@ -8,12 +8,10 @@ import pytest
 
 from vtm.artifacts import ArtifactRecord
 from vtm.cache import CacheEntry, CacheKey
-from vtm.embeddings import EmbeddingIndexEntry
 from vtm.events import MemoryEvent
 from vtm.fingerprints import EnvFingerprint, RepoFingerprint, ToolVersion
 from vtm.stores.artifact_store import FilesystemArtifactStore
 from vtm.stores.cache_store import SqliteCacheStore
-from vtm.stores.embedding_store import SqliteEmbeddingIndexStore
 from vtm.stores.sqlite_store import SqliteMetadataStore
 
 FIXTURE_ROOT = Path("tests/fixtures/migrations")
@@ -288,27 +286,6 @@ def test_cache_store_loads_supported_fixture_revision_v1(tmp_path: Path) -> None
         store.close()
 
 
-def test_embedding_store_loads_supported_fixture_revision_v1(tmp_path: Path) -> None:
-    db_path = tmp_path / "embeddings-v1.sqlite"
-    _load_sql_fixture(db_path, "embedding/v1.sql")
-
-    store = SqliteEmbeddingIndexStore(db_path)
-    try:
-        entries = store.list_entries()
-        assert len(entries) == 1
-        assert entries[0] == EmbeddingIndexEntry(
-            memory_id="mem_fixture",
-            adapter_id="deterministic_hash:64",
-            content_digest="fixture-digest",
-            vector=(0.1, 0.2, 0.3),
-            created_at=entries[0].created_at,
-            updated_at=entries[0].updated_at,
-        )
-        assert _read_schema_version(db_path) == 1
-    finally:
-        store.close()
-
-
 def test_artifact_store_loads_supported_fixture_revision_v1_and_upgrades_to_current(
     tmp_path: Path,
 ) -> None:
@@ -372,14 +349,6 @@ def test_cache_store_rejects_unknown_future_schema_version(tmp_path: Path) -> No
 
     with pytest.raises(ValueError, match="newer than supported"):
         SqliteCacheStore(db_path)
-
-
-def test_embedding_store_rejects_unknown_future_schema_version(tmp_path: Path) -> None:
-    db_path = tmp_path / "embeddings.sqlite"
-    _write_future_schema_version(db_path, 999)
-
-    with pytest.raises(ValueError, match="newer than supported"):
-        SqliteEmbeddingIndexStore(db_path)
 
 
 def test_artifact_store_rejects_unknown_future_schema_version(tmp_path: Path) -> None:

@@ -7,9 +7,6 @@ under their owning subpackages.
 
 from __future__ import annotations
 
-import importlib
-
-from vtm.adapters.embeddings import DeterministicHashEmbeddingAdapter, EmbeddingAdapter
 from vtm.adapters.git import GitFingerprintAdapter, GitRepoFingerprintCollector
 from vtm.adapters.python_ast import (
     PythonAstAnchorAdapter,
@@ -33,7 +30,6 @@ from vtm.artifacts import ArtifactIntegrityReport, ArtifactRecord, ArtifactRepai
 from vtm.base import SCHEMA_VERSION, VTMModel
 from vtm.cache import CacheEntry, CacheKey
 from vtm.consolidation import ConsolidationAction, ConsolidationRunResult
-from vtm.embeddings import EmbeddingIndexEntry
 from vtm.enums import (
     ArtifactCaptureState,
     ClaimStrength,
@@ -72,7 +68,6 @@ from vtm.services import (
     DependencyFingerprintBuilder,
     DeterministicConsolidator,
     DockerProcedureValidator,
-    EmbeddingRetriever,
     LexicalRetriever,
     MemoryKernel,
     NoopConsolidator,
@@ -85,12 +80,10 @@ from vtm.services import (
 from vtm.stores import (
     ArtifactStore,
     CacheStore,
-    EmbeddingIndexStore,
     EventStore,
     FilesystemArtifactStore,
     MetadataStore,
     SqliteCacheStore,
-    SqliteEmbeddingIndexStore,
     SqliteMetadataStore,
 )
 from vtm.transactions import TransactionRecord
@@ -126,12 +119,7 @@ __all__ = [
     "DependencyFingerprintBuilder",
     "DetailLevel",
     "DeterministicConsolidator",
-    "DeterministicHashEmbeddingAdapter",
     "DockerProcedureValidator",
-    "EmbeddingAdapter",
-    "EmbeddingIndexEntry",
-    "EmbeddingIndexStore",
-    "EmbeddingRetriever",
     "EnvFingerprint",
     "EnvFingerprintAdapter",
     "EvidenceBudget",
@@ -174,7 +162,6 @@ __all__ = [
     "SCHEMA_VERSION",
     "ScopeKind",
     "SqliteCacheStore",
-    "SqliteEmbeddingIndexStore",
     "SqliteMetadataStore",
     "SummaryCardPayload",
     "SyntaxAnchorAdapter",
@@ -192,28 +179,3 @@ __all__ = [
     "VisibilityScope",
     "VTMModel",
 ]
-
-
-def __getattr__(name: str) -> object:
-    """Lazily resolve compatibility exports for optional or moved surfaces."""
-    benchmark_names = {
-        "BenchmarkCaseResult",
-        "BenchmarkManifest",
-        "BenchmarkRunConfig",
-        "BenchmarkRunResult",
-        "BenchmarkRunner",
-        "CodingTaskCase",
-        "CommitPair",
-        "DriftCase",
-        "RepoSpec",
-        "RetrievalCase",
-    }
-    if name in benchmark_names:
-        benchmark_module = importlib.import_module("vtm.benchmarks")
-        return getattr(benchmark_module, name)
-
-    if name in {"OpenAIEmbeddingAdapter", "OpenAIRLMAdapter"}:
-        adapter_module = importlib.import_module("vtm.adapters")
-        return getattr(adapter_module, name)
-
-    raise AttributeError(name)

@@ -1,7 +1,6 @@
 """Public service-layer exports for kernel orchestration."""
 
 from vtm.services.consolidator import Consolidator, DeterministicConsolidator, NoopConsolidator
-from vtm.services.embedding_retriever import EmbeddingRetriever
 from vtm.services.fingerprints import DependencyFingerprintBuilder
 from vtm.services.memory_kernel import MemoryKernel, TransactionalMemoryKernel
 from vtm.services.procedures import (
@@ -20,7 +19,6 @@ __all__ = [
     "DeterministicConsolidator",
     "DependencyFingerprintBuilder",
     "DockerProcedureValidator",
-    "EmbeddingRetriever",
     "LexicalRetriever",
     "MemoryKernel",
     "NoopConsolidator",
