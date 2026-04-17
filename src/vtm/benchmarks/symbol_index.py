@@ -84,6 +84,7 @@ class SymbolIndexer:
         repo_name: str,
         pair: CommitPair,
         symbols: dict[tuple[str, str], SymbolSnapshot],
+        head_symbols: dict[tuple[str, str], SymbolSnapshot] | None = None,
     ) -> list[RetrievalCase]:
         """Generate retrieval benchmark cases for indexed symbols."""
         cases: list[RetrievalCase] = []
@@ -97,6 +98,11 @@ class SymbolIndexer:
                 pair.pair_id,
                 symbol.relative_path,
                 symbol.qualname,
+            )
+            expected_head_status = (
+                self.expected_head_status(symbol, head_symbols)
+                if head_symbols is not None
+                else None
             )
             cases.extend(
                 (
@@ -115,6 +121,7 @@ class SymbolIndexer:
                         memory_id=memory_id,
                         query=symbol.query,
                         expected_memory_ids=(memory_id,),
+                        expected_head_status=expected_head_status,
                         relative_path=symbol.relative_path,
                         symbol=symbol.qualname,
                     ),
@@ -133,6 +140,7 @@ class SymbolIndexer:
                         memory_id=memory_id,
                         query=self._smoke_query_for_symbol(symbol),
                         expected_memory_ids=(memory_id,),
+                        expected_head_status=expected_head_status,
                         relative_path=symbol.relative_path,
                         symbol=symbol.qualname,
                     ),
@@ -154,17 +162,6 @@ class SymbolIndexer:
             key=lambda item: (item.relative_path, item.qualname),
         )
         for symbol in sorted_symbols:
-            head_symbol = head_symbols.get(symbol.key)
-            if head_symbol is None or head_symbol.symbol_digest != symbol.symbol_digest:
-                expected_status = ValidityStatus.STALE
-            elif (
-                head_symbol.start_line == symbol.start_line
-                and head_symbol.end_line == symbol.end_line
-            ):
-                expected_status = ValidityStatus.VERIFIED
-            else:
-                expected_status = ValidityStatus.RELOCATED
-
             cases.append(
                 DriftCase(
                     case_id=self._case_id(
@@ -184,10 +181,26 @@ class SymbolIndexer:
                     ),
                     relative_path=symbol.relative_path,
                     symbol=symbol.qualname,
-                    expected_status=expected_status,
+                    expected_status=self.expected_head_status(symbol, head_symbols),
                 )
             )
         return cases
+
+    def expected_head_status(
+        self,
+        base_symbol: SymbolSnapshot,
+        head_symbols: dict[tuple[str, str], SymbolSnapshot],
+    ) -> ValidityStatus:
+        """Classify the head-state status for a base symbol snapshot."""
+        head_symbol = head_symbols.get(base_symbol.key)
+        if head_symbol is None or head_symbol.symbol_digest != base_symbol.symbol_digest:
+            return ValidityStatus.STALE
+        if (
+            head_symbol.start_line == base_symbol.start_line
+            and head_symbol.end_line == base_symbol.end_line
+        ):
+            return ValidityStatus.VERIFIED
+        return ValidityStatus.RELOCATED
 
     def memory_id(
         self,

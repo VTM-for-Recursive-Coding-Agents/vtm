@@ -170,6 +170,11 @@ def _retrieval_csv_rows(runs: list[LoadedBenchmarkRun]) -> list[dict[str, Any]]:
                 "recall_at_1": metrics.get("recall_at_1"),
                 "recall_at_3": metrics.get("recall_at_3"),
                 "recall_at_5": metrics.get("recall_at_5"),
+                "valid_recall_at_1": metrics.get("valid_recall_at_1"),
+                "valid_recall_at_3": metrics.get("valid_recall_at_3"),
+                "valid_recall_at_5": metrics.get("valid_recall_at_5"),
+                "stale_rejection_rate": metrics.get("stale_rejection_rate"),
+                "stale_hit_rate": metrics.get("stale_hit_rate"),
                 "mrr": metrics.get("mrr"),
                 "ndcg": metrics.get("ndcg"),
                 "median_latency_ms": metrics.get("median_latency_ms"),
@@ -258,26 +263,70 @@ def _render_markdown(
 ) -> str:
     lines = ["# VTM Paper Tables", ""]
     if retrieval_runs:
-        lines.extend(
-            [
-                "## Retrieval",
-                "",
-                "| Method | Cases | Recall@1 | Recall@3 | Recall@5 | MRR | nDCG |",
-                "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
-            ]
+        include_drifted_metrics = any(
+            any(
+                run.result.metrics.get(metric_name) is not None
+                for metric_name in (
+                    "valid_recall_at_1",
+                    "valid_recall_at_3",
+                    "valid_recall_at_5",
+                    "stale_rejection_rate",
+                    "stale_hit_rate",
+                )
+            )
+            for run in retrieval_runs
         )
+        lines.extend(["## Retrieval", ""])
+        if include_drifted_metrics:
+            lines.extend(
+                [
+                    (
+                        "| Method | Cases | Recall@1 | Recall@3 | Recall@5 | "
+                        "Valid Recall@1 | Valid Recall@3 | Valid Recall@5 | "
+                        "Stale Reject | Stale Hit | MRR | nDCG |"
+                    ),
+                    (
+                        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
+                        "---: | ---: | ---: | ---: |"
+                    ),
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "| Method | Cases | Recall@1 | Recall@3 | Recall@5 | MRR | nDCG |",
+                    "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+                ]
+            )
         for run in retrieval_runs:
             metrics = run.result.metrics
-            lines.append(
-                "| "
-                f"{MODE_LABELS[run.result.mode]} | "
-                f"{run.result.case_count} | "
-                f"{_format_metric(metrics.get('recall_at_1'))} | "
-                f"{_format_metric(metrics.get('recall_at_3'))} | "
-                f"{_format_metric(metrics.get('recall_at_5'))} | "
-                f"{_format_metric(metrics.get('mrr'))} | "
-                f"{_format_metric(metrics.get('ndcg'))} |"
-            )
+            if include_drifted_metrics:
+                lines.append(
+                    "| "
+                    f"{MODE_LABELS[run.result.mode]} | "
+                    f"{run.result.case_count} | "
+                    f"{_format_metric(metrics.get('recall_at_1'))} | "
+                    f"{_format_metric(metrics.get('recall_at_3'))} | "
+                    f"{_format_metric(metrics.get('recall_at_5'))} | "
+                    f"{_format_metric(metrics.get('valid_recall_at_1'))} | "
+                    f"{_format_metric(metrics.get('valid_recall_at_3'))} | "
+                    f"{_format_metric(metrics.get('valid_recall_at_5'))} | "
+                    f"{_format_metric(metrics.get('stale_rejection_rate'))} | "
+                    f"{_format_metric(metrics.get('stale_hit_rate'))} | "
+                    f"{_format_metric(metrics.get('mrr'))} | "
+                    f"{_format_metric(metrics.get('ndcg'))} |"
+                )
+            else:
+                lines.append(
+                    "| "
+                    f"{MODE_LABELS[run.result.mode]} | "
+                    f"{run.result.case_count} | "
+                    f"{_format_metric(metrics.get('recall_at_1'))} | "
+                    f"{_format_metric(metrics.get('recall_at_3'))} | "
+                    f"{_format_metric(metrics.get('recall_at_5'))} | "
+                    f"{_format_metric(metrics.get('mrr'))} | "
+                    f"{_format_metric(metrics.get('ndcg'))} |"
+                )
         lines.append("")
     if drift_runs:
         lines.extend(
