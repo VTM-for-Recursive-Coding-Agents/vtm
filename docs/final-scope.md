@@ -25,9 +25,11 @@ Verified lexical memory should outperform a no-memory baseline without relying o
 
 - Retrieval measures whether the right repository memory can be found.
 - Drift measures whether stored memory stays valid under repository change.
-- Coding measures whether verified memory improves end-task solving under fair prompts.
+- Coding measures whether verified memory improves targeted SWE-bench Lite solving under fair prompts.
 
 These three layers isolate memory quality, memory freshness, and coding utility cleanly enough for the paper.
+
+Synthetic smoke tasks remain only as a maintained local/dev validation path for the OpenRouter-backed executor and table-export workflow.
 
 ## OpenRouter defaults
 
