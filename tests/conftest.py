@@ -9,7 +9,6 @@ from typing import Any
 
 import pytest
 
-from vtm.adapters.embeddings import DeterministicHashEmbeddingAdapter
 from vtm.adapters.python_ast import PythonAstSyntaxAdapter
 from vtm.adapters.tree_sitter import PythonTreeSitterSyntaxAdapter
 from vtm.anchors import CodeAnchor
@@ -26,14 +25,12 @@ from vtm.memory_items import (
     ValidityState,
     VisibilityScope,
 )
-from vtm.services.embedding_retriever import EmbeddingRetriever
 from vtm.services.memory_kernel import TransactionalMemoryKernel
 from vtm.services.procedures import CommandProcedureValidator
 from vtm.services.retriever import LexicalRetriever
 from vtm.services.verifier import BasicVerifier
 from vtm.stores.artifact_store import FilesystemArtifactStore
 from vtm.stores.cache_store import SqliteCacheStore
-from vtm.stores.embedding_store import SqliteEmbeddingIndexStore
 from vtm.stores.sqlite_store import SqliteMetadataStore
 from vtm_rlm.execution import VendoredRLMRunResult
 
@@ -250,13 +247,6 @@ def cache_store(tmp_path: Path, metadata_store: SqliteMetadataStore) -> SqliteCa
 
 
 @pytest.fixture
-def embedding_store(tmp_path: Path) -> SqliteEmbeddingIndexStore:
-    store = SqliteEmbeddingIndexStore(tmp_path / "embeddings.sqlite")
-    yield store
-    store.close()
-
-
-@pytest.fixture
 def kernel(
     metadata_store: SqliteMetadataStore,
     artifact_store: FilesystemArtifactStore,
@@ -272,18 +262,6 @@ def kernel(
         retriever=LexicalRetriever(metadata_store),
         anchor_adapter=anchor_builder,
         procedure_validator=CommandProcedureValidator(artifact_store),
-    )
-
-
-@pytest.fixture
-def embedding_retriever(
-    metadata_store: SqliteMetadataStore,
-    embedding_store: SqliteEmbeddingIndexStore,
-) -> EmbeddingRetriever:
-    return EmbeddingRetriever(
-        metadata_store,
-        embedding_store,
-        DeterministicHashEmbeddingAdapter(),
     )
 
 

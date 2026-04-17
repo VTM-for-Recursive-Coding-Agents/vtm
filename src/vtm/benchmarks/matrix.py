@@ -21,9 +21,7 @@ from vtm.benchmarks.run import execute_benchmark_run
 
 DEFAULT_MATRIX_MODES: tuple[BenchmarkMode, ...] = (
     "no_memory",
-    "naive_lexical",
     "verified_lexical",
-    "lexical_rlm_rerank",
 )
 
 
@@ -37,15 +35,10 @@ class MatrixPreset:
 
 
 PRESETS: dict[str, MatrixPreset] = {
-    "terminal_smoke": MatrixPreset(
-        manifest_path="benchmarks/manifests/terminal-smoke.json",
-        suite="coding",
-        description="Patch-oriented terminal coding matrix.",
-    ),
-    "terminal_shell_smoke": MatrixPreset(
-        manifest_path="benchmarks/manifests/terminal-shell-smoke.json",
-        suite="coding",
-        description="Shell-command terminal coding matrix.",
+    "synthetic_retrieval": MatrixPreset(
+        manifest_path="benchmarks/manifests/synthetic-smoke.json",
+        suite="retrieval",
+        description="Synthetic retrieval matrix for no-memory vs verified lexical.",
     ),
 }
 
@@ -56,7 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--preset",
         choices=tuple(sorted(PRESETS)),
-        default="terminal_smoke",
+        default="synthetic_retrieval",
         help="Maintained matrix preset to execute.",
     )
     parser.add_argument(
@@ -84,11 +77,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--baseline-mode",
         choices=(
             "no_memory",
-            "lexical",
             "naive_lexical",
             "verified_lexical",
             "lexical_rlm_rerank",
-            "embedding",
         ),
         default="no_memory",
         help="Mode used as the comparison baseline.",
@@ -110,9 +101,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--coding-engine",
-        choices=("vendored_rlm", "codex"),
+        choices=("vendored_rlm",),
         default="vendored_rlm",
-        help="Coding execution engine used for coding-task runs.",
+        help="Maintained coding execution engine. Only the OpenRouter-backed RLM path is supported.",
     )
     parser.add_argument(
         "--workspace-backend",
@@ -149,11 +140,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Additional pass@k checkpoints to report for coding tasks. Repeat to add more.",
     )
     parser.add_argument(
+        "--execution-model",
         "--rlm-model-id",
+        dest="rlm_model_id",
         default="",
         help=(
-            "Model id for vendored-RLM coding runs. Falls back to VTM_AGENT_MODEL "
-            "or VTM_LOCAL_LLM_MODEL."
+            "Execution model id for coding runs. Falls back to VTM_EXECUTION_MODEL "
+            "or the maintained OpenRouter default."
         ),
     )
     parser.add_argument(
@@ -181,14 +174,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum characters captured from a single workspace command.",
     )
     parser.add_argument(
+        "--rerank-model",
         "--rlm-model",
+        dest="rlm_model",
         default="",
-        help="Model name for lexical_rlm_rerank mode. Falls back to VTM_OPENAI_MODEL.",
-    )
-    parser.add_argument(
-        "--embedding-model",
-        default="",
-        help="Optional model name for embedding mode. Falls back to VTM_OPENAI_EMBEDDING_MODEL.",
+        help="Model id for lexical_rlm_rerank mode. Falls back to VTM_RERANK_MODEL.",
     )
     parser.add_argument(
         "--swebench-dataset-name",
@@ -282,8 +272,7 @@ def run_matrix_from_args(args: argparse.Namespace) -> BenchmarkMatrixResult:
         run_results[mode] = execute_benchmark_run(
             manifest,
             config,
-            rlm_model_name=args.rlm_model or None,
-            embedding_model_name=args.embedding_model or None,
+            rerank_model_name=args.rlm_model or None,
             execution_model_name=args.rlm_model_id or None,
         )
 

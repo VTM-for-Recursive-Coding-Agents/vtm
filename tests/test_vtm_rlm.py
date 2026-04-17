@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 
-import openai
+import pytest
 
 from vtm.adapters.git import GitRepoFingerprintCollector
 from vtm.adapters.runtime import RuntimeEnvFingerprintCollector
 from vtm.enums import ScopeKind
-from vtm.harness.executors import CodexBenchmarkExecutor, RLMBenchmarkExecutor
+from vtm.harness.executors import RLMBenchmarkExecutor
 from vtm.harness.models import ExecutorRequest, HarnessTaskPack
 from vtm.harness.workspace import LocalWorkspaceBackend
 from vtm.memory_items import VisibilityScope
@@ -21,9 +20,10 @@ from vtm_rlm.execution import VendoredRLMRunResult, run_vendored_rlm
 from vtm_rlm.memory_bridge import VTMMemoryBridge, summarize_memory_context
 from vtm_rlm.prompting import (
     CODING_RLM_SYSTEM_PROMPT,
-    build_codex_task_prompt,
     build_phase1_task_prompt,
 )
+
+openai = pytest.importorskip("openai")
 
 
 def _commit_memory(kernel, scope: VisibilityScope, memory) -> None:
@@ -63,7 +63,7 @@ def test_build_phase1_task_prompt_includes_memory_context() -> None:
         expected_changed_paths=("bug.py",),
         touched_paths=("bug.py",),
         target_patch_digest="deadbeef",
-        memory_mode="lexical",
+        memory_mode="verified_lexical",
         top_k=5,
         memory_context=(),
     )
@@ -87,7 +87,7 @@ def test_summarize_memory_context_marks_memory_as_advisory() -> None:
         expected_changed_paths=("bug.py",),
         touched_paths=("bug.py",),
         target_patch_digest="deadbeef",
-        memory_mode="lexical",
+        memory_mode="verified_lexical",
         top_k=5,
         memory_context=(
             {
@@ -136,7 +136,7 @@ def test_build_phase1_task_prompt_compacts_external_tasks() -> None:
         touched_paths=("astropy/io/ascii/qdp.py",),
         localization_notes=("Failing test file: astropy/io/ascii/tests/test_qdp.py",),
         target_patch_digest="deadbeef",
-        memory_mode="lexical",
+        memory_mode="verified_lexical",
         top_k=5,
         task_kind="swebench_lite",
         difficulty="external",
@@ -157,76 +157,6 @@ def test_build_phase1_task_prompt_compacts_external_tasks() -> None:
         "The issue is that the regex that searches for QDP commands is not case "
         "insensitive."
     ) in prompt
-
-
-def test_build_codex_task_prompt_includes_verification_and_memory() -> None:
-    task_pack = HarnessTaskPack(
-        case_id="task-codex-1",
-        repo_name="repo",
-        commit_pair_id="pair",
-        evaluation_backend="local_subprocess",
-        base_ref="base",
-        head_ref="head",
-        task_statement="Fix the parser bug.",
-        hints_text="Use the narrowest safe patch.",
-        expected_changed_paths=("bug.py",),
-        touched_paths=("bug.py",),
-        test_command=("python", "-m", "pytest", "tests/test_bug.py", "-q"),
-        target_patch_digest="deadbeef",
-        memory_mode="lexical",
-        top_k=5,
-        memory_context=(
-            {
-                "memory_id": "m1",
-                "title": "parser patch",
-                "summary": "bug.py should return value + 1",
-                "score": 0.9,
-                "status": "verified",
-            },
-        ),
-    )
-
-    prompt = build_codex_task_prompt(task_pack)
-
-    assert "Verification Command" in prompt
-    assert "python -m pytest tests/test_bug.py -q" in prompt
-    assert "Advisory VTM Memory" in prompt
-    assert "Leave the repository with a valid patch" in prompt
-
-
-def test_build_codex_task_prompt_filters_noisy_external_hints() -> None:
-    task_pack = HarnessTaskPack(
-        case_id="task-codex-2",
-        repo_name="repo",
-        commit_pair_id="pair",
-        evaluation_backend="swebench_harness",
-        base_ref="base",
-        head_ref="head",
-        task_statement="ascii.qdp Table format assumes QDP commands are upper case",
-        hints_text=(
-            "Welcome to Astropy and thanks for the issue!\n"
-            "A project member will respond to you as soon as possible.\n"
-            "The issue is that the regex that searches for QDP commands is not case "
-            "insensitive.\n"
-            "This attached patch fixes the issue, but there is probably a cleaner way.\n"
-        ),
-        fail_to_pass_tests=("astropy/io/ascii/tests/test_qdp.py::test_roundtrip[True]",),
-        expected_changed_paths=("astropy/io/ascii/qdp.py",),
-        touched_paths=("astropy/io/ascii/qdp.py",),
-        localization_notes=("Failing test file: astropy/io/ascii/tests/test_qdp.py",),
-        target_patch_digest="deadbeef",
-        memory_mode="no_memory",
-        top_k=5,
-        task_kind="swebench_lite",
-        difficulty="external",
-    )
-
-    prompt = build_codex_task_prompt(task_pack)
-
-    assert "regex that searches for QDP commands is not case insensitive" in prompt
-    assert "Welcome to Astropy" not in prompt
-    assert "Expected Changed Paths" not in prompt
-    assert "Failing test file: astropy/io/ascii/tests/test_qdp.py" in prompt
 
 
 def test_external_prompt_can_opt_into_expected_changed_paths_for_debug() -> None:
@@ -353,7 +283,7 @@ def test_run_vendored_rlm_sets_ollama_think_false(monkeypatch, tmp_path: Path) -
         expected_changed_paths=("bug.py",),
         touched_paths=("bug.py",),
         target_patch_digest="deadbeef",
-        memory_mode="lexical",
+        memory_mode="verified_lexical",
         top_k=5,
         memory_context=(),
     )
@@ -440,7 +370,7 @@ def test_rlm_executor_smoke_writes_patch_and_memory(
         repo_root=repo_root,
         base_ref="HEAD",
         output_root=output_root,
-        mode="lexical",
+        mode="verified_lexical",
         command_timeout_seconds=30,
         max_output_chars=4000,
     )
@@ -465,7 +395,7 @@ def test_rlm_executor_smoke_writes_patch_and_memory(
             "-q",
         ),
         target_patch_digest="deadbeef",
-        memory_mode="lexical",
+        memory_mode="verified_lexical",
         top_k=5,
     )
     task_file = output_root / "task.json"
@@ -517,317 +447,6 @@ def test_rlm_executor_smoke_writes_patch_and_memory(
         for candidate in retrieval.candidates
     )
 
-
-def test_codex_executor_smoke_writes_patch(tmp_path: Path, monkeypatch) -> None:
-    repo_root = tmp_path / "repo"
-    _build_bugfix_repo(repo_root)
-    output_root = tmp_path / "out"
-    prepared = LocalWorkspaceBackend().prepare_workspace(
-        case_id="synthetic_bugfix_codex",
-        attempt_index=1,
-        repo_root=repo_root,
-        base_ref="HEAD",
-        output_root=output_root,
-        mode="lexical",
-        command_timeout_seconds=30,
-        max_output_chars=4000,
-    )
-    task_pack = HarnessTaskPack(
-        case_id="synthetic_bugfix_codex",
-        repo_name="synthetic_python_smoke",
-        commit_pair_id="bugfix",
-        evaluation_backend="local_subprocess",
-        base_ref="HEAD",
-        head_ref="HEAD",
-        task_statement="Fix buggy_increment so the synthetic unit test passes again.",
-        failing_tests=("tests.test_bugfix_module.BugfixModuleTests.test_buggy_increment",),
-        test_command=(
-            "python3",
-            "-m",
-            "unittest",
-            "discover",
-            "-s",
-            "tests",
-            "-p",
-            "test_*.py",
-            "-q",
-        ),
-        target_patch_digest="deadbeef",
-        memory_mode="lexical",
-        top_k=5,
-        memory_context=(
-            {
-                "memory_id": "m1",
-                "title": "increment fix",
-                "summary": "bugfix_module.py should return value + 1",
-                "score": 0.99,
-                "status": "verified",
-            },
-        ),
-    )
-    task_file = output_root / "task-codex.json"
-    task_file.write_text(task_pack.model_dump_json(indent=2), encoding="utf-8")
-
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    fake_codex = fake_bin / "codex"
-    fake_codex.write_text(
-        "#!/usr/bin/env python3\n"
-        "import pathlib\n"
-        "import sys\n"
-        "\n"
-        "args = sys.argv[1:]\n"
-        "cwd = pathlib.Path.cwd()\n"
-        "output = None\n"
-        "index = 0\n"
-        "while index < len(args):\n"
-        "    if args[index] == '-C':\n"
-        "        cwd = pathlib.Path(args[index + 1])\n"
-        "        index += 2\n"
-        "        continue\n"
-        "    if args[index] == '-o':\n"
-        "        output = pathlib.Path(args[index + 1])\n"
-        "        index += 2\n"
-        "        continue\n"
-        "    index += 1\n"
-        "prompt = sys.stdin.read()\n"
-        "assert prompt\n"
-        "(cwd / 'bugfix_module.py').write_text(\n"
-        "    'def buggy_increment(value: int) -> int:\\n'\n"
-        "    '    return value + 1\\n',\n"
-        "    encoding='utf-8',\n"
-        ")\n"
-        "if output is not None:\n"
-        "    output.write_text('Applied bugfix patch', encoding='utf-8')\n"
-        "print('{\"event\":\"completed\"}')\n",
-        encoding="utf-8",
-    )
-    fake_codex.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ['PATH']}")
-
-    result = CodexBenchmarkExecutor(
-        model_id="gpt-5.4",
-        max_timeout_seconds=30,
-    ).execute(
-        request=ExecutorRequest(
-            case_id=task_pack.case_id,
-            task_file=str(task_file),
-            workspace=str(prepared.workspace_root),
-            artifact_root=str(prepared.artifact_root),
-            attempt_index=1,
-            workspace_backend=prepared.backend_name,
-            test_command=task_pack.test_command,
-        ),
-        prepared_workspace=prepared,
-        runtime_context=None,
-    )
-
-    assert result.command_exit_code == 0
-    assert result.test_exit_code == 0
-    assert "bugfix_module.py" in result.produced_patch_text
-    assert result.agent_metadata["execution_engine"] == "codex"
-    assert Path(result.agent_artifacts["codex_last_message_path"]).read_text(
-        encoding="utf-8"
-    ) == "Applied bugfix patch"
-
-
-def test_codex_executor_timeout_preserves_partial_outputs(tmp_path: Path, monkeypatch) -> None:
-    repo_root = tmp_path / "repo"
-    _build_bugfix_repo(repo_root)
-    output_root = tmp_path / "out-timeout"
-    prepared = LocalWorkspaceBackend().prepare_workspace(
-        case_id="synthetic_bugfix_codex_timeout",
-        attempt_index=1,
-        repo_root=repo_root,
-        base_ref="HEAD",
-        output_root=output_root,
-        mode="no_memory",
-        command_timeout_seconds=30,
-        max_output_chars=4000,
-    )
-    task_pack = HarnessTaskPack(
-        case_id="synthetic_bugfix_codex_timeout",
-        repo_name="synthetic_python_smoke",
-        commit_pair_id="bugfix",
-        evaluation_backend="local_subprocess",
-        base_ref="HEAD",
-        head_ref="HEAD",
-        task_statement="Fix buggy_increment so the synthetic unit test passes again.",
-        failing_tests=("tests.test_bugfix_module.BugfixModuleTests.test_buggy_increment",),
-        target_patch_digest="deadbeef",
-        memory_mode="no_memory",
-        top_k=5,
-    )
-    task_file = output_root / "task-codex-timeout.json"
-    task_file.write_text(task_pack.model_dump_json(indent=2), encoding="utf-8")
-
-    original_run = subprocess.run
-
-    def fake_run(*args, **kwargs):  # noqa: ANN002, ANN003
-        command = args[0]
-        if command[:2] != ["codex", "exec"]:
-            return original_run(*args, **kwargs)
-        workspace_root = Path(command[command.index("-C") + 1])
-        (workspace_root / "bugfix_module.py").write_text(
-            "def buggy_increment(value: int) -> int:\n"
-            "    return value + 1\n",
-            encoding="utf-8",
-        )
-        raise subprocess.TimeoutExpired(
-            cmd=command,
-            timeout=kwargs["timeout"],
-            output=b'{"event":"partial"}\n',
-            stderr=b"timed out waiting for codex\n",
-        )
-
-    monkeypatch.setattr("vtm.harness.executors.subprocess.run", fake_run)
-
-    result = CodexBenchmarkExecutor(
-        model_id="gpt-5.4",
-        max_timeout_seconds=1,
-    ).execute(
-        request=ExecutorRequest(
-            case_id=task_pack.case_id,
-            task_file=str(task_file),
-            workspace=str(prepared.workspace_root),
-            artifact_root=str(prepared.artifact_root),
-            attempt_index=1,
-            workspace_backend=prepared.backend_name,
-            test_command=(),
-        ),
-        prepared_workspace=prepared,
-        runtime_context=None,
-    )
-
-    assert result.command_timed_out is True
-    assert result.command_exit_code is None
-    assert "bugfix_module.py" in result.produced_patch_text
-    assert Path(result.command_stdout_path or "").read_text(encoding="utf-8") == (
-        '{"event":"partial"}\n'
-    )
-    assert Path(result.command_stderr_path or "").read_text(encoding="utf-8") == (
-        "timed out waiting for codex\n"
-    )
-
-
-def test_codex_executor_uses_verified_memory_as_second_phase_fallback(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    repo_root = tmp_path / "repo"
-    _build_bugfix_repo(repo_root)
-    output_root = tmp_path / "out-codex-fallback"
-    prepared = LocalWorkspaceBackend().prepare_workspace(
-        case_id="synthetic_bugfix_codex_fallback",
-        attempt_index=1,
-        repo_root=repo_root,
-        base_ref="HEAD",
-        output_root=output_root,
-        mode="verified_lexical",
-        command_timeout_seconds=30,
-        max_output_chars=4000,
-    )
-    task_pack = HarnessTaskPack(
-        case_id="synthetic_bugfix_codex_fallback",
-        repo_name="synthetic_python_smoke",
-        commit_pair_id="bugfix",
-        evaluation_backend="local_subprocess",
-        base_ref="HEAD",
-        head_ref="HEAD",
-        task_statement="Fix buggy_increment so the synthetic unit test passes again.",
-        failing_tests=("tests.test_bugfix_module.BugfixModuleTests.test_buggy_increment",),
-        test_command=(
-            "python3",
-            "-m",
-            "unittest",
-            "discover",
-            "-s",
-            "tests",
-            "-p",
-            "test_*.py",
-            "-q",
-        ),
-        target_patch_digest="deadbeef",
-        memory_mode="verified_lexical",
-        top_k=5,
-        memory_context=(
-            {
-                "memory_id": "m1",
-                "title": "increment fix",
-                "summary": "bugfix_module.py should return value + 1",
-                "score": 0.99,
-                "status": "verified",
-            },
-            {
-                "memory_id": "m2",
-                "title": "stale hint",
-                "summary": "ignore this stale note",
-                "score": 0.50,
-                "status": "stale",
-            },
-        ),
-    )
-    task_file = output_root / "task-codex-fallback.json"
-    task_file.write_text(task_pack.model_dump_json(indent=2), encoding="utf-8")
-
-    phase_prompts: list[str] = []
-    original_run = subprocess.run
-
-    def fake_run(*args, **kwargs):  # noqa: ANN002, ANN003
-        command = args[0]
-        if command[:2] != ["codex", "exec"]:
-            return original_run(*args, **kwargs)
-        prompt = kwargs["input"]
-        phase_prompts.append(prompt)
-        workspace_root = Path(command[command.index("-C") + 1])
-        output_path = Path(command[command.index("-o") + 1])
-        if len(phase_prompts) == 2 or "Advisory VTM Memory" in prompt:
-            (workspace_root / "bugfix_module.py").write_text(
-                "def buggy_increment(value: int) -> int:\n"
-                "    return value + 1\n"
-                "    # memory fallback\n",
-                encoding="utf-8",
-            )
-            output_path.write_text("Applied memory-assisted patch", encoding="utf-8")
-            return subprocess.CompletedProcess(
-                command,
-                0,
-                stdout='{"event":"completed"}\n',
-                stderr="",
-            )
-        output_path.write_text("Grounded on repo only", encoding="utf-8")
-        return subprocess.CompletedProcess(
-            command,
-            0,
-            stdout='{"event":"completed"}\n',
-            stderr="",
-        )
-
-    monkeypatch.setattr("vtm.harness.executors.subprocess.run", fake_run)
-
-    result = CodexBenchmarkExecutor(
-        model_id="gpt-5.4",
-        max_timeout_seconds=30,
-    ).execute(
-        request=ExecutorRequest(
-            case_id=task_pack.case_id,
-            task_file=str(task_file),
-            workspace=str(prepared.workspace_root),
-            artifact_root=str(prepared.artifact_root),
-            attempt_index=1,
-            workspace_backend=prepared.backend_name,
-            test_command=task_pack.test_command,
-        ),
-        prepared_workspace=prepared,
-        runtime_context=None,
-    )
-
-    assert result.test_exit_code == 0
-    assert result.agent_metadata["codex_execution_strategy"] == "ground_then_verified_memory"
-    assert len(result.agent_metadata["codex_phases"]) == 2
-    assert "Advisory VTM Memory" not in phase_prompts[0]
-    assert "Advisory VTM Memory" in phase_prompts[1]
-    assert "ignore this stale note" not in phase_prompts[1]
 
 
 def test_rlm_executor_uses_memory_as_second_phase_fallback(
@@ -898,7 +517,7 @@ def test_rlm_executor_uses_memory_as_second_phase_fallback(
         repo_root=repo_root,
         base_ref="HEAD",
         output_root=output_root,
-        mode="lexical",
+        mode="verified_lexical",
         command_timeout_seconds=30,
         max_output_chars=4000,
     )
@@ -923,7 +542,7 @@ def test_rlm_executor_uses_memory_as_second_phase_fallback(
             "-q",
         ),
         target_patch_digest="deadbeef",
-        memory_mode="lexical",
+        memory_mode="verified_lexical",
         top_k=5,
         memory_context=(
             {
@@ -1108,3 +727,138 @@ def test_rlm_executor_uses_corrective_retry_for_failed_patch(
     phases = result.agent_metadata["rlm_phases"]
     assert phases[0]["corrective_retry_used"] is True
     assert phases[0]["corrective_retry_reason"] is not None
+
+
+def test_rlm_corrective_retry_hides_expected_changed_paths_for_external_tasks(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    retry_inputs: list[HarnessTaskPack] = []
+
+    def fake_run_vendored_rlm(
+        *,
+        task_pack,
+        workspace_root: Path,
+        artifact_root: Path,
+        model_id: str,
+        kernel,
+        scopes,
+        max_iterations: int,
+        max_depth: int,
+        max_timeout_seconds: int,
+        base_url: str | None = None,
+        api_key: str | None = None,
+    ) -> VendoredRLMRunResult:
+        del kernel, scopes, max_iterations, max_depth, max_timeout_seconds, base_url, api_key
+        artifact_root.mkdir(parents=True, exist_ok=True)
+        retry_inputs.append(task_pack)
+        if "Corrective Retry" in task_pack.task_statement:
+            (workspace_root / "bugfix_module.py").write_text(
+                "def buggy_increment(value: int) -> int:\n"
+                "    return value + 1\n",
+                encoding="utf-8",
+            )
+        else:
+            (workspace_root / "bugfix_module.py").write_text(
+                "def buggy_increment(value: int) -> int:\n"
+                "return value + 1\n",
+                encoding="utf-8",
+            )
+        response_path = artifact_root / "response.txt"
+        response_path.write_text("FINAL(done)", encoding="utf-8")
+        completion_json_path = artifact_root / "completion.json"
+        completion_json_path.write_text('{"response": "ok"}', encoding="utf-8")
+        metadata_json_path = artifact_root / "trajectory.json"
+        metadata_json_path.write_text(f'{{"model_id": "{model_id}"}}', encoding="utf-8")
+        return VendoredRLMRunResult(
+            response="FINAL(done)",
+            runtime_ms=25.0,
+            response_path=str(response_path),
+            completion_json_path=str(completion_json_path),
+            metadata_json_path=str(metadata_json_path),
+            trajectory_dir=str(artifact_root / "trajectory"),
+            usage_summary={"total_input_tokens": 10, "total_output_tokens": 5, "total_cost": 0.0},
+            metadata={"model_id": model_id},
+        )
+
+    monkeypatch.setattr("vtm.harness.executors.run_vendored_rlm", fake_run_vendored_rlm)
+
+    repo_root = tmp_path / "repo"
+    _build_bugfix_repo(repo_root)
+    output_root = tmp_path / "out-external-retry"
+    prepared = LocalWorkspaceBackend().prepare_workspace(
+        case_id="synthetic_bugfix_external_retry",
+        attempt_index=1,
+        repo_root=repo_root,
+        base_ref="HEAD",
+        output_root=output_root,
+        mode="no_memory",
+        command_timeout_seconds=30,
+        max_output_chars=4000,
+    )
+    task_pack = HarnessTaskPack(
+        case_id="synthetic_bugfix_external_retry",
+        repo_name="synthetic_python_smoke",
+        commit_pair_id="bugfix",
+        evaluation_backend="swebench_harness",
+        base_ref="HEAD",
+        head_ref="HEAD",
+        task_statement="Fix buggy_increment so the synthetic unit test passes again.",
+        hints_text="Start from the failing test.",
+        fail_to_pass_tests=("tests/test_bugfix_module.py::BugfixModuleTests::test_buggy_increment",),
+        expected_changed_paths=("bugfix_module.py",),
+        touched_paths=("bugfix_module.py",),
+        test_command=(
+            "python3",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tests",
+            "-p",
+            "test_*.py",
+            "-q",
+        ),
+        target_patch_digest="deadbeef",
+        memory_mode="no_memory",
+        top_k=5,
+        task_kind="swebench_lite",
+        difficulty="external",
+    )
+    task_file = output_root / "task.json"
+    task_file.write_text(task_pack.model_dump_json(indent=2), encoding="utf-8")
+
+    result = RLMBenchmarkExecutor(
+        model_id="fake-model",
+        max_iterations=4,
+        max_timeout_seconds=30,
+    ).execute(
+        request=ExecutorRequest(
+            case_id=task_pack.case_id,
+            task_file=str(task_file),
+            workspace=str(prepared.workspace_root),
+            artifact_root=str(prepared.artifact_root),
+            attempt_index=1,
+            workspace_backend=prepared.backend_name,
+            test_command=task_pack.test_command,
+        ),
+        prepared_workspace=prepared,
+        runtime_context=RLMRuntimeContext(
+            kernel=None,
+            task_scope=VisibilityScope(
+                kind=ScopeKind.TASK,
+                scope_id="synthetic_bugfix_external_retry",
+            ),
+            durable_scope=None,
+            dependency_builder=None,
+        ),
+    )
+
+    assert result.test_exit_code == 0
+    assert len(retry_inputs) == 2
+    retry_task_pack = retry_inputs[1]
+    assert "Corrective Retry" in retry_task_pack.task_statement
+    assert "Focus on these files" not in retry_task_pack.task_statement
+    assert "bugfix_module.py" not in retry_task_pack.task_statement
+    assert "Focus on these files" not in (retry_task_pack.hints_text or "")
+    assert "bugfix_module.py" not in (retry_task_pack.hints_text or "")

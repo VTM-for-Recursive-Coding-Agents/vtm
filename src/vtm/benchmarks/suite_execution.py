@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TypeVar
 
-from vtm.adapters.embeddings import EmbeddingAdapter
 from vtm.adapters.rlm import RLMAdapter
 from vtm.benchmarks.coding_suite import run_coding_suite
 from vtm.benchmarks.drift_suite import run_drift_suite
@@ -40,7 +39,6 @@ class BenchmarkSuiteExecutor:
         repo_manager: RepoWorkspaceManager,
         symbol_indexer: SymbolIndexer,
         rlm_adapter: RLMAdapter | None = None,
-        embedding_adapter: EmbeddingAdapter | None = None,
     ) -> None:
         """Create a suite executor with shared repo and indexing utilities."""
         self._manifest = manifest
@@ -51,7 +49,6 @@ class BenchmarkSuiteExecutor:
             config=config,
             symbol_indexer=symbol_indexer,
             rlm_adapter=rlm_adapter,
-            embedding_adapter=embedding_adapter,
         )
 
     def run_retrieval_suite(

@@ -1,10 +1,27 @@
 # Benchmark Recipes
 
-These commands are the maintained entrypoints for repeatable local runs.
+These are the maintained commands for the narrowed paper artifact: OpenRouter-only inference, a verified lexical memory study, no embeddings, and no terminal track.
+
+## OpenRouter Setup
+
+All maintained inference and coding execution paths use OpenRouter's OpenAI-compatible API only.
+
+```bash
+export OPENROUTER_API_KEY=...
+export VTM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+export VTM_EXECUTION_MODEL=google/gemma-4-31b-it:free
+export VTM_RERANK_MODEL=nvidia/nemotron-3-nano-30b-a3b:free
+```
+
+Recommended models:
+
+- smoke or cheap rerank runs: `nvidia/nemotron-3-nano-30b-a3b:free`
+- main execution runs: `google/gemma-4-31b-it:free`
+- optional stronger ablation: `nvidia/nemotron-3-super-120b-a12b:free`
 
 ## Retrieval
 
-Synthetic no-memory baseline:
+No-memory baseline:
 
 ```bash
 uv run python -m vtm.benchmarks.run \
@@ -14,17 +31,7 @@ uv run python -m vtm.benchmarks.run \
   --output .benchmarks/retrieval-no-memory
 ```
 
-Synthetic naive lexical retrieval:
-
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/synthetic-smoke.json \
-  --suite retrieval \
-  --mode naive_lexical \
-  --output .benchmarks/retrieval-naive-lexical
-```
-
-Synthetic verified lexical retrieval:
+Verified lexical retrieval:
 
 ```bash
 uv run python -m vtm.benchmarks.run \
@@ -34,17 +41,28 @@ uv run python -m vtm.benchmarks.run \
   --output .benchmarks/retrieval-verified-lexical
 ```
 
-Synthetic embedding retrieval:
+Naive lexical ablation:
 
 ```bash
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/synthetic-smoke.json \
   --suite retrieval \
-  --mode embedding \
-  --output .benchmarks/retrieval-embedding
+  --mode naive_lexical \
+  --output .benchmarks/retrieval-naive-lexical
 ```
 
-Target one repo/pair deterministically:
+Optional reranked ablation:
+
+```bash
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/synthetic-smoke.json \
+  --suite retrieval \
+  --mode lexical_rlm_rerank \
+  --output .benchmarks/retrieval-lexical-rlm \
+  --rerank-model "$VTM_RERANK_MODEL"
+```
+
+Target one pinned OSS pair:
 
 ```bash
 uv run python -m vtm.benchmarks.run \
@@ -58,6 +76,8 @@ uv run python -m vtm.benchmarks.run \
 
 ## Drift
 
+Verified lexical drift run:
+
 ```bash
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/synthetic-smoke.json \
@@ -66,149 +86,55 @@ uv run python -m vtm.benchmarks.run \
   --output .benchmarks/drift-verified-lexical
 ```
 
-## Coding tasks
+## Synthetic Coding Smoke
 
-Dry run that only writes typed task packs and retrieval context:
+No-memory baseline:
 
 ```bash
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/synthetic-smoke.json \
   --suite coding \
-  --mode verified_lexical \
-  --output .benchmarks/coding-dry-run
+  --mode no_memory \
+  --output .benchmarks/coding-no-memory \
+  --pair bugfix \
+  --execution-model "$VTM_EXECUTION_MODEL"
 ```
 
-Harder local terminal-task track:
+Verified lexical run:
 
 ```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/terminal-smoke.json \
-  --suite coding \
-  --mode verified_lexical \
-  --output .benchmarks/terminal-smoke-dry-run
-```
-
-Shell-command terminal track:
-
-```bash
-export VTM_AGENT_BASE_URL=http://127.0.0.1:8000
-export VTM_AGENT_MODEL=qwen3.5-35b-a3b
-
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/terminal-shell-smoke.json \
-  --suite coding \
-  --mode verified_lexical \
-  --output .benchmarks/terminal-shell-smoke \
-  --rlm-model-id "$VTM_AGENT_MODEL"
-```
-
-Vendored-RLM executor:
-
-```bash
-export VTM_AGENT_BASE_URL=http://127.0.0.1:8000
-export VTM_AGENT_MODEL=qwen3.5-35b-a3b
-
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/synthetic-smoke.json \
   --suite coding \
   --mode verified_lexical \
   --output .benchmarks/coding-verified-lexical \
   --pair bugfix \
-  --rlm-model-id "$VTM_AGENT_MODEL" \
-  --workspace-command-timeout-seconds 120 \
-  --workspace-max-output-chars 20000
+  --execution-model "$VTM_EXECUTION_MODEL"
 ```
 
-Attempt-aware vendored-RLM run on the harder terminal track:
-
-```bash
-export VTM_AGENT_BASE_URL=http://127.0.0.1:8000
-export VTM_AGENT_MODEL=qwen3.5-35b-a3b
-
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/terminal-smoke.json \
-  --suite coding \
-  --mode verified_lexical \
-  --output .benchmarks/terminal-smoke-rlm \
-  --rlm-model-id "$VTM_AGENT_MODEL" \
-  --attempts 5 \
-  --pass-k 1 \
-  --pass-k 5
-```
-
-Attempt-aware vendored-RLM run on the shell-command track under Docker:
-
-```bash
-export VTM_AGENT_BASE_URL=http://127.0.0.1:8000
-export VTM_AGENT_MODEL=qwen3.5-35b-a3b
-
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/terminal-shell-smoke.json \
-  --suite coding \
-  --mode verified_lexical \
-  --output .benchmarks/terminal-shell-rlm \
-  --rlm-model-id "$VTM_AGENT_MODEL" \
-  --workspace-backend docker_workspace \
-  --docker-image python:3.12 \
-  --attempts 5 \
-  --pass-k 1 \
-  --pass-k 5
-```
-
-Maintained study matrix for the terminal-smoke track:
+Naive lexical ablation:
 
 ```bash
 uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/terminal-smoke.json \
-  --suite coding \
-  --mode no_memory \
-  --output .benchmarks/terminal-smoke-no-memory
-
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/terminal-smoke.json \
+  --manifest benchmarks/manifests/synthetic-smoke.json \
   --suite coding \
   --mode naive_lexical \
-  --output .benchmarks/terminal-smoke-naive-lexical
-
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/terminal-smoke.json \
-  --suite coding \
-  --mode verified_lexical \
-  --output .benchmarks/terminal-smoke-verified-lexical
-
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/terminal-smoke.json \
-  --suite coding \
-  --mode lexical_rlm_rerank \
-  --output .benchmarks/terminal-smoke-lexical-rlm
+  --output .benchmarks/coding-naive-lexical \
+  --pair bugfix \
+  --execution-model "$VTM_EXECUTION_MODEL"
 ```
 
-Maintained study matrix for the shell-command track:
+Optional reranked ablation:
 
 ```bash
 uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/terminal-shell-smoke.json \
-  --suite coding \
-  --mode no_memory \
-  --output .benchmarks/terminal-shell-no-memory
-
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/terminal-shell-smoke.json \
-  --suite coding \
-  --mode naive_lexical \
-  --output .benchmarks/terminal-shell-naive-lexical
-
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/terminal-shell-smoke.json \
-  --suite coding \
-  --mode verified_lexical \
-  --output .benchmarks/terminal-shell-verified-lexical
-
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/terminal-shell-smoke.json \
+  --manifest benchmarks/manifests/synthetic-smoke.json \
   --suite coding \
   --mode lexical_rlm_rerank \
-  --output .benchmarks/terminal-shell-lexical-rlm
+  --output .benchmarks/coding-lexical-rlm \
+  --pair bugfix \
+  --execution-model "$VTM_EXECUTION_MODEL" \
+  --rerank-model "$VTM_RERANK_MODEL"
 ```
 
 ## SWE-bench Lite
@@ -218,31 +144,51 @@ Prepare a generated manifest:
 ```bash
 uv sync --extra bench
 
-uv run python -m vtm.benchmarks.prepare_swebench_lite \
+vtm-prepare-swebench-lite \
   --output-manifest .benchmarks/generated/swebench-lite.json \
   --cache-root .benchmarks/swebench-lite
 ```
 
-Run a targeted harness-backed slice:
+Targeted no-memory run:
 
 ```bash
-export VTM_LOCAL_LLM_BASE_URL=http://127.0.0.1:8000
-export VTM_LOCAL_LLM_MODEL=qwen3.5-35b-a3b
+uv run python -m vtm.benchmarks.run \
+  --manifest .benchmarks/generated/swebench-lite.json \
+  --suite coding \
+  --mode no_memory \
+  --output .benchmarks/swebench-lite-no-memory \
+  --repo astropy__astropy \
+  --pair astropy__astropy-14182 \
+  --execution-model "$VTM_EXECUTION_MODEL" \
+  --swebench-dataset-name princeton-nlp/SWE-bench_Lite
+```
 
+Targeted verified lexical run:
+
+```bash
 uv run python -m vtm.benchmarks.run \
   --manifest .benchmarks/generated/swebench-lite.json \
   --suite coding \
   --mode verified_lexical \
-  --output .benchmarks/swebench-lite-targeted \
+  --output .benchmarks/swebench-lite-verified-lexical \
   --repo astropy__astropy \
   --pair astropy__astropy-14182 \
-  --rlm-model-id "$VTM_LOCAL_LLM_MODEL" \
+  --execution-model "$VTM_EXECUTION_MODEL" \
   --swebench-dataset-name princeton-nlp/SWE-bench_Lite
 ```
 
-## Comparing completed runs
+Optional compare:
 
-Compare two retrieval runs with paired case deltas and confidence intervals:
+```bash
+uv run python -m vtm.benchmarks.compare \
+  --baseline .benchmarks/swebench-lite-no-memory \
+  --candidate .benchmarks/swebench-lite-verified-lexical \
+  --output .benchmarks/swebench-lite-compare
+```
+
+## Comparing Completed Runs
+
+Compare retrieval baselines:
 
 ```bash
 uv run python -m vtm.benchmarks.compare \
@@ -250,78 +196,3 @@ uv run python -m vtm.benchmarks.compare \
   --candidate .benchmarks/retrieval-verified-lexical \
   --output .benchmarks/retrieval-compare
 ```
-
-Compare two coding runs and include paired `pass_at_k` / `resolved_at_k` comparisons from `attempts.jsonl`:
-
-```bash
-uv run python -m vtm.benchmarks.compare \
-  --baseline .benchmarks/terminal-smoke-no-memory \
-  --candidate .benchmarks/terminal-smoke-verified-lexical \
-  --output .benchmarks/terminal-smoke-compare
-```
-
-## Running maintained matrices
-
-Run the maintained terminal-smoke matrix and compare every selected mode against `no_memory`:
-
-```bash
-uv run python -m vtm.benchmarks.matrix \
-  --preset terminal_smoke \
-  --output .benchmarks/terminal-smoke-matrix \
-  --mode no_memory \
-  --mode naive_lexical \
-  --mode verified_lexical \
-  --rlm-model-id "$VTM_AGENT_MODEL" \
-  --attempts 3 \
-  --pass-k 1 \
-  --pass-k 3
-```
-
-Run the maintained shell-command matrix under Docker:
-
-```bash
-uv run python -m vtm.benchmarks.matrix \
-  --preset terminal_shell_smoke \
-  --output .benchmarks/terminal-shell-matrix \
-  --mode no_memory \
-  --mode naive_lexical \
-  --mode verified_lexical \
-  --rlm-model-id "$VTM_AGENT_MODEL" \
-  --workspace-backend docker_workspace \
-  --docker-image python:3.12 \
-  --attempts 3 \
-  --pass-k 1 \
-  --pass-k 3
-```
-
-Include `lexical_rlm_rerank` when an RLM model is configured:
-
-```bash
-export VTM_OPENAI_MODEL=gpt-5.4-mini
-export VTM_AGENT_MODEL=qwen3.5-35b-a3b
-
-uv run python -m vtm.benchmarks.matrix \
-  --preset terminal_smoke \
-  --output .benchmarks/terminal-smoke-matrix-rlm \
-  --mode no_memory \
-  --mode verified_lexical \
-  --mode lexical_rlm_rerank \
-  --rlm-model-id "$VTM_AGENT_MODEL" \
-  --rlm-model "$VTM_OPENAI_MODEL"
-```
-
-## Notes
-
-- Retrieval summaries include both `taskish_behavior` and `smoke_identity` slices.
-- Coding task packs are written as typed `HarnessTaskPack` JSON under `task-packs/`.
-- Repeated-attempt coding runs keep one aggregate row per case in `results.jsonl` and one row per attempt in `attempts.jsonl`.
-- Offline comparisons write `comparison.json` plus a human-readable `comparison.md`.
-- Matrix runs write one completed benchmark run per mode under `runs/<mode>/` plus baseline comparisons under `comparisons/<baseline>-vs-<mode>/`.
-- Attempt-aware workspaces and artifacts live under `workspaces/<mode>/<case-id>/attempt-01` and `executor-artifacts/<case-id>/attempt-01`.
-- Case-local executor artifacts always include `command-events.jsonl`, `final-git-status.txt`, `produced.patch`, and final verification stdout/stderr files.
-- Vendored-RLM runs additionally emit `response.txt`, `completion.json`, and optional trajectory artifacts under `executor-artifacts/<case-id>/attempt-01/rlm/`.
-- Docker-backed attempts require `--workspace-backend docker_workspace` plus `--docker-image`; `--docker-network` defaults to `none`.
-- Shell-command tasks still use the coding suite, the standard `test_command` verifier, and diff-based scoring when they regenerate tracked files.
-- If `--attempts > 1` and no explicit `--pass-k` values are provided, the runner reports `pass_at_1` and `pass_at_<attempt_count>` by default.
-- Use repeated `--attempts` and `--pass-k` runs to compare memory modes under the same vendored-RLM execution engine.
-- Prefer `--repo` and `--pair` filters over ad hoc truncation when you want reproducible targeted runs.

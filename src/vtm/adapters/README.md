@@ -6,6 +6,5 @@ Contents
 - `git.py`: Repository fingerprint collection.
 - `runtime.py`: Runtime and tool-version fingerprint collection.
 - `python_ast.py` and `tree_sitter.py`: Syntax-anchor construction and relocation.
-- `embeddings.py`: Deterministic embedding adapter contract and local reference implementation.
 - `rlm.py`: Provider-neutral reranking contract.
-- `openai_*.py`: Optional OpenAI-compatible reference implementations.
+- `openai_chat.py` and `openai_rlm.py`: thin OpenAI-compatible reference implementations maintained for OpenRouter-backed flows.

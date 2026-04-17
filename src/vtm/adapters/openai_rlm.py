@@ -1,4 +1,4 @@
-"""Optional OpenAI-backed reranking adapter."""
+"""Optional OpenAI-compatible reranking adapter with OpenRouter defaults."""
 
 from __future__ import annotations
 
@@ -8,17 +8,21 @@ from typing import Any
 
 from vtm.adapters.rlm import RLMAdapter, RLMRankedCandidate, RLMRankRequest, RLMRankResponse
 
+DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "https://openrouter.ai/api/v1"
+
 
 class OpenAIRLMAdapter:
-    """Ranks lexical retrieval candidates using an OpenAI model."""
+    """Ranks lexical retrieval candidates using an OpenAI-compatible model."""
 
     def __init__(
         self,
         *,
         model: str,
         client: Any | None = None,
+        base_url: str | None = None,
         api_key: str | None = None,
-        api_key_env: str = "OPENAI_API_KEY",
+        api_key_env: str = "OPENROUTER_API_KEY",
+        base_url_env: str = "VTM_OPENROUTER_BASE_URL",
         max_output_tokens: int = 1200,
         temperature: float = 0.0,
     ) -> None:
@@ -31,12 +35,22 @@ class OpenAIRLMAdapter:
         self._model = model
         self._max_output_tokens = max_output_tokens
         self._temperature = temperature
-        self._client = client or self._build_client(api_key=api_key, api_key_env=api_key_env)
+        self._base_url = (
+            base_url or os.getenv(base_url_env) or DEFAULT_OPENAI_COMPATIBLE_BASE_URL
+        )
+        self._provider = (
+            "openrouter" if "openrouter.ai" in self._base_url.lower() else "openai_compatible"
+        )
+        self._client = client or self._build_client(
+            api_key=api_key,
+            api_key_env=api_key_env,
+            base_url=self._base_url,
+        )
 
     @property
     def cache_identity(self) -> str:
         """Return the adapter identity used in cache keys."""
-        return f"openai:{self._model}"
+        return f"{self._provider}:{self._model}"
 
     def rank_candidates(self, request: RLMRankRequest) -> RLMRankResponse:
         """Rerank lexical candidates and return a normalized response."""
@@ -130,23 +144,29 @@ class OpenAIRLMAdapter:
             candidates=tuple(ranked_candidates[: request.top_k]),
             model_name=self._model,
             usage=self._extract_usage(response),
-            metadata={"provider": "openai"},
+            metadata={"provider": self._provider, "base_url": self._base_url},
         )
 
-    def _build_client(self, *, api_key: str | None, api_key_env: str) -> Any:
+    def _build_client(
+        self,
+        *,
+        api_key: str | None,
+        api_key_env: str,
+        base_url: str,
+    ) -> Any:
         resolved_api_key = api_key or os.getenv(api_key_env)
         if not resolved_api_key:
             raise ValueError(
-                "OpenAI RLM adapter requires api_key or the environment variable "
+                "OpenAI-compatible RLM adapter requires api_key or the environment variable "
                 f"{api_key_env!r}"
             )
         try:
             from openai import OpenAI  # type: ignore[import-not-found]
         except ImportError as exc:
             raise RuntimeError(
-                "OpenAI RLM adapter requires the optional 'openai' dependency"
+                "OpenAI-compatible RLM adapter requires the optional 'openai' dependency"
             ) from exc
-        return OpenAI(api_key=resolved_api_key)
+        return OpenAI(api_key=resolved_api_key, base_url=base_url)
 
     def _build_prompt(self, request: RLMRankRequest) -> str:
         candidate_lines = []

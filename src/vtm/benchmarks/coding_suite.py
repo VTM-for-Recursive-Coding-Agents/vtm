@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import subprocess
 from collections.abc import Callable
@@ -24,12 +23,12 @@ from vtm.benchmarks.models import (
     RepoSpec,
     resolved_benchmark_mode,
 )
+from vtm.benchmarks.openrouter import execution_model, openrouter_api_key, openrouter_base_url
 from vtm.benchmarks.repo_materialization import RepoWorkspaceManager
 from vtm.benchmarks.swebench_harness import SWEbenchHarnessRunner
 from vtm.benchmarks.symbol_index import SymbolIndexer
 from vtm.enums import EvidenceBudget, EvidenceKind, MemoryKind, ScopeKind, ValidityStatus
 from vtm.harness.executors import (
-    CodexBenchmarkExecutor,
     RLMBenchmarkExecutor,
 )
 from vtm.harness.models import ExecutorRequest, HarnessTaskPack, TaskMemoryContextItem
@@ -46,7 +45,6 @@ from vtm.services import TransactionalMemoryKernel
 from vtm.stores import (
     FilesystemArtifactStore,
     SqliteCacheStore,
-    SqliteEmbeddingIndexStore,
     SqliteMetadataStore,
 )
 from vtm_rlm.context import RLMRuntimeContext
@@ -197,17 +195,14 @@ def prepare_coding_task(
     metadata: SqliteMetadataStore | None = None
     artifacts: FilesystemArtifactStore | None = None
     cache: SqliteCacheStore | None = None
-    embedding_index: SqliteEmbeddingIndexStore | None = None
     durable_scope: VisibilityScope | None = None
     if config.mode != "no_memory":
         base_symbols = symbol_indexer.extract_symbols(repo_root)
-        kernel, metadata, artifacts, cache, embedding_index, durable_scope = (
-            kernel_factory.open_kernel(
-                repo_root=repo_root,
-                repo_name=repo_spec.repo_name,
-                pair=pair,
-                output_dir=output_dir,
-            )
+        kernel, metadata, artifacts, cache, durable_scope = kernel_factory.open_kernel(
+            repo_root=repo_root,
+            repo_name=repo_spec.repo_name,
+            pair=pair,
+            output_dir=output_dir,
         )
         kernel_factory.seed_memories(
             kernel,
@@ -265,7 +260,7 @@ def prepare_coding_task(
         )
     finally:
         if metadata is not None and artifacts is not None and cache is not None:
-            kernel_factory.close_kernel_stores(metadata, artifacts, cache, embedding_index)
+            kernel_factory.close_kernel_stores(metadata, artifacts, cache)
 
     target_patch_digest = hashlib.sha256(target_patch.encode("utf-8")).hexdigest()
     task_pack = HarnessTaskPack(
@@ -339,14 +334,6 @@ def coding_retrieve_request(
 ) -> RetrieveRequest:
     """Build the retrieval request that matches the configured benchmark mode."""
     resolved_mode = resolved_benchmark_mode(mode)
-    if resolved_mode == "naive_lexical":
-        return RetrieveRequest(
-            query=query,
-            scopes=(scope,),
-            statuses=tuple(ValidityStatus),
-            evidence_budget=EvidenceBudget.SUMMARY_ONLY,
-            limit=limit,
-        )
     if resolved_mode in {"verified_lexical", "lexical_rlm_rerank"}:
         return RetrieveRequest(
             query=query,
@@ -665,7 +652,6 @@ def evaluate_coding_attempt(
     metadata: SqliteMetadataStore | None = None
     artifacts: FilesystemArtifactStore | None = None
     cache: SqliteCacheStore | None = None
-    embedding_index: SqliteEmbeddingIndexStore | None = None
     durable_scope: VisibilityScope | None = None
 
     try:
@@ -691,13 +677,11 @@ def evaluate_coding_attempt(
         session_id = f"{task.case_id}-{config.mode}-attempt-{attempt_index:02d}"
         task_scope = VisibilityScope(kind=ScopeKind.TASK, scope_id=session_id)
         if config.mode != "no_memory":
-            kernel, metadata, artifacts, cache, embedding_index, durable_scope = (
-                kernel_factory.open_kernel(
-                    repo_root=repo_root,
-                    repo_name=repo_spec.repo_name,
-                    pair=pair,
-                    output_dir=output_dir,
-                )
+            kernel, metadata, artifacts, cache, durable_scope = kernel_factory.open_kernel(
+                repo_root=repo_root,
+                repo_name=repo_spec.repo_name,
+                pair=pair,
+                output_dir=output_dir,
             )
         runtime_context = RLMRuntimeContext(
             kernel=kernel,
@@ -707,39 +691,18 @@ def evaluate_coding_attempt(
                 kernel_factory.dependency_builder() if kernel is not None else None
             ),
         )
-        if not config.rlm_model_id:
-            raise ValueError(
-                "coding runs require --rlm-model-id, VTM_AGENT_MODEL, or VTM_LOCAL_LLM_MODEL"
-            )
-        if config.coding_engine == "codex":
-            outcome = CodexBenchmarkExecutor(
-                model_id=config.rlm_model_id,
-                max_timeout_seconds=config.rlm_max_runtime_seconds,
-            ).execute(
-                request=executor_request,
-                prepared_workspace=prepared_workspace,
-                runtime_context=runtime_context,
-            )
-        else:
-            outcome = RLMBenchmarkExecutor(
-                model_id=config.rlm_model_id,
-                base_url=(
-                    os.getenv("VTM_AGENT_BASE_URL")
-                    or os.getenv("VTM_LOCAL_LLM_BASE_URL")
-                    or None
-                ),
-                api_key=(
-                    os.getenv("VTM_AGENT_API_KEY")
-                    or os.getenv("VTM_LOCAL_LLM_API_KEY")
-                    or None
-                ),
-                max_iterations=config.rlm_max_iterations,
-                max_timeout_seconds=config.rlm_max_runtime_seconds,
-            ).execute(
-                request=executor_request,
-                prepared_workspace=prepared_workspace,
-                runtime_context=runtime_context,
-            )
+        model_id = execution_model(config.rlm_model_id)
+        outcome = RLMBenchmarkExecutor(
+            model_id=model_id,
+            base_url=openrouter_base_url(),
+            api_key=openrouter_api_key(),
+            max_iterations=config.rlm_max_iterations,
+            max_timeout_seconds=config.rlm_max_runtime_seconds,
+        ).execute(
+            request=executor_request,
+            prepared_workspace=prepared_workspace,
+            runtime_context=runtime_context,
+        )
         executed = True
 
         if outcome is not None:
@@ -837,7 +800,7 @@ def evaluate_coding_attempt(
             executor_metadata.update(prepared_workspace.metadata)
     finally:
         if metadata is not None and artifacts is not None and cache is not None:
-            kernel_factory.close_kernel_stores(metadata, artifacts, cache, embedding_index)
+            kernel_factory.close_kernel_stores(metadata, artifacts, cache)
         if prepared_workspace is not None and outcome is None:
             prepared_workspace.driver.close()
 
@@ -901,7 +864,7 @@ def evaluate_coding_attempt(
             "commit_pair_label": pair.label,
             "produced_changed_paths": list(produced_changed_paths),
             "produced_patch_text": produced_patch_text,
-            "execution_engine": "vendored_rlm_vtm",
+            "execution_engine": config.coding_engine,
             **executor_metadata,
         },
     )

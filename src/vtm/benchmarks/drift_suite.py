@@ -46,7 +46,7 @@ def run_drift_suite(
             continue
 
         repo_manager.git_checkout(repo_root, pair.base_ref)
-        kernel, metadata, artifacts, cache, embedding_index, scope = kernel_factory.open_kernel(
+        kernel, metadata, artifacts, cache, scope = kernel_factory.open_kernel(
             repo_root=repo_root,
             repo_name=repo_spec.repo_name,
             pair=pair,
@@ -94,7 +94,7 @@ def run_drift_suite(
             cases.extend(pair_cases)
             results.extend(pair_results)
         finally:
-            kernel_factory.close_kernel_stores(metadata, artifacts, cache, embedding_index)
+            kernel_factory.close_kernel_stores(metadata, artifacts, cache)
     return cases, results
 
 

@@ -62,7 +62,7 @@ def test_harness_models_round_trip() -> None:
         execution_style="shell_command",
         test_command=("python", "-m", "pytest"),
         target_patch_digest="deadbeef",
-        memory_mode="lexical",
+        memory_mode="verified_lexical",
         top_k=5,
         memory_context=(
             TaskMemoryContextItem(
@@ -211,7 +211,7 @@ def test_local_workspace_backend_fetches_missing_prepared_ref(tmp_path: Path) ->
         repo_root=repo_root,
         base_ref=prepared_ref,
         output_root=tmp_path / "outputs",
-        mode="lexical",
+        mode="verified_lexical",
         command_timeout_seconds=30,
         max_output_chars=200,
     )

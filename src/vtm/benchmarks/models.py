@@ -13,16 +13,14 @@ from vtm.enums import ValidityStatus
 BenchmarkSuite = Literal["retrieval", "drift", "coding"]
 BenchmarkMode = Literal[
     "no_memory",
-    "lexical",
     "naive_lexical",
     "verified_lexical",
     "lexical_rlm_rerank",
-    "embedding",
 ]
-RepoSourceKind = Literal["git", "synthetic_python_smoke", "synthetic_terminal_smoke"]
+RepoSourceKind = Literal["git", "synthetic_python_smoke"]
 CodingEvaluationBackend = Literal["local_subprocess", "swebench_harness"]
 CodingExecutionStyle = Literal["mixed_patch", "shell_command"]
-CodingExecutionEngine = Literal["vendored_rlm", "codex"]
+CodingExecutionEngine = Literal["vendored_rlm"]
 WorkspaceBackendName = Literal["local_workspace", "docker_workspace"]
 DockerNetworkMode = Literal["none", "bridge"]
 SWEbenchHarnessCacheLevel = Literal["none", "base", "env", "instance"]
@@ -160,7 +158,7 @@ class BenchmarkRunConfig(VTMModel):
 
     manifest_path: str
     suite: BenchmarkSuite
-    mode: BenchmarkMode = "lexical"
+    mode: BenchmarkMode = "verified_lexical"
     output_dir: str
     top_k: int = Field(default=5, ge=1, le=100)
     max_cases: int | None = Field(default=None, ge=1)
@@ -215,8 +213,6 @@ class BenchmarkRunConfig(VTMModel):
 
 def resolved_benchmark_mode(mode: BenchmarkMode) -> BenchmarkMode:
     """Resolve deprecated aliases to the effective benchmark mode."""
-    if mode == "lexical":
-        return "verified_lexical"
     return mode
 
 

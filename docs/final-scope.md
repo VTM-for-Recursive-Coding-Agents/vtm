@@ -1,31 +1,41 @@
 # Final Scope
 
-VTM is now scoped as a fair, testable study of repository memory for coding agents.
+VTM is now scoped as a clean study of verified lexical repository memory for coding agents, with OpenRouter as the only maintained inference path.
 
 ## Main claim
 
-The primary experimental question is whether verified repository memory improves coding outcomes over no memory and over naive lexical memory, without leaking oracle localization hints into model-visible inputs.
+Verified lexical memory should outperform a no-memory baseline without relying on oracle localization hints in model-visible inputs.
 
-## Benchmark modes
+## Kept benchmark modes
 
-- `no_memory`: no retrieved memory is shown to the agent.
-- `naive_lexical`: lexical retrieval can surface visible committed memory without retrieval-time validity gating or verify-on-read.
-- `verified_lexical`: lexical retrieval verifies or relocates candidate memories against the current repository state before surfacing them and only returns `verified` / `relocated` memories.
-- `lexical_rlm_rerank`: optional secondary ablation that reranks the verified lexical candidate set without expanding the study scope beyond memory as the experimental variable.
-
-`lexical` remains a compatibility alias for `verified_lexical`.
+- `no_memory`
+- `naive_lexical`
+- `verified_lexical`
+- optional `lexical_rlm_rerank` as a thin secondary ablation
 
 ## Removed from scope
 
-- Oracle changed-path hints in external coding prompts.
-- Broad RLM productization beyond a thin execution bridge or reranker.
-- Dynamic memory-tool injection for Codex runs.
-- Treating embedding retrieval as part of the maintained headline study.
+- Embedding retrieval
+- Terminal-only benchmark tracks
+- Broad provider experimentation and local ad hoc model routing
+- Codex execution paths
+- Large generated documentation and compatibility shims that only preserved old surfaces
 
-## Evaluation layers
+## Why the final three evaluation layers remain
 
-- Retrieval: does the memory system return the right repository memory items?
-- Drift: do stored memories stay valid, relocate correctly, or get filtered as stale?
-- Coding: does memory help an agent solve benchmark tasks under the same visible task information?
+- Retrieval measures whether the right repository memory can be found.
+- Drift measures whether stored memory stays valid under repository change.
+- Coding measures whether verified memory improves end-task solving under fair prompts.
 
-These three layers are the final evaluation stack because they isolate memory quality, memory freshness, and end-task utility without conflating them.
+These three layers isolate memory quality, memory freshness, and coding utility cleanly enough for the paper.
+
+## OpenRouter defaults
+
+- Base URL env var: `VTM_OPENROUTER_BASE_URL`
+- Default base URL: `https://openrouter.ai/api/v1`
+- API key env var: `OPENROUTER_API_KEY`
+- Execution model env var: `VTM_EXECUTION_MODEL`
+- Rerank model env var: `VTM_RERANK_MODEL`
+- Smoke/dev rerank model: `nvidia/nemotron-3-nano-30b-a3b:free`
+- Default execution model: `google/gemma-4-31b-it:free`
+- Optional stronger ablation model: `nvidia/nemotron-3-super-120b-a12b:free`

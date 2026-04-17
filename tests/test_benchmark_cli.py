@@ -1,11 +1,23 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 from vtm.benchmarks import BenchmarkManifest, BenchmarkRunConfig, BenchmarkRunner, matrix, run
+
+
+def _cli_env() -> dict[str, str]:
+    env = dict(os.environ)
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = "src" if not existing else f"src:{existing}"
+    return env
+
+
+def _run_subprocess(*args, **kwargs):  # noqa: ANN002, ANN003
+    return subprocess.run(*args, env=_cli_env(), **kwargs)
 
 
 def test_run_cli_parser_accepts_rlm_execution_args() -> None:
@@ -25,7 +37,7 @@ def test_run_cli_parser_accepts_rlm_execution_args() -> None:
     assert args.rlm_model_id == "gpt-test"
 
 
-def test_run_cli_parser_accepts_coding_engine() -> None:
+def test_run_cli_parser_accepts_maintained_coding_engine() -> None:
     args = run.build_parser().parse_args(
         [
             "--manifest",
@@ -35,11 +47,11 @@ def test_run_cli_parser_accepts_coding_engine() -> None:
             "--output",
             "out",
             "--coding-engine",
-            "codex",
+            "vendored_rlm",
         ]
     )
 
-    assert args.coding_engine == "codex"
+    assert args.coding_engine == "vendored_rlm"
 
 
 def test_run_cli_parser_accepts_new_lexical_modes() -> None:
@@ -58,6 +70,21 @@ def test_run_cli_parser_accepts_new_lexical_modes() -> None:
 
     assert args.mode == "verified_lexical"
 
+    naive = run.build_parser().parse_args(
+        [
+            "--manifest",
+            "benchmarks/manifests/synthetic-smoke.json",
+            "--suite",
+            "retrieval",
+            "--mode",
+            "naive_lexical",
+            "--output",
+            "out",
+        ]
+    )
+
+    assert naive.mode == "naive_lexical"
+
 
 def test_matrix_cli_parser_accepts_rlm_execution_args() -> None:
     args = matrix.build_parser().parse_args(
@@ -72,22 +99,22 @@ def test_matrix_cli_parser_accepts_rlm_execution_args() -> None:
     assert args.rlm_model_id == "gpt-test"
 
 
-def test_matrix_cli_parser_accepts_coding_engine() -> None:
+def test_matrix_cli_parser_accepts_maintained_coding_engine() -> None:
     args = matrix.build_parser().parse_args(
         [
             "--output",
             "out",
             "--coding-engine",
-            "codex",
+            "vendored_rlm",
         ]
     )
 
-    assert args.coding_engine == "codex"
+    assert args.coding_engine == "vendored_rlm"
 
 
 def test_benchmark_cli_runs_synthetic_retrieval(tmp_path: Path) -> None:
     output_dir = tmp_path / "cli-run"
-    completed = subprocess.run(
+    completed = _run_subprocess(
         [
             sys.executable,
             "-m",
@@ -114,38 +141,9 @@ def test_benchmark_cli_runs_synthetic_retrieval(tmp_path: Path) -> None:
     assert (output_dir / "summary.json").exists()
 
 
-def test_benchmark_cli_runs_synthetic_embedding_retrieval(tmp_path: Path) -> None:
-    output_dir = tmp_path / "cli-embedding-run"
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "vtm.benchmarks.run",
-            "--manifest",
-            "benchmarks/manifests/synthetic-smoke.json",
-            "--suite",
-            "retrieval",
-            "--mode",
-            "embedding",
-            "--output",
-            str(output_dir),
-            "--max-cases",
-            "1",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    payload = json.loads(completed.stdout)
-    assert payload["mode"] == "embedding"
-    assert payload["case_count"] == 1
-    assert (output_dir / "summary.json").exists()
-
-
 def test_benchmark_cli_filters_to_selected_pair(tmp_path: Path) -> None:
     output_dir = tmp_path / "cli-filtered-run"
-    completed = subprocess.run(
+    completed = _run_subprocess(
         [
             sys.executable,
             "-m",
@@ -180,7 +178,7 @@ def test_benchmark_cli_filters_to_selected_pair(tmp_path: Path) -> None:
 
 def test_benchmark_cli_rejects_unknown_repo_filter(tmp_path: Path) -> None:
     output_dir = tmp_path / "cli-bad-filter"
-    completed = subprocess.run(
+    completed = _run_subprocess(
         [
             sys.executable,
             "-m",
@@ -205,38 +203,9 @@ def test_benchmark_cli_rejects_unknown_repo_filter(tmp_path: Path) -> None:
     assert "unknown benchmark repos" in completed.stderr
 
 
-def test_benchmark_cli_rejects_missing_rlm_model_for_coding(tmp_path: Path) -> None:
-    output_dir = tmp_path / "cli-coding-missing-model"
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "vtm.benchmarks.run",
-            "--manifest",
-            "benchmarks/manifests/synthetic-smoke.json",
-            "--suite",
-            "coding",
-            "--mode",
-            "lexical",
-            "--output",
-            str(output_dir),
-            "--pair",
-            "bugfix",
-            "--max-cases",
-            "1",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert completed.returncode != 0
-    assert "--rlm-model-id" in completed.stderr
-
-
 def test_benchmark_cli_rejects_attempt_flags_for_retrieval(tmp_path: Path) -> None:
     output_dir = tmp_path / "cli-invalid-attempts"
-    completed = subprocess.run(
+    completed = _run_subprocess(
         [
             sys.executable,
             "-m",
@@ -263,7 +232,7 @@ def test_benchmark_cli_rejects_attempt_flags_for_retrieval(tmp_path: Path) -> No
 
 def test_benchmark_cli_rejects_local_backend_docker_flags(tmp_path: Path) -> None:
     output_dir = tmp_path / "cli-invalid-docker-local"
-    completed = subprocess.run(
+    completed = _run_subprocess(
         [
             sys.executable,
             "-m",
@@ -273,7 +242,7 @@ def test_benchmark_cli_rejects_local_backend_docker_flags(tmp_path: Path) -> Non
             "--suite",
             "coding",
             "--mode",
-            "lexical",
+            "verified_lexical",
             "--output",
             str(output_dir),
             "--docker-image",
@@ -293,13 +262,13 @@ def test_benchmark_cli_rejects_local_backend_docker_flags(tmp_path: Path) -> Non
 
 def test_benchmark_cli_rejects_docker_backend_without_image(tmp_path: Path) -> None:
     output_dir = tmp_path / "cli-invalid-docker-image"
-    completed = subprocess.run(
+    completed = _run_subprocess(
         [
             sys.executable,
             "-m",
             "vtm.benchmarks.run",
             "--manifest",
-            "benchmarks/manifests/terminal-shell-smoke.json",
+            "benchmarks/manifests/synthetic-smoke.json",
             "--suite",
             "coding",
             "--mode",
@@ -309,9 +278,7 @@ def test_benchmark_cli_rejects_docker_backend_without_image(tmp_path: Path) -> N
             "--workspace-backend",
             "docker_workspace",
             "--pair",
-            "shell_daily_report",
-            "--rlm-model-id",
-            "gpt-test",
+            "bugfix",
         ],
         check=False,
         capture_output=True,
@@ -330,7 +297,7 @@ def test_benchmark_compare_cli_reports_retrieval_deltas(tmp_path: Path) -> None:
     candidate_dir = tmp_path / "retrieval-candidate"
     comparison_dir = tmp_path / "retrieval-comparison"
 
-    subprocess.run(
+    _run_subprocess(
         [
             sys.executable,
             "-m",
@@ -350,7 +317,7 @@ def test_benchmark_compare_cli_reports_retrieval_deltas(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
     )
-    subprocess.run(
+    _run_subprocess(
         [
             sys.executable,
             "-m",
@@ -360,7 +327,7 @@ def test_benchmark_compare_cli_reports_retrieval_deltas(tmp_path: Path) -> None:
             "--suite",
             "retrieval",
             "--mode",
-            "lexical",
+            "verified_lexical",
             "--output",
             str(candidate_dir),
             "--max-cases",
@@ -371,7 +338,7 @@ def test_benchmark_compare_cli_reports_retrieval_deltas(tmp_path: Path) -> None:
         text=True,
     )
 
-    completed = subprocess.run(
+    completed = _run_subprocess(
         [
             sys.executable,
             "-m",
@@ -414,7 +381,7 @@ def test_benchmark_compare_cli_reports_coding_attempt_metrics(
         )
         if attempt_dir is None or attempt_dir.name != "attempt-02":
             return
-        diff_result = subprocess.run(
+        diff_result = _run_subprocess(
             [
                 "git",
                 "diff",
@@ -427,7 +394,7 @@ def test_benchmark_compare_cli_reports_coding_attempt_metrics(
             capture_output=True,
             text=True,
         )
-        subprocess.run(
+        _run_subprocess(
             ["git", "apply", "--whitespace=nowarn"],
             cwd=workspace_root,
             input=diff_result.stdout,
@@ -448,7 +415,7 @@ def test_benchmark_compare_cli_reports_coding_attempt_metrics(
         BenchmarkRunConfig(
             manifest_path="benchmarks/manifests/synthetic-smoke.json",
             suite="coding",
-            mode="lexical",
+            mode="verified_lexical",
             output_dir=str(baseline_dir),
             pair_filters=("bugfix",),
             rlm_model_id="fake-model",
@@ -463,7 +430,7 @@ def test_benchmark_compare_cli_reports_coding_attempt_metrics(
         BenchmarkRunConfig(
             manifest_path="benchmarks/manifests/synthetic-smoke.json",
             suite="coding",
-            mode="lexical",
+            mode="verified_lexical",
             output_dir=str(candidate_dir),
             pair_filters=("bugfix",),
             rlm_model_id="fake-model",
@@ -472,7 +439,7 @@ def test_benchmark_compare_cli_reports_coding_attempt_metrics(
         ),
     ).run()
 
-    completed = subprocess.run(
+    completed = _run_subprocess(
         [
             sys.executable,
             "-m",
@@ -504,7 +471,7 @@ def test_benchmark_compare_cli_reports_coding_attempt_metrics(
 
 def test_benchmark_matrix_cli_runs_manual_retrieval_matrix(tmp_path: Path) -> None:
     output_dir = tmp_path / "retrieval-matrix"
-    completed = subprocess.run(
+    completed = _run_subprocess(
         [
             sys.executable,
             "-m",
@@ -518,7 +485,7 @@ def test_benchmark_matrix_cli_runs_manual_retrieval_matrix(tmp_path: Path) -> No
             "--mode",
             "no_memory",
             "--mode",
-            "lexical",
+            "verified_lexical",
             "--max-cases",
             "1",
             "--comparison-bootstrap-samples",
@@ -532,39 +499,10 @@ def test_benchmark_matrix_cli_runs_manual_retrieval_matrix(tmp_path: Path) -> No
     payload = json.loads(completed.stdout)
     assert payload["suite"] == "retrieval"
     assert payload["baseline_mode"] == "no_memory"
-    assert set(payload["run_results"]) == {"no_memory", "lexical"}
-    assert set(payload["comparison_results"]) == {"lexical"}
+    assert set(payload["run_results"]) == {"no_memory", "verified_lexical"}
+    assert set(payload["comparison_results"]) == {"verified_lexical"}
     assert (output_dir / "matrix.json").exists()
     assert (output_dir / "runs" / "no_memory" / "summary.json").exists()
-    assert (output_dir / "comparisons" / "no_memory-vs-lexical" / "comparison.json").exists()
-
-
-def test_benchmark_matrix_cli_rejects_missing_rlm_model_for_coding_preset(
-    tmp_path: Path,
-) -> None:
-    output_dir = tmp_path / "terminal-smoke-matrix"
-    completed = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "vtm.benchmarks.matrix",
-            "--preset",
-            "terminal_smoke",
-            "--output",
-            str(output_dir),
-            "--mode",
-            "no_memory",
-            "--mode",
-            "lexical",
-            "--max-cases",
-            "1",
-            "--comparison-bootstrap-samples",
-            "100",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert completed.returncode != 0
-    assert "--rlm-model-id" in completed.stderr
+    assert (
+        output_dir / "comparisons" / "no_memory-vs-verified_lexical" / "comparison.json"
+    ).exists()

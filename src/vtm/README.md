@@ -1,18 +1,17 @@
 # src/vtm
 
-Purpose: public VTM package rooted in the typed memory kernel.
+Purpose: public kernel package.
 
 Start here
-- `__init__.py`: stable kernel-first import surface for applications.
-- `memory_items.py`, `retrieval.py`, `transactions.py`, `verification.py`: core durable records most callers manipulate directly.
-- `services/memory_kernel.py`: main `TransactionalMemoryKernel` facade.
-- `stores/` and `adapters/`: concrete infrastructure needed to wire the kernel.
+- `__init__.py`: stable kernel-first import surface
+- `memory_items.py`, `retrieval.py`, `transactions.py`, `verification.py`: core durable records
+- `services/memory_kernel.py`: `TransactionalMemoryKernel`
+- `stores/` and `adapters/`: concrete infrastructure used to wire the kernel
 
 Contents
-- `__init__.py`: Kernel-first root export surface.
-- `anchors.py`, `artifacts.py`, `cache.py`, `consolidation.py`, `embeddings.py`, `events.py`, `evidence.py`, `fingerprints.py`, `memory_items.py`, `retrieval.py`, `transactions.py`, `verification.py`: durable record and enum modules.
-- `services/`: Kernel orchestration and retrieval/verification/consolidation services.
-- `stores/`: Metadata, cache, embedding, and artifact storage protocols plus concrete implementations.
-- `adapters/`: Git, runtime, syntax, embedding, and RLM integrations.
-- `harness/`: Typed task-pack, workspace, executor, and scoring boundary.
-- `benchmarks/`: Manifest-driven evaluation and reporting orchestration.
+- top-level modules: durable records, enums, retrieval, verification, transactions, and artifacts
+- `services/`: verification, lexical retrieval, procedures, consolidation, and kernel orchestration
+- `stores/`: metadata, cache, and artifact storage protocols plus concrete implementations
+- `adapters/`: git, runtime, syntax, and thin OpenAI-compatible chat/RLM integrations
+- `harness/`: task-pack, workspace, executor, and scoring boundary
+- `benchmarks/`: manifest-driven evaluation orchestration

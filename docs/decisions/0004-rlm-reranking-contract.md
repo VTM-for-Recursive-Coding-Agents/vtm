@@ -27,4 +27,4 @@ The next capability step is model-assisted retrieval, but the kernel should not 
 
 - Lexical retrieval remains the default and the benchmark baseline.
 - Provider-specific logic stays at the adapter boundary.
-- Vector search and embedding-backed indexing remain separate future work rather than leaking into the reranking contract prematurely.
+- Additional retrieval backends remain out of scope rather than leaking into the reranking contract prematurely.

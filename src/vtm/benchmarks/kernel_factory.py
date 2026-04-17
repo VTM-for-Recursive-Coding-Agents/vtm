@@ -5,7 +5,6 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from vtm.adapters.embeddings import DeterministicHashEmbeddingAdapter, EmbeddingAdapter
 from vtm.adapters.git import GitRepoFingerprintCollector
 from vtm.adapters.python_ast import PythonAstSyntaxAdapter
 from vtm.adapters.rlm import RLMAdapter
@@ -18,17 +17,11 @@ from vtm.memory_items import ClaimPayload, MemoryItem, ValidityState, Visibility
 from vtm.services import (
     BasicVerifier,
     DependencyFingerprintBuilder,
-    EmbeddingRetriever,
     LexicalRetriever,
     RLMRerankingRetriever,
     TransactionalMemoryKernel,
 )
-from vtm.stores import (
-    FilesystemArtifactStore,
-    SqliteCacheStore,
-    SqliteEmbeddingIndexStore,
-    SqliteMetadataStore,
-)
+from vtm.stores import FilesystemArtifactStore, SqliteCacheStore, SqliteMetadataStore
 
 
 class BenchmarkKernelFactory:
@@ -40,13 +33,11 @@ class BenchmarkKernelFactory:
         config: BenchmarkRunConfig,
         symbol_indexer: SymbolIndexer,
         rlm_adapter: RLMAdapter | None = None,
-        embedding_adapter: EmbeddingAdapter | None = None,
     ) -> None:
         """Bind run config plus optional retrieval adapters."""
         self._config = config
         self._symbol_indexer = symbol_indexer
         self._rlm_adapter = rlm_adapter
-        self._embedding_adapter = embedding_adapter
 
     def open_kernel(
         self,
@@ -60,7 +51,6 @@ class BenchmarkKernelFactory:
         SqliteMetadataStore,
         FilesystemArtifactStore,
         SqliteCacheStore,
-        SqliteEmbeddingIndexStore | None,
         VisibilityScope,
     ]:
         """Create a fresh benchmark-local kernel store topology."""
@@ -81,18 +71,8 @@ class BenchmarkKernelFactory:
         )
         artifacts = FilesystemArtifactStore(store_root / "artifacts")
         cache = SqliteCacheStore(store_root / "cache.sqlite", event_store=metadata)
-        embedding_index: SqliteEmbeddingIndexStore | None = None
         anchor_adapter = PythonTreeSitterSyntaxAdapter(fallback=PythonAstSyntaxAdapter())
-        retriever: LexicalRetriever | RLMRerankingRetriever | EmbeddingRetriever = (
-            LexicalRetriever(metadata)
-        )
-        if resolved_mode == "embedding":
-            embedding_index = SqliteEmbeddingIndexStore(store_root / "embeddings.sqlite")
-            retriever = EmbeddingRetriever(
-                metadata,
-                embedding_index,
-                self._embedding_adapter or DeterministicHashEmbeddingAdapter(),
-            )
+        retriever: LexicalRetriever | RLMRerankingRetriever = LexicalRetriever(metadata)
         if resolved_mode == "lexical_rlm_rerank":
             if self._rlm_adapter is None:
                 raise ValueError("lexical_rlm_rerank mode requires an RLM adapter")
@@ -114,7 +94,7 @@ class BenchmarkKernelFactory:
             anchor_adapter=anchor_adapter,
         )
         scope = VisibilityScope(kind=ScopeKind.REPO, scope_id=repo_name)
-        return kernel, metadata, artifacts, cache, embedding_index, scope
+        return kernel, metadata, artifacts, cache, scope
 
     def seed_memories(
         self,
@@ -215,12 +195,9 @@ class BenchmarkKernelFactory:
         metadata: SqliteMetadataStore,
         artifacts: FilesystemArtifactStore,
         cache: SqliteCacheStore,
-        embedding_index: SqliteEmbeddingIndexStore | None,
     ) -> None:
         """Close all stores opened for a benchmark-local kernel."""
         cache.close()
-        if embedding_index is not None:
-            embedding_index.close()
         artifacts.close()
         metadata.close()
 

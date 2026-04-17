@@ -268,7 +268,7 @@ def test_swebench_coding_suite_runs_fake_harness_and_writes_artifacts(
         BenchmarkRunConfig(
             manifest_path="swebench-harness.json",
             suite="coding",
-            mode="lexical",
+            mode="verified_lexical",
             output_dir=str(tmp_path / "swebench-run"),
             rlm_model_id="fake-model",
             swebench_dataset_name="princeton-nlp/SWE-bench_Lite",
@@ -340,7 +340,7 @@ def test_swebench_harness_uses_absolute_predictions_path(
     results = [
         BenchmarkCaseResult(
             suite="coding",
-            mode="lexical",
+            mode="verified_lexical",
             case_id="example__repo-1",
             repo_name="example__repo",
             commit_pair_id="example__repo-1",
@@ -348,7 +348,7 @@ def test_swebench_harness_uses_absolute_predictions_path(
         ),
         BenchmarkCaseResult(
             suite="coding",
-            mode="lexical",
+            mode="verified_lexical",
             case_id="example__repo-2",
             repo_name="example__repo",
             commit_pair_id="example__repo-2",
@@ -361,7 +361,7 @@ def test_swebench_harness_uses_absolute_predictions_path(
         config=BenchmarkRunConfig(
             manifest_path="swebench-harness.json",
             suite="coding",
-            mode="lexical",
+            mode="verified_lexical",
             output_dir=str(tmp_path / "run"),
             swebench_dataset_name="princeton-nlp/SWE-bench_Lite",
             swebench_harness_workers=1,

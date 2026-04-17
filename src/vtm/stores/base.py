@@ -8,7 +8,6 @@ from typing import Any, Protocol, TypeVar
 
 from vtm.artifacts import ArtifactIntegrityReport, ArtifactRecord, ArtifactRepairReport
 from vtm.cache import CacheEntry, CacheKey
-from vtm.embeddings import EmbeddingIndexEntry
 from vtm.enums import ArtifactCaptureState, ValidityStatus
 from vtm.events import MemoryEvent
 from vtm.memory_items import LineageEdge, MemoryItem, VisibilityScope
@@ -145,19 +144,3 @@ class CacheStore(Protocol):
     def delete_cache_entry(self, key: CacheKey) -> None: ...
 
     def list_cache_entries(self) -> Sequence[CacheEntry]: ...
-
-
-class EmbeddingIndexStore(Protocol):
-    """Stores derived embedding vectors for retrieval adapters."""
-
-    def save_entry(self, entry: EmbeddingIndexEntry) -> None: ...
-
-    def get_entry(self, memory_id: str, adapter_id: str) -> EmbeddingIndexEntry | None: ...
-
-    def list_entries(
-        self,
-        *,
-        adapter_id: str | None = None,
-    ) -> Sequence[EmbeddingIndexEntry]: ...
-
-    def delete_entry(self, memory_id: str, adapter_id: str) -> None: ...
