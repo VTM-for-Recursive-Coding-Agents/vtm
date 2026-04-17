@@ -13,10 +13,11 @@ from vtm.benchmarks.models import (
     CommitPair,
     RepoSpec,
     RetrievalCase,
+    resolved_benchmark_mode,
 )
 from vtm.benchmarks.repo_materialization import RepoWorkspaceManager
 from vtm.benchmarks.symbol_index import SymbolIndexer
-from vtm.enums import EvidenceBudget
+from vtm.enums import EvidenceBudget, ValidityStatus
 from vtm.retrieval import RetrieveRequest, RetrieveResult
 
 
@@ -31,6 +32,7 @@ def run_retrieval_suite(
     mode: BenchmarkMode,
 ) -> tuple[list[RetrievalCase], list[BenchmarkCaseResult]]:
     """Run retrieval evaluation for the selected repo and commit pairs."""
+    resolved_mode = resolved_benchmark_mode(mode)
     cases: list[RetrievalCase] = []
     results: list[BenchmarkCaseResult] = []
     for repo_spec, pair in selected_repo_pairs:
@@ -38,7 +40,7 @@ def run_retrieval_suite(
         repo_manager.git_checkout(repo_root, pair.base_ref)
         base_symbols = symbol_indexer.extract_symbols(repo_root)
         pair_cases = symbol_indexer.build_retrieval_cases(repo_spec.repo_name, pair, base_symbols)
-        if mode == "no_memory":
+        if resolved_mode == "no_memory":
             no_memory_results = [
                 BenchmarkCaseResult(
                     suite="retrieval",
@@ -55,6 +57,10 @@ def run_retrieval_suite(
                         "ndcg": 0.0,
                         "latency_ms": 0.0,
                         "artifact_bytes_per_memory": 0.0,
+                        "verified_count": 0,
+                        "relocated_count": 0,
+                        "stale_filtered_count": 0,
+                        "stale_hit_rate": 0.0,
                     },
                 )
                 for case in pair_cases
@@ -83,14 +89,33 @@ def run_retrieval_suite(
                 len(base_symbols),
             )
             pair_results: list[BenchmarkCaseResult] = []
+            current_dependency = kernel_factory.dependency_builder().build(
+                str(repo_root),
+                dependency_ids=(f"benchmark:{pair.pair_id}",),
+                input_digests=(pair.base_ref,),
+            )
             for case in pair_cases:
                 started = time.perf_counter()
                 retrieve_result = kernel.retrieve(
                     RetrieveRequest(
                         query=case.query,
                         scopes=(scope,),
+                        statuses=(
+                            tuple(ValidityStatus)
+                            if resolved_mode
+                            in {"naive_lexical", "verified_lexical", "lexical_rlm_rerank"}
+                            else None
+                        ),
                         evidence_budget=EvidenceBudget.SUMMARY_ONLY,
                         limit=top_k,
+                        current_dependency=(
+                            current_dependency
+                            if resolved_mode in {"verified_lexical", "lexical_rlm_rerank"}
+                            else None
+                        ),
+                        verify_on_read=resolved_mode in {"verified_lexical", "lexical_rlm_rerank"},
+                        return_verified_only=resolved_mode
+                        in {"verified_lexical", "lexical_rlm_rerank"},
                     )
                 )
                 latency_ms = (time.perf_counter() - started) * 1000
@@ -111,6 +136,10 @@ def run_retrieval_suite(
                             "ndcg": 0.0 if rank is None else 1.0 / math.log2(rank + 1),
                             "latency_ms": latency_ms,
                             "artifact_bytes_per_memory": artifact_bytes_per_memory,
+                            "verified_count": retrieve_result.verified_count,
+                            "relocated_count": retrieve_result.relocated_count,
+                            "stale_filtered_count": retrieve_result.stale_filtered_count,
+                            "stale_hit_rate": retrieve_result.stale_hit_rate,
                         },
                         metadata={
                             "slice_name": case.slice_name,

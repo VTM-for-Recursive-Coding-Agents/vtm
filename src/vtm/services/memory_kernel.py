@@ -168,6 +168,7 @@ class TransactionalMemoryKernel:
             cache_store=cache_store,
             retriever=retriever,
             mutations=mutations,
+            verify_memory=self._validation.verify_memory,
         )
 
     def begin_transaction(

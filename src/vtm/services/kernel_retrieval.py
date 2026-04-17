@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 
 from vtm.base import utc_now
 from vtm.cache import CacheEntry, CacheKey
+from vtm.enums import EvidenceBudget, ValidityStatus
 from vtm.events import MemoryEvent
 from vtm.evidence import EvidenceRef
-from vtm.memory_items import MemoryStats
+from vtm.fingerprints import DependencyFingerprint
+from vtm.memory_items import MemoryItem, MemoryStats
 from vtm.retrieval import RetrieveRequest, RetrieveResult
 from vtm.services.kernel_mutations import MetadataMutationRunner
 from vtm.services.retriever import Retriever
 from vtm.stores.base import CacheStore, EventStore, MetadataStore
+from vtm.verification import VerificationResult
 
 
 class RetrievalKernelOps:
@@ -26,6 +30,11 @@ class RetrievalKernelOps:
         cache_store: CacheStore,
         retriever: Retriever,
         mutations: MetadataMutationRunner,
+        verify_memory: Callable[
+            [str, DependencyFingerprint],
+            tuple[MemoryItem, VerificationResult],
+        ]
+        | None = None,
     ) -> None:
         """Create retrieval helpers around stores, retriever, and cache."""
         self._metadata_store = metadata_store
@@ -33,10 +42,13 @@ class RetrievalKernelOps:
         self._cache_store = cache_store
         self._retriever = retriever
         self._mutations = mutations
+        self._verify_memory = verify_memory
 
     def retrieve(self, request: RetrieveRequest) -> RetrieveResult:
         """Retrieve candidates and persist retrieval statistics."""
         result = self._retriever.retrieve(request)
+        if request.verify_on_read:
+            result = self._refresh_verified_candidates(result)
         retrieved_at = utc_now()
         updated_result, _events = self._mutations.run(
             lambda: self._persist_retrieval_result(result, request, retrieved_at),
@@ -113,3 +125,69 @@ class RetrievalKernelOps:
             result.model_copy(update={"candidates": tuple(updated_candidates)}),
             tuple(events),
         )
+
+    def _refresh_verified_candidates(self, result: RetrieveResult) -> RetrieveResult:
+        request = result.request
+        current_dependency = request.current_dependency
+        if current_dependency is None:
+            return result
+        if self._verify_memory is None:
+            raise ValueError("verify_on_read retrieval requires a verification callback")
+
+        updated_candidates = []
+        verified_count = 0
+        relocated_count = 0
+        stale_filtered_count = 0
+        for candidate in result.candidates:
+            updated_memory, _verification = self._verify_memory(
+                candidate.memory.memory_id,
+                current_dependency,
+            )
+            evidence, raw_evidence_available = self._candidate_evidence_for_request(
+                request,
+                updated_memory,
+            )
+            updated_candidate = candidate.model_copy(
+                update={
+                    "memory": updated_memory,
+                    "evidence": evidence,
+                    "raw_evidence_available": raw_evidence_available,
+                }
+            )
+            status = updated_memory.validity.status
+            if request.return_verified_only and status not in {
+                ValidityStatus.VERIFIED,
+                ValidityStatus.RELOCATED,
+            }:
+                stale_filtered_count += 1
+                continue
+            if status is ValidityStatus.VERIFIED:
+                verified_count += 1
+            elif status is ValidityStatus.RELOCATED:
+                relocated_count += 1
+            updated_candidates.append(updated_candidate)
+
+        inspected_count = len(result.candidates)
+        stale_hit_rate = (
+            float(stale_filtered_count) / float(inspected_count) if inspected_count else 0.0
+        )
+        return result.model_copy(
+            update={
+                "candidates": tuple(updated_candidates),
+                "verified_count": verified_count,
+                "relocated_count": relocated_count,
+                "stale_filtered_count": stale_filtered_count,
+                "stale_hit_rate": stale_hit_rate,
+            }
+        )
+
+    def _candidate_evidence_for_request(
+        self,
+        request: RetrieveRequest,
+        memory: MemoryItem,
+    ) -> tuple[tuple[EvidenceRef, ...], bool]:
+        if request.evidence_budget is EvidenceBudget.FORCE_RAW:
+            return memory.evidence, bool(memory.evidence)
+        if request.evidence_budget is EvidenceBudget.SUMMARY_FIRST:
+            return (), bool(memory.evidence)
+        return (), False

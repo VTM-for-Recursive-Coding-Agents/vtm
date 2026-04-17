@@ -25,6 +25,40 @@ def test_run_cli_parser_accepts_rlm_execution_args() -> None:
     assert args.rlm_model_id == "gpt-test"
 
 
+def test_run_cli_parser_accepts_coding_engine() -> None:
+    args = run.build_parser().parse_args(
+        [
+            "--manifest",
+            "benchmarks/manifests/synthetic-smoke.json",
+            "--suite",
+            "coding",
+            "--output",
+            "out",
+            "--coding-engine",
+            "codex",
+        ]
+    )
+
+    assert args.coding_engine == "codex"
+
+
+def test_run_cli_parser_accepts_new_lexical_modes() -> None:
+    args = run.build_parser().parse_args(
+        [
+            "--manifest",
+            "benchmarks/manifests/synthetic-smoke.json",
+            "--suite",
+            "retrieval",
+            "--mode",
+            "verified_lexical",
+            "--output",
+            "out",
+        ]
+    )
+
+    assert args.mode == "verified_lexical"
+
+
 def test_matrix_cli_parser_accepts_rlm_execution_args() -> None:
     args = matrix.build_parser().parse_args(
         [
@@ -36,6 +70,19 @@ def test_matrix_cli_parser_accepts_rlm_execution_args() -> None:
     )
 
     assert args.rlm_model_id == "gpt-test"
+
+
+def test_matrix_cli_parser_accepts_coding_engine() -> None:
+    args = matrix.build_parser().parse_args(
+        [
+            "--output",
+            "out",
+            "--coding-engine",
+            "codex",
+        ]
+    )
+
+    assert args.coding_engine == "codex"
 
 
 def test_benchmark_cli_runs_synthetic_retrieval(tmp_path: Path) -> None:
@@ -357,7 +404,15 @@ def test_benchmark_compare_cli_reports_coding_attempt_metrics(
     install_fake_vendored_rlm,
 ) -> None:
     def apply_candidate_update(task_pack, workspace_root: Path, artifact_root: Path) -> None:
-        if artifact_root.parent.name != "attempt-02":
+        attempt_dir = next(
+            (
+                path
+                for path in reversed(artifact_root.parents)
+                if path.name.startswith("attempt-")
+            ),
+            None,
+        )
+        if attempt_dir is None or attempt_dir.name != "attempt-02":
             return
         diff_result = subprocess.run(
             [

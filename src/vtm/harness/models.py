@@ -8,7 +8,14 @@ from pydantic import Field
 
 from vtm.base import VTMModel
 
-HarnessMemoryMode = Literal["no_memory", "lexical", "lexical_rlm_rerank", "embedding"]
+HarnessMemoryMode = Literal[
+    "no_memory",
+    "lexical",
+    "naive_lexical",
+    "verified_lexical",
+    "lexical_rlm_rerank",
+    "embedding",
+]
 HarnessEvaluationBackend = Literal["local_subprocess", "swebench_harness"]
 HarnessExecutionStyle = Literal["mixed_patch", "shell_command"]
 HarnessWorkspaceBackend = Literal["local_workspace", "docker_workspace"]
@@ -49,6 +56,9 @@ class HarnessTaskPack(VTMModel):
     expected_changed_paths: tuple[str, ...] = Field(default_factory=tuple)
     touched_paths: tuple[str, ...] = Field(default_factory=tuple)
     retrieval_query: str | None = None
+    verifier_output: str | None = None
+    localization_notes: tuple[str, ...] = Field(default_factory=tuple)
+    debug_expected_changed_paths: bool = False
     test_command: tuple[str, ...] = Field(default_factory=tuple)
     target_patch_digest: str
     gold_test_patch_digest: str | None = None

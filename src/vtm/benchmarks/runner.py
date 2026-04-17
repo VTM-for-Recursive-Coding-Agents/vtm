@@ -63,7 +63,7 @@ class BenchmarkRunner:
             "seed": self._config.seed,
         }
         if self._config.suite == "coding":
-            manifest_lock["execution_engine"] = "vendored_rlm_vtm"
+            manifest_lock["execution_engine"] = self._config.coding_engine
             manifest_lock["workspace_backend"] = self._config.workspace_backend
             manifest_lock["attempt_count"] = self._config.attempt_count
             manifest_lock["pass_k_values"] = list(self._config.pass_k_values)

@@ -14,14 +14,24 @@ uv run python -m vtm.benchmarks.run \
   --output .benchmarks/retrieval-no-memory
 ```
 
-Synthetic lexical retrieval:
+Synthetic naive lexical retrieval:
 
 ```bash
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/synthetic-smoke.json \
   --suite retrieval \
-  --mode lexical \
-  --output .benchmarks/retrieval-lexical
+  --mode naive_lexical \
+  --output .benchmarks/retrieval-naive-lexical
+```
+
+Synthetic verified lexical retrieval:
+
+```bash
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/synthetic-smoke.json \
+  --suite retrieval \
+  --mode verified_lexical \
+  --output .benchmarks/retrieval-verified-lexical
 ```
 
 Synthetic embedding retrieval:
@@ -40,7 +50,7 @@ Target one repo/pair deterministically:
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/oss-python.json \
   --suite retrieval \
-  --mode lexical \
+  --mode verified_lexical \
   --output .benchmarks/oss-click-flag-default \
   --repo click \
   --pair flag_default_sentinel
@@ -52,8 +62,8 @@ uv run python -m vtm.benchmarks.run \
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/synthetic-smoke.json \
   --suite drift \
-  --mode lexical \
-  --output .benchmarks/drift-lexical
+  --mode verified_lexical \
+  --output .benchmarks/drift-verified-lexical
 ```
 
 ## Coding tasks
@@ -64,7 +74,7 @@ Dry run that only writes typed task packs and retrieval context:
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/synthetic-smoke.json \
   --suite coding \
-  --mode lexical \
+  --mode verified_lexical \
   --output .benchmarks/coding-dry-run
 ```
 
@@ -74,7 +84,7 @@ Harder local terminal-task track:
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/terminal-smoke.json \
   --suite coding \
-  --mode lexical \
+  --mode verified_lexical \
   --output .benchmarks/terminal-smoke-dry-run
 ```
 
@@ -87,7 +97,7 @@ export VTM_AGENT_MODEL=qwen3.5-35b-a3b
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/terminal-shell-smoke.json \
   --suite coding \
-  --mode lexical \
+  --mode verified_lexical \
   --output .benchmarks/terminal-shell-smoke \
   --rlm-model-id "$VTM_AGENT_MODEL"
 ```
@@ -101,8 +111,8 @@ export VTM_AGENT_MODEL=qwen3.5-35b-a3b
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/synthetic-smoke.json \
   --suite coding \
-  --mode lexical \
-  --output .benchmarks/coding-rlm \
+  --mode verified_lexical \
+  --output .benchmarks/coding-verified-lexical \
   --pair bugfix \
   --rlm-model-id "$VTM_AGENT_MODEL" \
   --workspace-command-timeout-seconds 120 \
@@ -118,7 +128,7 @@ export VTM_AGENT_MODEL=qwen3.5-35b-a3b
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/terminal-smoke.json \
   --suite coding \
-  --mode lexical \
+  --mode verified_lexical \
   --output .benchmarks/terminal-smoke-rlm \
   --rlm-model-id "$VTM_AGENT_MODEL" \
   --attempts 5 \
@@ -135,7 +145,7 @@ export VTM_AGENT_MODEL=qwen3.5-35b-a3b
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/terminal-shell-smoke.json \
   --suite coding \
-  --mode lexical \
+  --mode verified_lexical \
   --output .benchmarks/terminal-shell-rlm \
   --rlm-model-id "$VTM_AGENT_MODEL" \
   --workspace-backend docker_workspace \
@@ -145,7 +155,7 @@ uv run python -m vtm.benchmarks.run \
   --pass-k 5
 ```
 
-Comparable memory-mode matrix for the terminal-smoke track:
+Maintained study matrix for the terminal-smoke track:
 
 ```bash
 uv run python -m vtm.benchmarks.run \
@@ -157,23 +167,23 @@ uv run python -m vtm.benchmarks.run \
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/terminal-smoke.json \
   --suite coding \
-  --mode lexical \
-  --output .benchmarks/terminal-smoke-lexical
+  --mode naive_lexical \
+  --output .benchmarks/terminal-smoke-naive-lexical
+
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/terminal-smoke.json \
+  --suite coding \
+  --mode verified_lexical \
+  --output .benchmarks/terminal-smoke-verified-lexical
 
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/terminal-smoke.json \
   --suite coding \
   --mode lexical_rlm_rerank \
   --output .benchmarks/terminal-smoke-lexical-rlm
-
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/terminal-smoke.json \
-  --suite coding \
-  --mode embedding \
-  --output .benchmarks/terminal-smoke-embedding
 ```
 
-Comparable memory-mode matrix for the shell-command track:
+Maintained study matrix for the shell-command track:
 
 ```bash
 uv run python -m vtm.benchmarks.run \
@@ -185,20 +195,20 @@ uv run python -m vtm.benchmarks.run \
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/terminal-shell-smoke.json \
   --suite coding \
-  --mode lexical \
-  --output .benchmarks/terminal-shell-lexical
+  --mode naive_lexical \
+  --output .benchmarks/terminal-shell-naive-lexical
+
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/terminal-shell-smoke.json \
+  --suite coding \
+  --mode verified_lexical \
+  --output .benchmarks/terminal-shell-verified-lexical
 
 uv run python -m vtm.benchmarks.run \
   --manifest benchmarks/manifests/terminal-shell-smoke.json \
   --suite coding \
   --mode lexical_rlm_rerank \
   --output .benchmarks/terminal-shell-lexical-rlm
-
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/terminal-shell-smoke.json \
-  --suite coding \
-  --mode embedding \
-  --output .benchmarks/terminal-shell-embedding
 ```
 
 ## SWE-bench Lite
@@ -222,7 +232,7 @@ export VTM_LOCAL_LLM_MODEL=qwen3.5-35b-a3b
 uv run python -m vtm.benchmarks.run \
   --manifest .benchmarks/generated/swebench-lite.json \
   --suite coding \
-  --mode lexical \
+  --mode verified_lexical \
   --output .benchmarks/swebench-lite-targeted \
   --repo astropy__astropy \
   --pair astropy__astropy-14182 \
@@ -237,7 +247,7 @@ Compare two retrieval runs with paired case deltas and confidence intervals:
 ```bash
 uv run python -m vtm.benchmarks.compare \
   --baseline .benchmarks/retrieval-no-memory \
-  --candidate .benchmarks/retrieval-lexical \
+  --candidate .benchmarks/retrieval-verified-lexical \
   --output .benchmarks/retrieval-compare
 ```
 
@@ -246,7 +256,7 @@ Compare two coding runs and include paired `pass_at_k` / `resolved_at_k` compari
 ```bash
 uv run python -m vtm.benchmarks.compare \
   --baseline .benchmarks/terminal-smoke-no-memory \
-  --candidate .benchmarks/terminal-smoke-lexical \
+  --candidate .benchmarks/terminal-smoke-verified-lexical \
   --output .benchmarks/terminal-smoke-compare
 ```
 
@@ -259,8 +269,8 @@ uv run python -m vtm.benchmarks.matrix \
   --preset terminal_smoke \
   --output .benchmarks/terminal-smoke-matrix \
   --mode no_memory \
-  --mode lexical \
-  --mode embedding \
+  --mode naive_lexical \
+  --mode verified_lexical \
   --rlm-model-id "$VTM_AGENT_MODEL" \
   --attempts 3 \
   --pass-k 1 \
@@ -274,8 +284,8 @@ uv run python -m vtm.benchmarks.matrix \
   --preset terminal_shell_smoke \
   --output .benchmarks/terminal-shell-matrix \
   --mode no_memory \
-  --mode lexical \
-  --mode embedding \
+  --mode naive_lexical \
+  --mode verified_lexical \
   --rlm-model-id "$VTM_AGENT_MODEL" \
   --workspace-backend docker_workspace \
   --docker-image python:3.12 \
@@ -294,9 +304,8 @@ uv run python -m vtm.benchmarks.matrix \
   --preset terminal_smoke \
   --output .benchmarks/terminal-smoke-matrix-rlm \
   --mode no_memory \
-  --mode lexical \
+  --mode verified_lexical \
   --mode lexical_rlm_rerank \
-  --mode embedding \
   --rlm-model-id "$VTM_AGENT_MODEL" \
   --rlm-model "$VTM_OPENAI_MODEL"
 ```

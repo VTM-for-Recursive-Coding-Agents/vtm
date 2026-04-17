@@ -139,7 +139,7 @@ def summarize_memory_context(items: Sequence[TaskMemoryContextItem]) -> str:
         lines.extend(
             [
                 f"{index}. [{item.status}] {item.title} (score={item.score:.3f})",
-                f"   summary: {item.summary}",
+                f"   summary: verify whether this is still true: {item.summary}",
                 f"   memory_id: {item.memory_id}{location}",
             ]
         )

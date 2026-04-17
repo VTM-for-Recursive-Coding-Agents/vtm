@@ -14,6 +14,7 @@ from vtm.benchmarks.swebench_harness import (
     SWEbenchHarnessRunArtifacts,
     SWEbenchHarnessRunner,
 )
+from vtm.harness.models import HarnessTaskPack
 
 
 def _run(repo: Path, *args: str) -> str:
@@ -202,8 +203,8 @@ def test_swebench_coding_suite_runs_fake_harness_and_writes_artifacts(
                 task_statement="Fix buggy_increment so it adds one.",
                 problem_statement="Fix buggy_increment so it adds one.",
                 failing_tests=("tests/test_smoke_module.py::SmokeModuleTests::test_buggy_increment",),
-                touched_paths=("smoke_module.py",),
-                expected_changed_paths=("smoke_module.py",),
+                touched_paths=("oracle_only.py",),
+                expected_changed_paths=("oracle_only.py",),
                 task_kind="swebench_lite",
                 difficulty="external",
             ),
@@ -324,7 +325,17 @@ def test_swebench_harness_uses_absolute_predictions_path(
             dataset_name="princeton-nlp/SWE-bench_Lite",
             task_statement="Fix buggy_increment so it adds one.",
             problem_statement="Fix buggy_increment so it adds one.",
-        )
+        ),
+        CodingTaskCase(
+            case_id="example__repo-2",
+            repo_name="example__repo",
+            commit_pair_id="example__repo-2",
+            evaluation_backend="swebench_harness",
+            instance_id="example__repo-2",
+            dataset_name="princeton-nlp/SWE-bench_Lite",
+            task_statement="Fix another bug.",
+            problem_statement="Fix another bug.",
+        ),
     ]
     results = [
         BenchmarkCaseResult(
@@ -334,7 +345,15 @@ def test_swebench_harness_uses_absolute_predictions_path(
             repo_name="example__repo",
             commit_pair_id="example__repo-1",
             metadata={"produced_patch_text": "diff --git a/foo b/foo\n"},
-        )
+        ),
+        BenchmarkCaseResult(
+            suite="coding",
+            mode="lexical",
+            case_id="example__repo-2",
+            repo_name="example__repo",
+            commit_pair_id="example__repo-2",
+            metadata={"produced_patch_text": "diff --git a/bar b/bar\n"},
+        ),
     ]
     normalized, artifacts = runner.evaluate_predictions(
         cases=cases,
@@ -355,3 +374,127 @@ def test_swebench_harness_uses_absolute_predictions_path(
     predictions_path = command[command.index("--predictions_path") + 1]
     assert Path(predictions_path).is_absolute()
     assert artifacts.predictions_path == predictions_path
+    instance_ids_index = command.index("--instance_ids")
+    assert command[instance_ids_index + 1 : instance_ids_index + 3] == [
+        "example__repo-1",
+        "example__repo-2",
+    ]
+
+
+def test_external_task_pack_avoids_changed_path_leakage_in_retrieval_query(
+    tmp_path: Path,
+    monkeypatch,
+    install_fake_vendored_rlm,
+) -> None:
+    install_fake_vendored_rlm()
+    remote_repo = tmp_path / "remote-visible-query"
+    base, head = _build_swebench_repo(remote_repo)
+    manifest = BenchmarkManifest(
+        manifest_id="swebench_query_manifest",
+        repos=(
+            RepoSpec(
+                repo_name="example__repo",
+                source_kind="git",
+                remote_url=str(remote_repo),
+                branch="main",
+                commit_pairs=(
+                    CommitPair(
+                        pair_id="example__repo-1",
+                        base_ref=base,
+                        head_ref=head,
+                    ),
+                ),
+            ),
+        ),
+        coding_tasks=(
+            CodingTaskCase(
+                case_id="example__repo-1",
+                repo_name="example__repo",
+                commit_pair_id="example__repo-1",
+                evaluation_backend="swebench_harness",
+                instance_id="example__repo-1",
+                dataset_name="princeton-nlp/SWE-bench_Lite",
+                task_statement="Fix buggy_increment so it adds one.",
+                problem_statement="Fix buggy_increment so it adds one.",
+                failing_tests=("tests/test_smoke_module.py::SmokeModuleTests::test_buggy_increment",),
+                touched_paths=("oracle_only.py",),
+                expected_changed_paths=("oracle_only.py",),
+                task_kind="swebench_lite",
+                difficulty="external",
+            ),
+        ),
+    )
+
+    class FakeHarnessRunner:
+        def evaluate_predictions(self, *, cases, results, config, output_dir):
+            del cases, results, config
+            logs_dir = output_dir / "logs"
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            log_path = logs_dir / "example__repo-1.log"
+            log_path.write_text("resolved", encoding="utf-8")
+            results_path = output_dir / "swebench_harness_results.json"
+            results_path.write_text(
+                json.dumps(
+                    {
+                        "example__repo-1": {
+                            "resolved": True,
+                            "patch_applied": True,
+                            "harness_status": "resolved",
+                            "evaluation_log_path": str(log_path),
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            predictions_path = output_dir / "predictions.jsonl"
+            predictions_path.write_text("", encoding="utf-8")
+            return (
+                {
+                    "example__repo-1": SWEbenchHarnessInstanceResult(
+                        instance_id="example__repo-1",
+                        resolved=True,
+                        patch_applied=True,
+                        harness_status="resolved",
+                        evaluation_log_path=str(log_path),
+                    )
+                },
+                SWEbenchHarnessRunArtifacts(
+                    predictions_path=str(predictions_path),
+                    results_path=str(results_path),
+                    logs_dir=str(logs_dir),
+                    stdout_path=str(output_dir / "harness.stdout"),
+                    stderr_path=str(output_dir / "harness.stderr"),
+                ),
+            )
+
+    monkeypatch.setattr(
+        "vtm.benchmarks.suite_execution.BenchmarkSuiteExecutor._swebench_harness_runner",
+        lambda self, output_dir: FakeHarnessRunner(),
+    )
+
+    BenchmarkRunner(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path="swebench-query.json",
+            suite="coding",
+            mode="verified_lexical",
+            output_dir=str(tmp_path / "swebench-query-run"),
+            rlm_model_id="fake-model",
+            swebench_dataset_name="princeton-nlp/SWE-bench_Lite",
+        ),
+    ).run()
+
+    task_pack = HarnessTaskPack.from_json(
+        (
+            tmp_path / "swebench-query-run" / "task-packs" / "example__repo-1.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert task_pack.expected_changed_paths == ("oracle_only.py",)
+    assert task_pack.retrieval_query is not None
+    assert "oracle_only.py" not in task_pack.retrieval_query
+    assert "tests/test_smoke_module.py" in task_pack.retrieval_query
+    assert task_pack.localization_notes == (
+        "Failing test file: tests/test_smoke_module.py",
+        "Referenced module from test import: smoke_module.py",
+    )

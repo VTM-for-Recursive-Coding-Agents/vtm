@@ -11,7 +11,7 @@ from vtm.adapters.python_ast import PythonAstSyntaxAdapter
 from vtm.adapters.rlm import RLMAdapter
 from vtm.adapters.runtime import RuntimeEnvFingerprintCollector
 from vtm.adapters.tree_sitter import PythonTreeSitterSyntaxAdapter
-from vtm.benchmarks.models import BenchmarkRunConfig, CommitPair
+from vtm.benchmarks.models import BenchmarkRunConfig, CommitPair, resolved_benchmark_mode
 from vtm.benchmarks.symbol_index import SymbolIndexer, SymbolSnapshot
 from vtm.enums import MemoryKind, ScopeKind, ValidityStatus
 from vtm.memory_items import ClaimPayload, MemoryItem, ValidityState, VisibilityScope
@@ -64,6 +64,7 @@ class BenchmarkKernelFactory:
         VisibilityScope,
     ]:
         """Create a fresh benchmark-local kernel store topology."""
+        resolved_mode = resolved_benchmark_mode(self._config.mode)
         store_root = (
             output_dir
             / ".vtm"
@@ -85,14 +86,14 @@ class BenchmarkKernelFactory:
         retriever: LexicalRetriever | RLMRerankingRetriever | EmbeddingRetriever = (
             LexicalRetriever(metadata)
         )
-        if self._config.mode == "embedding":
+        if resolved_mode == "embedding":
             embedding_index = SqliteEmbeddingIndexStore(store_root / "embeddings.sqlite")
             retriever = EmbeddingRetriever(
                 metadata,
                 embedding_index,
                 self._embedding_adapter or DeterministicHashEmbeddingAdapter(),
             )
-        if self._config.mode == "lexical_rlm_rerank":
+        if resolved_mode == "lexical_rlm_rerank":
             if self._rlm_adapter is None:
                 raise ValueError("lexical_rlm_rerank mode requires an RLM adapter")
             retriever = RLMRerankingRetriever(

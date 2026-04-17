@@ -27,6 +27,10 @@ Use this template to record benchmark runs without committing a moving leaderboa
 - Median patch similarity:
 - Mean changed-path F1:
 - Retrieval usage rate:
+- Mean verified count:
+- Mean relocated count:
+- Mean stale filtered count:
+- Mean stale hit rate:
 - Median context chars:
 
 ## Notes
@@ -41,6 +45,6 @@ Use this template to record benchmark runs without committing a moving leaderboa
 | Mode | Cases | Pass rate | Resolved rate | Median runtime ms | Mean changed-path F1 | Retrieval usage rate |
 | --- | --- | --- | --- | --- | --- | --- |
 | no_memory |  |  |  |  |  |  |
-| lexical |  |  |  |  |  |  |
-| embedding |  |  |  |  |  |  |
+| naive_lexical |  |  |  |  |  |  |
+| verified_lexical |  |  |  |  |  |  |
 | lexical_rlm_rerank | optional | optional | optional | optional | optional | optional |

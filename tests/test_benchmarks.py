@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import subprocess
 from pathlib import Path
 
@@ -261,6 +262,67 @@ def test_coding_suite_writes_task_pack_and_executes_rlm(
     assert task_pack.memory_context[0].raw_anchor_path is not None
 
 
+def test_coding_suite_executes_codex_engine(tmp_path: Path, monkeypatch) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_codex = fake_bin / "codex"
+    fake_codex.write_text(
+        "#!/usr/bin/env python3\n"
+        "import pathlib\n"
+        "import sys\n"
+        "\n"
+        "args = sys.argv[1:]\n"
+        "cwd = pathlib.Path.cwd()\n"
+        "output = None\n"
+        "index = 0\n"
+        "while index < len(args):\n"
+        "    if args[index] == '-C':\n"
+        "        cwd = pathlib.Path(args[index + 1])\n"
+        "        index += 2\n"
+        "        continue\n"
+        "    if args[index] == '-o':\n"
+        "        output = pathlib.Path(args[index + 1])\n"
+        "        index += 2\n"
+        "        continue\n"
+        "    index += 1\n"
+        "prompt = sys.stdin.read()\n"
+        "assert 'Verification Command' in prompt\n"
+        "(cwd / 'bugfix_module.py').write_text(\n"
+        "    'def buggy_increment(value: int) -> int:\\n'\n"
+        "    '    return value + 1\\n',\n"
+        "    encoding='utf-8',\n"
+        ")\n"
+        "if output is not None:\n"
+        "    output.write_text('Codex fixed the bug', encoding='utf-8')\n"
+        "print('{\"event\":\"completed\"}')\n",
+        encoding="utf-8",
+    )
+    fake_codex.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ['PATH']}")
+
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
+    result = BenchmarkRunner(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="coding",
+            mode="lexical",
+            output_dir=str(tmp_path / "coding-codex"),
+            top_k=3,
+            max_cases=1,
+            rlm_model_id="gpt-5.4",
+            coding_engine="codex",
+        ),
+    ).run()
+
+    assert result.case_count == 1
+    assert result.metrics["executed_count"] == 1
+    attempt = json.loads(
+        (tmp_path / "coding-codex" / "attempts.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert attempt["metadata"]["execution_engine"] == "codex"
+
+
 def test_coding_suite_executor_writes_benchmark_local_artifacts(
     tmp_path: Path,
     install_fake_vendored_rlm,
@@ -419,6 +481,45 @@ def test_coding_summary_compares_modes(tmp_path: Path, install_fake_vendored_rlm
     assert embedding.metrics["retrieval_usage_rate"] == 1.0
     assert lexical.metrics["testable_task_count"] == 1
     assert embedding.metrics["testable_task_count"] == 1
+
+
+def test_coding_benchmark_supports_naive_and_verified_lexical_modes(
+    tmp_path: Path,
+    install_fake_vendored_rlm,
+) -> None:
+    install_fake_vendored_rlm()
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
+    naive = BenchmarkRunner(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="coding",
+            mode="naive_lexical",
+            output_dir=str(tmp_path / "coding-naive"),
+            pair_filters=("bugfix",),
+            max_cases=1,
+            rlm_model_id="fake-model",
+        ),
+    ).run()
+    verified = BenchmarkRunner(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="coding",
+            mode="verified_lexical",
+            output_dir=str(tmp_path / "coding-verified"),
+            pair_filters=("bugfix",),
+            max_cases=1,
+            rlm_model_id="fake-model",
+        ),
+    ).run()
+
+    assert naive.case_count == 1
+    assert verified.case_count == 1
+    assert naive.metrics["retrieval_usage_rate"] == 1.0
+    assert verified.metrics["retrieval_usage_rate"] == 1.0
+    assert naive.metrics["mean_verified_count"] == 0.0
+    assert verified.metrics["mean_verified_count"] >= 1.0
 
 
 def test_coding_runner_rejects_unknown_pair_filters(tmp_path: Path) -> None:
