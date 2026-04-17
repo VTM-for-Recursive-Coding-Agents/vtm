@@ -19,6 +19,10 @@ from vtm.benchmarks.models import (
 )
 from vtm.enums import ValidityStatus
 
+VALID_RETRIEVAL_STATUSES = frozenset(
+    (ValidityStatus.VERIFIED.value, ValidityStatus.RELOCATED.value)
+)
+
 
 class BenchmarkReporter:
     """Aggregates per-case metrics into run-level summaries and artifacts."""
@@ -331,7 +335,7 @@ class BenchmarkReporter:
     ) -> dict[str, Any]:
         metrics = [result.metrics for result in results]
         latencies = [float(metric["latency_ms"]) for metric in metrics]
-        return {
+        summary = {
             "recall_at_1": self._mean(float(metric["recall_at_1"]) for metric in metrics),
             "recall_at_3": self._mean(float(metric["recall_at_3"]) for metric in metrics),
             "recall_at_5": self._mean(float(metric["recall_at_5"]) for metric in metrics),
@@ -354,6 +358,40 @@ class BenchmarkReporter:
                 float(metric.get("stale_hit_rate", 0.0)) for metric in metrics
             ),
         }
+        drifted_results = [
+            result
+            for result in results
+            if result.metadata.get("expected_head_status") is not None
+        ]
+        if not drifted_results:
+            return summary
+
+        valid_results = [
+            result
+            for result in drifted_results
+            if str(result.metadata.get("expected_head_status")) in VALID_RETRIEVAL_STATUSES
+        ]
+        stale_results = [
+            result
+            for result in drifted_results
+            if str(result.metadata.get("expected_head_status")) == ValidityStatus.STALE.value
+        ]
+        summary["valid_recall_at_1"] = self._mean(
+            float(result.metrics["recall_at_1"]) for result in valid_results
+        )
+        summary["valid_recall_at_3"] = self._mean(
+            float(result.metrics["recall_at_3"]) for result in valid_results
+        )
+        summary["valid_recall_at_5"] = self._mean(
+            float(result.metrics["recall_at_5"]) for result in valid_results
+        )
+        summary["stale_rejection_rate"] = self._mean(
+            1.0 if result.metrics.get("rank") is None else 0.0 for result in stale_results
+        )
+        summary["stale_hit_rate"] = self._mean(
+            1.0 if result.metrics.get("rank") is not None else 0.0 for result in stale_results
+        )
+        return summary
 
     def _summarize_retrieval_slices(
         self,

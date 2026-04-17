@@ -112,6 +112,53 @@ uv run python -m vtm.benchmarks.run \
   --pair flag_default_sentinel
 ```
 
+Target one pinned OSS pair in drifted retrieval mode:
+
+```bash
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/oss-python.json \
+  --suite retrieval \
+  --mode no_memory \
+  --seed-on-base-query-on-head \
+  --output .benchmarks/oss-click-flag-default-drifted-no-memory \
+  --repo click \
+  --pair flag_default_sentinel
+```
+
+```bash
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/oss-python.json \
+  --suite retrieval \
+  --mode naive_lexical \
+  --seed-on-base-query-on-head \
+  --output .benchmarks/oss-click-flag-default-drifted-naive \
+  --repo click \
+  --pair flag_default_sentinel
+```
+
+```bash
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/oss-python.json \
+  --suite retrieval \
+  --mode verified_lexical \
+  --seed-on-base-query-on-head \
+  --output .benchmarks/oss-click-flag-default-drifted-verified \
+  --repo click \
+  --pair flag_default_sentinel
+```
+
+Export that drifted OSS comparison:
+
+```bash
+uv run python -m vtm.benchmarks.report \
+  --retrieval-run .benchmarks/oss-click-flag-default-drifted-no-memory \
+  --retrieval-run .benchmarks/oss-click-flag-default-drifted-naive \
+  --retrieval-run .benchmarks/oss-click-flag-default-drifted-verified \
+  --output .benchmarks/paper-tables/oss-click-flag-default-drifted
+```
+
+Swap `--repo` / `--pair` to `attrs` / `frozen_setattr_support` or `rich` / `cells_defensive_fix` for the other maintained OSS pairs.
+
 ## Drift
 
 Verified lexical drift run:

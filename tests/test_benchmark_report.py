@@ -76,3 +76,39 @@ def test_export_paper_tables_writes_suite_csvs_and_combined_markdown(
     assert "## Drift" in markdown
     assert "## Coding" in markdown
     assert "| Verified Lexical | 1 |" in markdown
+
+
+def test_export_paper_tables_includes_drifted_retrieval_metrics(
+    tmp_path: Path,
+) -> None:
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
+
+    retrieval_run = BenchmarkRunner(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="retrieval",
+            mode="verified_lexical",
+            output_dir=str(tmp_path / "drifted-retrieval"),
+            pair_filters=("deleted",),
+            seed_on_base_query_on_head=True,
+        ),
+    ).run()
+
+    artifacts = benchmark_report.export_paper_tables(
+        retrieval_locations=[str(Path(retrieval_run.artifacts["summary_json"]))],
+        drift_locations=[],
+        coding_locations=[],
+        output_dir=tmp_path / "paper-tables",
+    )
+
+    retrieval_rows = list(
+        csv.DictReader(Path(artifacts["retrieval_csv"]).read_text(encoding="utf-8").splitlines())
+    )
+    markdown = Path(artifacts["markdown"]).read_text(encoding="utf-8")
+
+    assert retrieval_rows[0]["valid_recall_at_1"]
+    assert retrieval_rows[0]["stale_rejection_rate"] == "0.5"
+    assert retrieval_rows[0]["stale_hit_rate"] == "0.5"
+    assert "Valid Recall@1" in markdown
+    assert "Stale Reject" in markdown

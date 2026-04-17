@@ -69,6 +69,7 @@ class RetrievalCase(VTMModel):
     memory_id: str
     query: str
     expected_memory_ids: tuple[str, ...]
+    expected_head_status: ValidityStatus | None = None
     relative_path: str
     symbol: str
 

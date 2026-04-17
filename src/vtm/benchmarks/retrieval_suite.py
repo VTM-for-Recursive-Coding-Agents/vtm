@@ -40,7 +40,18 @@ def run_retrieval_suite(
         repo_root = repo_manager.materialize_repo(repo_spec, output_dir / "corpus")
         repo_manager.git_checkout(repo_root, pair.base_ref)
         base_symbols = symbol_indexer.extract_symbols(repo_root)
-        pair_cases = symbol_indexer.build_retrieval_cases(repo_spec.repo_name, pair, base_symbols)
+        head_symbols = None
+        if seed_on_base_query_on_head:
+            repo_manager.git_checkout(repo_root, pair.head_ref)
+            head_symbols = symbol_indexer.extract_symbols(repo_root)
+            repo_manager.git_checkout(repo_root, pair.base_ref)
+        pair_cases = symbol_indexer.build_retrieval_cases(
+            repo_spec.repo_name,
+            pair,
+            base_symbols,
+            head_symbols=head_symbols,
+        )
+        query_ref = pair.head_ref if seed_on_base_query_on_head else pair.base_ref
         if resolved_mode == "no_memory":
             no_memory_results = [
                 BenchmarkCaseResult(
@@ -63,6 +74,13 @@ def run_retrieval_suite(
                         "stale_filtered_count": 0,
                         "stale_hit_rate": 0.0,
                     },
+                    metadata=_retrieval_metadata(
+                        case,
+                        seed_ref=pair.base_ref,
+                        query_ref=query_ref,
+                        seed_on_base_query_on_head=seed_on_base_query_on_head,
+                        returned_memory_ids=[],
+                    ),
                 )
                 for case in pair_cases
             ]
@@ -89,10 +107,8 @@ def run_retrieval_suite(
                 artifacts,
                 len(base_symbols),
             )
-            query_ref = pair.base_ref
             if seed_on_base_query_on_head:
                 repo_manager.git_checkout(repo_root, pair.head_ref)
-                query_ref = pair.head_ref
             pair_results: list[BenchmarkCaseResult] = []
             current_dependency = kernel_factory.dependency_builder().build(
                 str(repo_root),
@@ -145,18 +161,16 @@ def run_retrieval_suite(
                             "stale_filtered_count": retrieve_result.stale_filtered_count,
                             "stale_hit_rate": retrieve_result.stale_hit_rate,
                         },
-                        metadata={
-                            "slice_name": case.slice_name,
-                            "relative_path": case.relative_path,
-                            "symbol": case.symbol,
-                            "seed_ref": pair.base_ref,
-                            "query_ref": query_ref,
-                            "seed_on_base_query_on_head": seed_on_base_query_on_head,
-                            "returned_memory_ids": [
+                        metadata=_retrieval_metadata(
+                            case,
+                            seed_ref=pair.base_ref,
+                            query_ref=query_ref,
+                            seed_on_base_query_on_head=seed_on_base_query_on_head,
+                            returned_memory_ids=[
                                 candidate.memory.memory_id
                                 for candidate in retrieve_result.candidates
                             ],
-                        },
+                        ),
                     )
                 )
             cases.extend(pair_cases)
@@ -175,6 +189,28 @@ def rank_for_expected(
         if candidate.memory.memory_id in expected_memory_ids:
             return index
     return None
+
+
+def _retrieval_metadata(
+    case: RetrievalCase,
+    *,
+    seed_ref: str,
+    query_ref: str,
+    seed_on_base_query_on_head: bool,
+    returned_memory_ids: list[str],
+) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "slice_name": case.slice_name,
+        "relative_path": case.relative_path,
+        "symbol": case.symbol,
+        "seed_ref": seed_ref,
+        "query_ref": query_ref,
+        "seed_on_base_query_on_head": seed_on_base_query_on_head,
+        "returned_memory_ids": returned_memory_ids,
+    }
+    if case.expected_head_status is not None:
+        metadata["expected_head_status"] = case.expected_head_status.value
+    return metadata
 
 
 __all__ = ["run_retrieval_suite"]

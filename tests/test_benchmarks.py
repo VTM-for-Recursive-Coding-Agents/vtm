@@ -11,6 +11,7 @@ from vtm.benchmarks.compare import compare_completed_runs
 from vtm.benchmarks.models import CommitPair, RepoSpec
 from vtm.benchmarks.symbol_index import SymbolIndexer
 from vtm.benchmarks.synthetic import SyntheticPythonSmokeCorpus
+from vtm.enums import ValidityStatus
 from vtm.harness.models import HarnessTaskPack
 
 
@@ -161,6 +162,7 @@ def test_synthetic_benchmark_retrieval_and_drift_runs(tmp_path: Path) -> None:
 
     assert retrieval.case_count == 4
     assert "recall_at_1" in retrieval.metrics
+    assert "valid_recall_at_1" not in retrieval.metrics
     assert set(retrieval.metrics["slice_metrics"]) == {"smoke_identity", "taskish_behavior"}
     assert Path(retrieval.artifacts["summary_json"]).exists()
     assert "status_confusion" in drift.metrics
@@ -614,6 +616,58 @@ def test_retrieval_case_generation_adds_taskish_and_smoke_slices(tmp_path: Path)
     assert all(case.symbol not in case.query for case in taskish_cases)
 
 
+def test_drifted_retrieval_case_generation_sets_expected_head_status(tmp_path: Path) -> None:
+    repo_root = tmp_path / "synthetic-corpus"
+    SyntheticPythonSmokeCorpus().materialize(repo_root)
+    indexer = SymbolIndexer()
+
+    relocated_pair = CommitPair(
+        pair_id="relocated",
+        base_ref="smoke-whitespace",
+        head_ref="smoke-relocated",
+    )
+    _run(repo_root, "git", "checkout", relocated_pair.base_ref)
+    relocated_base_symbols = indexer.extract_symbols(repo_root)
+    _run(repo_root, "git", "checkout", relocated_pair.head_ref)
+    relocated_head_symbols = indexer.extract_symbols(repo_root)
+    relocated_cases = indexer.build_retrieval_cases(
+        "synthetic_python_smoke",
+        relocated_pair,
+        relocated_base_symbols,
+        head_symbols=relocated_head_symbols,
+    )
+    relocated_statuses = {
+        case.symbol: case.expected_head_status
+        for case in relocated_cases
+        if case.slice_name == "taskish_behavior"
+    }
+
+    deleted_pair = CommitPair(
+        pair_id="deleted",
+        base_ref="smoke-semantic",
+        head_ref="smoke-deleted",
+    )
+    _run(repo_root, "git", "checkout", deleted_pair.base_ref)
+    deleted_base_symbols = indexer.extract_symbols(repo_root)
+    _run(repo_root, "git", "checkout", deleted_pair.head_ref)
+    deleted_head_symbols = indexer.extract_symbols(repo_root)
+    deleted_cases = indexer.build_retrieval_cases(
+        "synthetic_python_smoke",
+        deleted_pair,
+        deleted_base_symbols,
+        head_symbols=deleted_head_symbols,
+    )
+    deleted_statuses = {
+        case.symbol: case.expected_head_status
+        for case in deleted_cases
+        if case.slice_name == "taskish_behavior"
+    }
+
+    assert relocated_statuses["relocate_target"] == ValidityStatus.RELOCATED
+    assert relocated_statuses["stable_target"] == ValidityStatus.VERIFIED
+    assert deleted_statuses["delete_target"] == ValidityStatus.STALE
+
+
 def test_repo_and_pair_filters_apply_before_case_limiting(tmp_path: Path) -> None:
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
 
@@ -728,7 +782,7 @@ def test_synthetic_naive_lexical_benchmark_run_uses_plain_lexical_retrieval(
     assert rows[0]["metrics"]["stale_filtered_count"] == 0
 
 
-def test_drifted_retrieval_filters_deleted_memory_for_verified_mode(
+def test_drifted_retrieval_tracks_valid_recall_and_stale_rejection(
     tmp_path: Path,
 ) -> None:
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
@@ -778,15 +832,33 @@ def test_drifted_retrieval_filters_deleted_memory_for_verified_mode(
         if row["metadata"]["symbol"] == "delete_target"
         and row["metadata"]["slice_name"] == "taskish_behavior"
     )
+    verified_deleted_smoke = next(
+        row
+        for row in verified_rows
+        if row["metadata"]["symbol"] == "delete_target"
+        and row["metadata"]["slice_name"] == "smoke_identity"
+    )
 
     assert naive.case_count == verified.case_count
     assert naive_deleted["metrics"]["rank"] == 1
     assert naive_deleted["metadata"]["seed_on_base_query_on_head"] is True
     assert naive_deleted["metadata"]["seed_ref"] == "smoke-semantic"
     assert naive_deleted["metadata"]["query_ref"] == "smoke-deleted"
+    assert naive_deleted["metadata"]["expected_head_status"] == ValidityStatus.STALE.value
     assert verified_deleted["metrics"]["rank"] is None
     assert verified_deleted["metrics"]["stale_filtered_count"] >= 1
-    assert naive.metrics["recall_at_1"] > verified.metrics["recall_at_1"]
+    assert verified_deleted["metadata"]["expected_head_status"] == ValidityStatus.STALE.value
+    assert verified_deleted_smoke["metadata"]["expected_head_status"] == ValidityStatus.STALE.value
+    assert verified_deleted_smoke["metrics"]["rank"] == 1
+    assert "valid_recall_at_1" in naive.metrics
+    assert naive.metrics["valid_recall_at_1"] == verified.metrics["valid_recall_at_1"]
+    assert naive.metrics["valid_recall_at_3"] == verified.metrics["valid_recall_at_3"]
+    assert naive.metrics["valid_recall_at_5"] == verified.metrics["valid_recall_at_5"]
+    assert naive.metrics["stale_rejection_rate"] == 0.0
+    assert naive.metrics["stale_hit_rate"] == 1.0
+    assert verified.metrics["stale_rejection_rate"] == 0.5
+    assert verified.metrics["stale_hit_rate"] == 0.5
+    assert verified.metrics["valid_recall_at_1"] > verified.metrics["recall_at_1"]
 
 
 def test_synthetic_reranking_benchmark_run_falls_back_on_adapter_failure(tmp_path: Path) -> None:
