@@ -238,7 +238,10 @@ class _FakeOpenAIClient:
         self.chat = _FakeChat()
 
 
-def test_run_vendored_rlm_sets_ollama_think_false(monkeypatch, tmp_path: Path) -> None:
+def test_run_vendored_rlm_passes_openai_compatible_backend_kwargs(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     captured: dict[str, object] = {}
 
     class _FakeLogger:
@@ -292,22 +295,21 @@ def test_run_vendored_rlm_sets_ollama_think_false(monkeypatch, tmp_path: Path) -
         task_pack=task_pack,
         workspace_root=tmp_path,
         artifact_root=artifact_root,
-        model_id="qwen3-coder:30b",
+        model_id="google/gemma-4-31b-it:free",
         kernel=None,
         scopes=(),
         max_iterations=2,
         max_depth=1,
         max_timeout_seconds=30,
-        base_url="http://127.0.0.1:11434/v1",
-        api_key="ollama",
+        base_url="https://openrouter.ai/api/v1",
+        api_key="openrouter-test",
     )
 
     assert result.response == "FINAL(ok)"
     assert captured["backend_kwargs"] == {
-        "model_name": "qwen3-coder:30b",
-        "base_url": "http://127.0.0.1:11434/v1",
-        "completion_extra_body": {"think": False},
-        "api_key": "ollama",
+        "model_name": "google/gemma-4-31b-it:free",
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_key": "openrouter-test",
     }
     assert captured["custom_system_prompt"] == CODING_RLM_SYSTEM_PROMPT
     assert captured["root_prompt"] is None

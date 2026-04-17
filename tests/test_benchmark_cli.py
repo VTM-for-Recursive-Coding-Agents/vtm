@@ -6,7 +6,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-from vtm.benchmarks import BenchmarkManifest, BenchmarkRunConfig, BenchmarkRunner, matrix, run
+from vtm.benchmarks import (
+    BenchmarkManifest,
+    BenchmarkRunConfig,
+    BenchmarkRunResult,
+    BenchmarkRunner,
+    matrix,
+    run,
+)
 
 
 def _cli_env() -> dict[str, str]:
@@ -110,6 +117,72 @@ def test_matrix_cli_parser_accepts_maintained_coding_engine() -> None:
     )
 
     assert args.coding_engine == "vendored_rlm"
+
+
+def test_run_cli_help_marks_legacy_docker_backend() -> None:
+    help_text = run.build_parser().format_help()
+
+    assert "docker_workspace" in help_text
+    assert "legacy/non-" in help_text
+
+
+def test_execute_benchmark_run_resolves_openrouter_defaults(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
+    captured: dict[str, object] = {}
+
+    class FakeAdapter:
+        def __init__(self, *, model: str, base_url: str, api_key: str | None) -> None:
+            captured["adapter_model"] = model
+            captured["adapter_base_url"] = base_url
+            captured["adapter_api_key"] = api_key
+
+    class FakeRunner:
+        def __init__(self, manifest, config, rlm_adapter=None) -> None:  # noqa: ANN001, ANN204
+            captured["runner_manifest"] = manifest
+            captured["runner_config"] = config
+            captured["runner_adapter"] = rlm_adapter
+
+        def run(self) -> BenchmarkRunResult:
+            return BenchmarkRunResult(
+                run_id="run-1",
+                manifest_id="synthetic_python_smoke",
+                manifest_digest="deadbeef",
+                suite="coding",
+                mode="lexical_rlm_rerank",
+                case_count=0,
+                started_at="2026-01-01T00:00:00Z",
+                completed_at="2026-01-01T00:00:01Z",
+                metrics={},
+                artifacts={},
+            )
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-key")
+    monkeypatch.setenv("VTM_OPENROUTER_BASE_URL", "https://openrouter.example/api/v1")
+    monkeypatch.setenv("VTM_EXECUTION_MODEL", "google/gemma-test")
+    monkeypatch.setenv("VTM_RERANK_MODEL", "nvidia/nemotron-test")
+    monkeypatch.setattr(run, "OpenAIRLMAdapter", FakeAdapter)
+    monkeypatch.setattr(run, "BenchmarkRunner", FakeRunner)
+
+    result = run.execute_benchmark_run(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="coding",
+            mode="lexical_rlm_rerank",
+            output_dir=str(tmp_path / "openrouter-defaults"),
+        ),
+    )
+
+    assert result.run_id == "run-1"
+    assert captured["adapter_model"] == "nvidia/nemotron-test"
+    assert captured["adapter_base_url"] == "https://openrouter.example/api/v1"
+    assert captured["adapter_api_key"] == "openrouter-test-key"
+    resolved_config = captured["runner_config"]
+    assert isinstance(resolved_config, BenchmarkRunConfig)
+    assert resolved_config.rlm_model_id == "google/gemma-test"
 
 
 def test_benchmark_cli_runs_synthetic_retrieval(tmp_path: Path) -> None:
@@ -506,3 +579,34 @@ def test_benchmark_matrix_cli_runs_manual_retrieval_matrix(tmp_path: Path) -> No
     assert (
         output_dir / "comparisons" / "no_memory-vs-verified_lexical" / "comparison.json"
     ).exists()
+
+
+def test_benchmark_matrix_preset_runs_maintained_coding_modes(
+    tmp_path: Path,
+    install_fake_vendored_rlm,
+) -> None:
+    install_fake_vendored_rlm()
+    output_dir = tmp_path / "coding-matrix"
+    args = matrix.build_parser().parse_args(
+        [
+            "--preset",
+            "synthetic_coding",
+            "--output",
+            str(output_dir),
+            "--pair",
+            "bugfix",
+            "--max-cases",
+            "1",
+            "--rlm-model-id",
+            "fake-model",
+            "--comparison-bootstrap-samples",
+            "100",
+        ]
+    )
+
+    result = matrix.run_matrix_from_args(args)
+
+    assert result.suite == "coding"
+    assert result.modes == ("no_memory", "naive_lexical", "verified_lexical")
+    assert set(result.comparison_results) == {"naive_lexical", "verified_lexical"}
+    assert (output_dir / "runs" / "naive_lexical" / "summary.json").exists()

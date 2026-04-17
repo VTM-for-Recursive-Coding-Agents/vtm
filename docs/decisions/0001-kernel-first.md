@@ -24,5 +24,5 @@ Build the system as a kernel-first scaffold:
 - The repository accepts a hard break from the initial scratch `vtm/types.py` experiment.
 - Git fingerprinting landed as part of the kernel baseline.
 - Python Tree-sitter anchors landed once the event/export and artifact lifecycle contracts were explicit.
-- Embeddings and consolidation still stay behind placeholder protocols until the kernel broadens beyond the current correctness-focused scaffold.
+- The maintained scope stays correctness-first: lexical retrieval, deterministic verification, and durable kernel contracts came before any broader provider or retrieval expansion.
 - Tests emphasize round-trip correctness, transaction semantics, retrieval defaults, and verification transitions instead of benchmark outcomes.

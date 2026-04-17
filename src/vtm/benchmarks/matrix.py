@@ -32,6 +32,7 @@ class MatrixPreset:
     manifest_path: str
     suite: BenchmarkSuite
     description: str
+    modes: tuple[BenchmarkMode, ...]
 
 
 PRESETS: dict[str, MatrixPreset] = {
@@ -39,6 +40,13 @@ PRESETS: dict[str, MatrixPreset] = {
         manifest_path="benchmarks/manifests/synthetic-smoke.json",
         suite="retrieval",
         description="Synthetic retrieval matrix for no-memory vs verified lexical.",
+        modes=("no_memory", "verified_lexical"),
+    ),
+    "synthetic_coding": MatrixPreset(
+        manifest_path="benchmarks/manifests/synthetic-smoke.json",
+        suite="coding",
+        description="Synthetic coding matrix for no_memory, naive_lexical, and verified_lexical.",
+        modes=("no_memory", "naive_lexical", "verified_lexical"),
     ),
 }
 
@@ -69,8 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help=(
-            "Mode to include in the matrix. Repeat to select multiple modes. "
-            "Defaults to the maintained study matrix."
+            "Maintained study mode to include in the matrix. Repeat to select multiple "
+            "modes. Defaults to the selected maintained preset."
         ),
     )
     parser.add_argument(
@@ -109,23 +117,26 @@ def build_parser() -> argparse.ArgumentParser:
         "--workspace-backend",
         choices=("local_workspace", "docker_workspace"),
         default="local_workspace",
-        help="Workspace backend used for coding-task execution.",
+        help=(
+            "Workspace backend for coding execution. Maintained: local_workspace. "
+            "docker_workspace is legacy/non-maintained."
+        ),
     )
     parser.add_argument(
         "--docker-image",
         default="",
-        help="Docker image for docker_workspace coding runs.",
+        help="Legacy docker_workspace image override. Non-maintained.",
     )
     parser.add_argument(
         "--docker-binary",
         default="docker",
-        help="Docker CLI binary to use for docker_workspace runs.",
+        help="Legacy docker_workspace Docker CLI override. Non-maintained.",
     )
     parser.add_argument(
         "--docker-network",
         choices=("none", "bridge"),
         default="none",
-        help="Docker network mode for docker_workspace runs.",
+        help="Legacy docker_workspace network mode. Non-maintained.",
     )
     parser.add_argument(
         "--attempts",
@@ -232,7 +243,11 @@ def run_matrix_from_args(args: argparse.Namespace) -> BenchmarkMatrixResult:
     """Execute one benchmark matrix from parsed CLI arguments."""
     manifest_path, suite, preset_name = _resolve_manifest_and_suite(args)
     manifest = BenchmarkManifest.from_path(manifest_path)
-    modes = _resolve_modes(args.mode, baseline_mode=args.baseline_mode)
+    modes = _resolve_modes(
+        args.mode,
+        baseline_mode=args.baseline_mode,
+        preset_name=preset_name,
+    )
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
     runs_root = output_dir / "runs"
@@ -374,9 +389,13 @@ def _resolve_modes(
     requested_modes: list[str],
     *,
     baseline_mode: str,
+    preset_name: str | None,
 ) -> tuple[BenchmarkMode, ...]:
     if not requested_modes:
-        modes: tuple[BenchmarkMode, ...] = DEFAULT_MATRIX_MODES
+        if preset_name is None:
+            modes = DEFAULT_MATRIX_MODES
+        else:
+            modes = PRESETS[preset_name].modes
     else:
         deduped: list[BenchmarkMode] = []
         seen: set[str] = set()

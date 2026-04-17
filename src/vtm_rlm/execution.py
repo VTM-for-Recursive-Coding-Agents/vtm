@@ -6,7 +6,6 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 from vtm.harness.models import HarnessTaskPack
 from vtm.memory_items import VisibilityScope
@@ -71,8 +70,6 @@ def run_vendored_rlm(
     backend_kwargs: dict[str, Any] = {"model_name": model_id}
     if base_url:
         backend_kwargs["base_url"] = base_url
-        if _is_ollama_base_url(base_url):
-            backend_kwargs["completion_extra_body"] = {"think": False}
     if api_key:
         backend_kwargs["api_key"] = api_key
 
@@ -117,11 +114,3 @@ def run_vendored_rlm(
         usage_summary=completion.usage_summary.to_dict(),
         metadata=completion.metadata or {},
     )
-
-
-def _is_ollama_base_url(base_url: str) -> bool:
-    parsed = urlparse(base_url)
-    hostname = (parsed.hostname or "").lower()
-    if hostname in {"localhost", "127.0.0.1"} and parsed.port == 11434:
-        return True
-    return "ollama" in base_url.lower()
