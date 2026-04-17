@@ -6,11 +6,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import vtm.benchmarks.report as report
 from vtm.benchmarks import (
     BenchmarkManifest,
     BenchmarkRunConfig,
-    BenchmarkRunResult,
     BenchmarkRunner,
+    BenchmarkRunResult,
     matrix,
     run,
 )
@@ -117,6 +118,20 @@ def test_matrix_cli_parser_accepts_maintained_coding_engine() -> None:
     )
 
     assert args.coding_engine == "vendored_rlm"
+
+
+def test_report_cli_requires_at_least_one_run_location(tmp_path: Path) -> None:
+    try:
+        report.export_paper_tables(
+            retrieval_locations=[],
+            drift_locations=[],
+            coding_locations=[],
+            output_dir=tmp_path / "paper-tables",
+        )
+    except ValueError as exc:
+        assert "provide at least one" in str(exc)
+    else:
+        raise AssertionError("expected paper table export without run locations to fail")
 
 
 def test_run_cli_help_marks_legacy_docker_backend() -> None:
@@ -579,6 +594,52 @@ def test_benchmark_matrix_cli_runs_manual_retrieval_matrix(tmp_path: Path) -> No
     assert (
         output_dir / "comparisons" / "no_memory-vs-verified_lexical" / "comparison.json"
     ).exists()
+
+
+def test_benchmark_matrix_preset_runs_maintained_retrieval_modes(tmp_path: Path) -> None:
+    output_dir = tmp_path / "retrieval-preset"
+    args = matrix.build_parser().parse_args(
+        [
+            "--preset",
+            "synthetic_retrieval",
+            "--output",
+            str(output_dir),
+            "--max-cases",
+            "1",
+            "--comparison-bootstrap-samples",
+            "100",
+        ]
+    )
+
+    result = matrix.run_matrix_from_args(args)
+
+    assert result.suite == "retrieval"
+    assert result.baseline_mode == "no_memory"
+    assert result.modes == ("no_memory", "naive_lexical", "verified_lexical")
+    assert set(result.comparison_results) == {"naive_lexical", "verified_lexical"}
+    assert (output_dir / "runs" / "naive_lexical" / "summary.json").exists()
+
+
+def test_benchmark_matrix_preset_runs_verified_drift_mode_only(tmp_path: Path) -> None:
+    output_dir = tmp_path / "drift-preset"
+    args = matrix.build_parser().parse_args(
+        [
+            "--preset",
+            "synthetic_drift",
+            "--output",
+            str(output_dir),
+            "--max-cases",
+            "1",
+        ]
+    )
+
+    result = matrix.run_matrix_from_args(args)
+
+    assert result.suite == "drift"
+    assert result.baseline_mode == "verified_lexical"
+    assert result.modes == ("verified_lexical",)
+    assert result.comparison_results == {}
+    assert (output_dir / "runs" / "verified_lexical" / "summary.json").exists()
 
 
 def test_benchmark_matrix_preset_runs_maintained_coding_modes(

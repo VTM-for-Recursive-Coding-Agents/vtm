@@ -16,7 +16,8 @@ The maintained package boundaries are:
 - Maintained inference/execution: OpenRouter only
 - Retrieval evaluation: `no_memory`, `naive_lexical`, `verified_lexical`
 - Drift evaluation: `verified_lexical`
-- Coding evaluation: targeted SWE-bench Lite or synthetic smoke tasks with `no_memory`, `naive_lexical`, or `verified_lexical`
+- Coding evaluation: targeted SWE-bench Lite with `no_memory`, `naive_lexical`, or `verified_lexical`
+- Synthetic coding smoke: maintained for local/dev validation only
 - Optional secondary ablation: `lexical_rlm_rerank`
 - Removed from the maintained surface: Codex execution, embeddings, terminal-only tracks
 
@@ -35,14 +36,25 @@ The maintained inference path uses OpenRouter’s OpenAI-compatible API only.
 - Default smoke/dev rerank model: `nvidia/nemotron-3-nano-30b-a3b:free`
 - Optional stronger ablation model: `nvidia/nemotron-3-super-120b-a12b:free`
 
-## Quick Start
+## Environment Setup
+
+Basic dev environment:
 
 ```bash
-uv sync --dev --all-extras
+uv sync --dev
+```
+
+Full eval environment:
+
+```bash
+uv sync --dev --extra rlm --extra bench
 export OPENROUTER_API_KEY=...
+export VTM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 export VTM_EXECUTION_MODEL=google/gemma-4-31b-it:free
 export VTM_RERANK_MODEL=nvidia/nemotron-3-nano-30b-a3b:free
 ```
+
+Vendored-RLM and OpenRouter-backed benchmark tests require the optional `openai` dependency from the `rlm` extra. If you only install the basic dev environment, vendored-RLM tests such as `tests/test_vtm_rlm.py` may skip.
 
 Quick synthetic retrieval run:
 
@@ -76,6 +88,7 @@ CLI entrypoints:
 vtm-bench --help
 vtm-bench-compare --help
 vtm-bench-matrix --help
+vtm-bench-report --help
 vtm-prepare-swebench-lite --help
 ```
 

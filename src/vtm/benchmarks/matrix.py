@@ -33,20 +33,33 @@ class MatrixPreset:
     suite: BenchmarkSuite
     description: str
     modes: tuple[BenchmarkMode, ...]
+    baseline_mode: BenchmarkMode
 
 
 PRESETS: dict[str, MatrixPreset] = {
     "synthetic_retrieval": MatrixPreset(
         manifest_path="benchmarks/manifests/synthetic-smoke.json",
         suite="retrieval",
-        description="Synthetic retrieval matrix for no-memory vs verified lexical.",
-        modes=("no_memory", "verified_lexical"),
+        description=(
+            "Synthetic retrieval matrix for no_memory, naive_lexical, "
+            "and verified_lexical."
+        ),
+        modes=("no_memory", "naive_lexical", "verified_lexical"),
+        baseline_mode="no_memory",
+    ),
+    "synthetic_drift": MatrixPreset(
+        manifest_path="benchmarks/manifests/synthetic-smoke.json",
+        suite="drift",
+        description="Synthetic drift matrix for verified lexical verification only.",
+        modes=("verified_lexical",),
+        baseline_mode="verified_lexical",
     ),
     "synthetic_coding": MatrixPreset(
         manifest_path="benchmarks/manifests/synthetic-smoke.json",
         suite="coding",
         description="Synthetic coding matrix for no_memory, naive_lexical, and verified_lexical.",
         modes=("no_memory", "naive_lexical", "verified_lexical"),
+        baseline_mode="no_memory",
     ),
 }
 
@@ -89,8 +102,8 @@ def build_parser() -> argparse.ArgumentParser:
             "verified_lexical",
             "lexical_rlm_rerank",
         ),
-        default="no_memory",
-        help="Mode used as the comparison baseline.",
+        default="",
+        help="Mode used as the comparison baseline. Defaults to the preset baseline.",
     )
     parser.add_argument("--top-k", type=int, default=5, help="Top K memories to evaluate.")
     parser.add_argument("--max-cases", type=int, default=None, help="Optional case limit.")
@@ -111,7 +124,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--coding-engine",
         choices=("vendored_rlm",),
         default="vendored_rlm",
-        help="Maintained coding execution engine. Only the OpenRouter-backed RLM path is supported.",
+        help=(
+            "Maintained coding execution engine. Only the OpenRouter-backed "
+            "RLM path is supported."
+        ),
     )
     parser.add_argument(
         "--workspace-backend",
@@ -243,9 +259,10 @@ def run_matrix_from_args(args: argparse.Namespace) -> BenchmarkMatrixResult:
     """Execute one benchmark matrix from parsed CLI arguments."""
     manifest_path, suite, preset_name = _resolve_manifest_and_suite(args)
     manifest = BenchmarkManifest.from_path(manifest_path)
+    baseline_mode = _resolve_baseline_mode(args.baseline_mode, preset_name=preset_name)
     modes = _resolve_modes(
         args.mode,
-        baseline_mode=args.baseline_mode,
+        baseline_mode=baseline_mode,
         preset_name=preset_name,
     )
     output_dir = Path(args.output)
@@ -291,11 +308,11 @@ def run_matrix_from_args(args: argparse.Namespace) -> BenchmarkMatrixResult:
             execution_model_name=args.rlm_model_id or None,
         )
 
-    baseline_dir = runs_root / args.baseline_mode
+    baseline_dir = runs_root / baseline_mode
     for mode in modes:
-        if mode == args.baseline_mode:
+        if mode == baseline_mode:
             continue
-        comparison_output_dir = comparisons_root / f"{args.baseline_mode}-vs-{mode}"
+        comparison_output_dir = comparisons_root / f"{baseline_mode}-vs-{mode}"
         comparison_results[mode] = compare_completed_runs(
             baseline_location=baseline_dir,
             candidate_location=runs_root / mode,
@@ -310,7 +327,7 @@ def run_matrix_from_args(args: argparse.Namespace) -> BenchmarkMatrixResult:
                 preset_name or "custom",
                 manifest_path,
                 suite,
-                args.baseline_mode,
+                baseline_mode,
                 *modes,
             ]
         ).encode("utf-8")
@@ -323,7 +340,7 @@ def run_matrix_from_args(args: argparse.Namespace) -> BenchmarkMatrixResult:
         manifest_path=manifest_path,
         suite=suite,
         output_dir=str(output_dir),
-        baseline_mode=args.baseline_mode,
+        baseline_mode=baseline_mode,
         modes=modes,
         run_results=run_results,
         comparison_results=comparison_results,
@@ -383,6 +400,18 @@ def _resolve_manifest_and_suite(
         return args.manifest, args.suite, None
     preset = PRESETS[args.preset]
     return preset.manifest_path, preset.suite, args.preset
+
+
+def _resolve_baseline_mode(
+    requested_baseline_mode: str,
+    *,
+    preset_name: str | None,
+) -> BenchmarkMode:
+    if requested_baseline_mode:
+        return requested_baseline_mode  # type: ignore[return-value]
+    if preset_name is None:
+        return "no_memory"
+    return PRESETS[preset_name].baseline_mode
 
 
 def _resolve_modes(

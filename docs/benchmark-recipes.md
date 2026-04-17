@@ -2,6 +2,22 @@
 
 These are the maintained commands for the narrowed paper artifact: OpenRouter-only inference, a verified lexical memory study, no embeddings, and no terminal track.
 
+## Environments
+
+Basic dev environment:
+
+```bash
+uv sync --dev
+```
+
+Full eval environment:
+
+```bash
+uv sync --dev --extra rlm --extra bench
+```
+
+The full eval environment is the maintained setup for OpenRouter-backed coding runs, rerank ablations, SWE-bench prep, and paper-table export. If you only install the basic dev environment, vendored-RLM tests that import the optional `openai` package may skip.
+
 ## OpenRouter Setup
 
 All maintained inference and coding execution paths use OpenRouter's OpenAI-compatible API only.
@@ -96,6 +112,16 @@ uv run python -m vtm.benchmarks.matrix \
   --output .benchmarks/matrix-retrieval
 ```
 
+This maintained preset runs `no_memory`, `naive_lexical`, and `verified_lexical`.
+
+Drift paper preset:
+
+```bash
+uv run python -m vtm.benchmarks.matrix \
+  --preset synthetic_drift \
+  --output .benchmarks/matrix-drift
+```
+
 Coding paper preset:
 
 ```bash
@@ -156,6 +182,52 @@ uv run python -m vtm.benchmarks.run \
   --execution-model "$VTM_EXECUTION_MODEL" \
   --rerank-model "$VTM_RERANK_MODEL"
 ```
+
+## Paper Table Export
+
+Retrieval table export from the maintained three-way matrix:
+
+```bash
+uv run python -m vtm.benchmarks.report \
+  --retrieval-run .benchmarks/matrix-retrieval/runs/no_memory \
+  --retrieval-run .benchmarks/matrix-retrieval/runs/naive_lexical \
+  --retrieval-run .benchmarks/matrix-retrieval/runs/verified_lexical \
+  --output .benchmarks/paper-tables/retrieval
+```
+
+Drift table export:
+
+```bash
+uv run python -m vtm.benchmarks.report \
+  --drift-run .benchmarks/matrix-drift/runs/verified_lexical \
+  --output .benchmarks/paper-tables/drift
+```
+
+Coding table export:
+
+```bash
+uv run python -m vtm.benchmarks.report \
+  --coding-run .benchmarks/matrix-coding/runs/no_memory \
+  --coding-run .benchmarks/matrix-coding/runs/naive_lexical \
+  --coding-run .benchmarks/matrix-coding/runs/verified_lexical \
+  --output .benchmarks/paper-tables/coding
+```
+
+Combined draft Markdown across retrieval, drift, and coding:
+
+```bash
+uv run python -m vtm.benchmarks.report \
+  --retrieval-run .benchmarks/matrix-retrieval/runs/no_memory \
+  --retrieval-run .benchmarks/matrix-retrieval/runs/naive_lexical \
+  --retrieval-run .benchmarks/matrix-retrieval/runs/verified_lexical \
+  --drift-run .benchmarks/matrix-drift/runs/verified_lexical \
+  --coding-run .benchmarks/matrix-coding/runs/no_memory \
+  --coding-run .benchmarks/matrix-coding/runs/naive_lexical \
+  --coding-run .benchmarks/matrix-coding/runs/verified_lexical \
+  --output .benchmarks/paper-tables/combined
+```
+
+The exporter writes suite CSVs when those suites are provided plus a combined `paper_tables.md` for drafting.
 
 ## SWE-bench Lite
 
