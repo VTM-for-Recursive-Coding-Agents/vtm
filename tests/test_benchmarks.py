@@ -728,6 +728,67 @@ def test_synthetic_naive_lexical_benchmark_run_uses_plain_lexical_retrieval(
     assert rows[0]["metrics"]["stale_filtered_count"] == 0
 
 
+def test_drifted_retrieval_filters_deleted_memory_for_verified_mode(
+    tmp_path: Path,
+) -> None:
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
+
+    naive = BenchmarkRunner(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="retrieval",
+            mode="naive_lexical",
+            output_dir=str(tmp_path / "drifted-naive"),
+            pair_filters=("deleted",),
+            seed_on_base_query_on_head=True,
+        ),
+    ).run()
+    verified = BenchmarkRunner(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="retrieval",
+            mode="verified_lexical",
+            output_dir=str(tmp_path / "drifted-verified"),
+            pair_filters=("deleted",),
+            seed_on_base_query_on_head=True,
+        ),
+    ).run()
+
+    naive_rows = [
+        json.loads(line)
+        for line in Path(naive.artifacts["results_jsonl"]).read_text(encoding="utf-8").splitlines()
+    ]
+    verified_rows = [
+        json.loads(line)
+        for line in Path(verified.artifacts["results_jsonl"])
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    naive_deleted = next(
+        row
+        for row in naive_rows
+        if row["metadata"]["symbol"] == "delete_target"
+        and row["metadata"]["slice_name"] == "taskish_behavior"
+    )
+    verified_deleted = next(
+        row
+        for row in verified_rows
+        if row["metadata"]["symbol"] == "delete_target"
+        and row["metadata"]["slice_name"] == "taskish_behavior"
+    )
+
+    assert naive.case_count == verified.case_count
+    assert naive_deleted["metrics"]["rank"] == 1
+    assert naive_deleted["metadata"]["seed_on_base_query_on_head"] is True
+    assert naive_deleted["metadata"]["seed_ref"] == "smoke-semantic"
+    assert naive_deleted["metadata"]["query_ref"] == "smoke-deleted"
+    assert verified_deleted["metrics"]["rank"] is None
+    assert verified_deleted["metrics"]["stale_filtered_count"] >= 1
+    assert naive.metrics["recall_at_1"] > verified.metrics["recall_at_1"]
+
+
 def test_synthetic_reranking_benchmark_run_falls_back_on_adapter_failure(tmp_path: Path) -> None:
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
 

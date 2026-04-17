@@ -34,6 +34,7 @@ class MatrixPreset:
     description: str
     modes: tuple[BenchmarkMode, ...]
     baseline_mode: BenchmarkMode
+    seed_on_base_query_on_head: bool = False
 
 
 PRESETS: dict[str, MatrixPreset] = {
@@ -46,6 +47,17 @@ PRESETS: dict[str, MatrixPreset] = {
         ),
         modes=("no_memory", "naive_lexical", "verified_lexical"),
         baseline_mode="no_memory",
+    ),
+    "synthetic_retrieval_drifted": MatrixPreset(
+        manifest_path="benchmarks/manifests/synthetic-smoke.json",
+        suite="retrieval",
+        description=(
+            "Synthetic retrieval matrix that seeds memories on base_ref and "
+            "queries on head_ref for no_memory, naive_lexical, and verified_lexical."
+        ),
+        modes=("no_memory", "naive_lexical", "verified_lexical"),
+        baseline_mode="no_memory",
+        seed_on_base_query_on_head=True,
     ),
     "synthetic_drift": MatrixPreset(
         manifest_path="benchmarks/manifests/synthetic-smoke.json",
@@ -108,6 +120,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--top-k", type=int, default=5, help="Top K memories to evaluate.")
     parser.add_argument("--max-cases", type=int, default=None, help="Optional case limit.")
     parser.add_argument("--seed", type=int, default=0, help="Deterministic run seed.")
+    parser.add_argument(
+        "--seed-on-base-query-on-head",
+        action="store_true",
+        help=(
+            "Retrieval-only mode that seeds memory from base_ref symbols and "
+            "queries after checking out head_ref."
+        ),
+    )
     parser.add_argument(
         "--repo",
         action="append",
@@ -260,6 +280,10 @@ def run_matrix_from_args(args: argparse.Namespace) -> BenchmarkMatrixResult:
     manifest_path, suite, preset_name = _resolve_manifest_and_suite(args)
     manifest = BenchmarkManifest.from_path(manifest_path)
     baseline_mode = _resolve_baseline_mode(args.baseline_mode, preset_name=preset_name)
+    seed_on_base_query_on_head = _resolve_seed_on_base_query_on_head(
+        args.seed_on_base_query_on_head,
+        preset_name=preset_name,
+    )
     modes = _resolve_modes(
         args.mode,
         baseline_mode=baseline_mode,
@@ -284,6 +308,7 @@ def run_matrix_from_args(args: argparse.Namespace) -> BenchmarkMatrixResult:
             seed=args.seed,
             repo_filters=tuple(args.repo),
             pair_filters=tuple(args.pair),
+            seed_on_base_query_on_head=seed_on_base_query_on_head,
             coding_engine=args.coding_engine,
             workspace_backend=args.workspace_backend,
             docker_image=args.docker_image or None,
@@ -412,6 +437,18 @@ def _resolve_baseline_mode(
     if preset_name is None:
         return "no_memory"
     return PRESETS[preset_name].baseline_mode
+
+
+def _resolve_seed_on_base_query_on_head(
+    requested_seed_on_base_query_on_head: bool,
+    *,
+    preset_name: str | None,
+) -> bool:
+    if requested_seed_on_base_query_on_head:
+        return True
+    if preset_name is None:
+        return False
+    return PRESETS[preset_name].seed_on_base_query_on_head
 
 
 def _resolve_modes(

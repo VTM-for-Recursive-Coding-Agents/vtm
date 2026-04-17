@@ -30,6 +30,7 @@ def run_retrieval_suite(
     kernel_factory: BenchmarkKernelFactory,
     top_k: int,
     mode: BenchmarkMode,
+    seed_on_base_query_on_head: bool = False,
 ) -> tuple[list[RetrievalCase], list[BenchmarkCaseResult]]:
     """Run retrieval evaluation for the selected repo and commit pairs."""
     resolved_mode = resolved_benchmark_mode(mode)
@@ -88,11 +89,15 @@ def run_retrieval_suite(
                 artifacts,
                 len(base_symbols),
             )
+            query_ref = pair.base_ref
+            if seed_on_base_query_on_head:
+                repo_manager.git_checkout(repo_root, pair.head_ref)
+                query_ref = pair.head_ref
             pair_results: list[BenchmarkCaseResult] = []
             current_dependency = kernel_factory.dependency_builder().build(
                 str(repo_root),
                 dependency_ids=(f"benchmark:{pair.pair_id}",),
-                input_digests=(pair.base_ref,),
+                input_digests=(query_ref,),
             )
             for case in pair_cases:
                 started = time.perf_counter()
@@ -144,6 +149,9 @@ def run_retrieval_suite(
                             "slice_name": case.slice_name,
                             "relative_path": case.relative_path,
                             "symbol": case.symbol,
+                            "seed_ref": pair.base_ref,
+                            "query_ref": query_ref,
+                            "seed_on_base_query_on_head": seed_on_base_query_on_head,
                             "returned_memory_ids": [
                                 candidate.memory.memory_id
                                 for candidate in retrieve_result.candidates
