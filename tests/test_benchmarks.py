@@ -7,6 +7,7 @@ from pathlib import Path
 
 from vtm.adapters.rlm import RLMRankRequest, RLMRankResponse
 from vtm.benchmarks import BenchmarkManifest, BenchmarkRunConfig, BenchmarkRunner
+from vtm.benchmarks.compare import compare_completed_runs
 from vtm.benchmarks.models import CommitPair, RepoSpec
 from vtm.benchmarks.symbol_index import SymbolIndexer
 from vtm.benchmarks.synthetic import SyntheticPythonSmokeCorpus
@@ -168,6 +169,41 @@ def test_synthetic_benchmark_retrieval_and_drift_runs(tmp_path: Path) -> None:
     retrieval_results = Path(retrieval.artifacts["results_jsonl"]).read_text(encoding="utf-8")
     assert len(retrieval_cases.splitlines()) == 4
     assert len(retrieval_results.splitlines()) == 4
+
+
+def test_compare_loads_repo_relative_artifacts_from_summary(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    manifest_path = repo_root / "benchmarks" / "manifests" / "synthetic-smoke.json"
+    manifest = BenchmarkManifest.from_path(manifest_path)
+    monkeypatch.chdir(tmp_path)
+
+    run_dir = Path(".benchmarks/matrix-retrieval/runs/no_memory")
+    run_result = BenchmarkRunner(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path=str(manifest_path),
+            suite="retrieval",
+            mode="no_memory",
+            output_dir=str(run_dir),
+            max_cases=1,
+        ),
+    ).run()
+
+    assert run_result.artifacts["results_jsonl"] == str(run_dir / "results.jsonl")
+
+    comparison = compare_completed_runs(
+        baseline_location=run_dir,
+        candidate_location=run_dir,
+        output_dir=Path(".benchmarks/matrix-retrieval/comparisons/self"),
+        bootstrap_samples=10,
+    )
+
+    assert comparison.common_case_count == 1
+    assert Path(comparison.artifacts["baseline_results_jsonl"]).exists()
+
 
 def test_git_repo_checkout_supports_local_remote(tmp_path: Path) -> None:
     remote_repo = tmp_path / "remote"

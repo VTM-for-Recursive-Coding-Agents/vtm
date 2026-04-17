@@ -165,8 +165,13 @@ def _resolve_summary_path(location: Path) -> Path:
 def _artifact_path(run_dir: Path, artifact: str) -> Path:
     path = Path(artifact)
     if path.is_absolute():
-        return path
-    return run_dir / path
+        return path.resolve()
+    if path.exists():
+        return path.resolve()
+    candidate = run_dir / path
+    if candidate.exists():
+        return candidate.resolve()
+    return candidate
 
 
 def _load_jsonl_models[ModelT: BenchmarkCaseResult | BenchmarkAttemptResult](
