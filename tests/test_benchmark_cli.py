@@ -94,6 +94,22 @@ def test_run_cli_parser_accepts_new_lexical_modes() -> None:
     assert naive.mode == "naive_lexical"
 
 
+def test_run_cli_parser_accepts_seed_on_base_query_on_head() -> None:
+    args = run.build_parser().parse_args(
+        [
+            "--manifest",
+            "benchmarks/manifests/synthetic-smoke.json",
+            "--suite",
+            "retrieval",
+            "--output",
+            "out",
+            "--seed-on-base-query-on-head",
+        ]
+    )
+
+    assert args.seed_on_base_query_on_head is True
+
+
 def test_matrix_cli_parser_accepts_rlm_execution_args() -> None:
     args = matrix.build_parser().parse_args(
         [
@@ -118,6 +134,18 @@ def test_matrix_cli_parser_accepts_maintained_coding_engine() -> None:
     )
 
     assert args.coding_engine == "vendored_rlm"
+
+
+def test_matrix_cli_parser_accepts_seed_on_base_query_on_head() -> None:
+    args = matrix.build_parser().parse_args(
+        [
+            "--output",
+            "out",
+            "--seed-on-base-query-on-head",
+        ]
+    )
+
+    assert args.seed_on_base_query_on_head is True
 
 
 def test_report_cli_requires_at_least_one_run_location(tmp_path: Path) -> None:
@@ -618,6 +646,37 @@ def test_benchmark_matrix_preset_runs_maintained_retrieval_modes(tmp_path: Path)
     assert result.modes == ("no_memory", "naive_lexical", "verified_lexical")
     assert set(result.comparison_results) == {"naive_lexical", "verified_lexical"}
     assert (output_dir / "runs" / "naive_lexical" / "summary.json").exists()
+
+
+def test_benchmark_matrix_preset_runs_maintained_drifted_retrieval_modes(
+    tmp_path: Path,
+) -> None:
+    output_dir = tmp_path / "retrieval-drifted-preset"
+    args = matrix.build_parser().parse_args(
+        [
+            "--preset",
+            "synthetic_retrieval_drifted",
+            "--output",
+            str(output_dir),
+            "--max-cases",
+            "1",
+            "--comparison-bootstrap-samples",
+            "100",
+        ]
+    )
+
+    result = matrix.run_matrix_from_args(args)
+    manifest_lock = json.loads(
+        (output_dir / "runs" / "verified_lexical" / "manifest.lock.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert result.suite == "retrieval"
+    assert result.baseline_mode == "no_memory"
+    assert result.modes == ("no_memory", "naive_lexical", "verified_lexical")
+    assert set(result.comparison_results) == {"naive_lexical", "verified_lexical"}
+    assert manifest_lock["seed_on_base_query_on_head"] is True
 
 
 def test_benchmark_matrix_preset_runs_verified_drift_mode_only(tmp_path: Path) -> None:

@@ -48,6 +48,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-cases", type=int, default=None, help="Optional case limit.")
     parser.add_argument("--seed", type=int, default=0, help="Deterministic run seed.")
     parser.add_argument(
+        "--seed-on-base-query-on-head",
+        action="store_true",
+        help=(
+            "Retrieval-only mode that seeds memory from base_ref symbols and "
+            "queries after checking out head_ref."
+        ),
+    )
+    parser.add_argument(
         "--repo",
         action="append",
         default=[],
@@ -63,7 +71,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--coding-engine",
         choices=("vendored_rlm",),
         default="vendored_rlm",
-        help="Maintained coding execution engine. Only the OpenRouter-backed RLM path is supported.",
+        help=(
+            "Maintained coding execution engine. Only the OpenRouter-backed "
+            "RLM path is supported."
+        ),
     )
     parser.add_argument(
         "--workspace-backend",
@@ -211,6 +222,7 @@ def main() -> int:
         seed=args.seed,
         repo_filters=tuple(args.repo),
         pair_filters=tuple(args.pair),
+        seed_on_base_query_on_head=args.seed_on_base_query_on_head,
         coding_engine=args.coding_engine,
         workspace_backend=args.workspace_backend,
         docker_image=args.docker_image or None,

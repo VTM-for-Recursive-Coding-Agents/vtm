@@ -67,6 +67,28 @@ uv run python -m vtm.benchmarks.run \
   --output .benchmarks/retrieval-naive-lexical
 ```
 
+Drifted verified lexical retrieval seeded on `base_ref` and queried on `head_ref`:
+
+```bash
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/synthetic-smoke.json \
+  --suite retrieval \
+  --mode verified_lexical \
+  --seed-on-base-query-on-head \
+  --output .benchmarks/retrieval-drifted-verified-lexical
+```
+
+Drifted naive lexical ablation seeded on `base_ref` and queried on `head_ref`:
+
+```bash
+uv run python -m vtm.benchmarks.run \
+  --manifest benchmarks/manifests/synthetic-smoke.json \
+  --suite retrieval \
+  --mode naive_lexical \
+  --seed-on-base-query-on-head \
+  --output .benchmarks/retrieval-drifted-naive-lexical
+```
+
 Optional reranked ablation:
 
 ```bash
@@ -113,6 +135,16 @@ uv run python -m vtm.benchmarks.matrix \
 ```
 
 This maintained preset runs `no_memory`, `naive_lexical`, and `verified_lexical`.
+
+Drifted retrieval paper preset:
+
+```bash
+uv run python -m vtm.benchmarks.matrix \
+  --preset synthetic_retrieval_drifted \
+  --output .benchmarks/matrix-retrieval-drifted
+```
+
+This maintained preset runs `no_memory`, `naive_lexical`, and `verified_lexical` with memory seeded on `base_ref` and retrieval executed after checking out `head_ref`.
 
 Drift paper preset:
 
@@ -193,6 +225,16 @@ uv run python -m vtm.benchmarks.report \
   --retrieval-run .benchmarks/matrix-retrieval/runs/naive_lexical \
   --retrieval-run .benchmarks/matrix-retrieval/runs/verified_lexical \
   --output .benchmarks/paper-tables/retrieval
+```
+
+Drifted retrieval table export from the maintained three-way drifted matrix:
+
+```bash
+uv run python -m vtm.benchmarks.report \
+  --retrieval-run .benchmarks/matrix-retrieval-drifted/runs/no_memory \
+  --retrieval-run .benchmarks/matrix-retrieval-drifted/runs/naive_lexical \
+  --retrieval-run .benchmarks/matrix-retrieval-drifted/runs/verified_lexical \
+  --output .benchmarks/paper-tables/retrieval-drifted
 ```
 
 Drift table export:

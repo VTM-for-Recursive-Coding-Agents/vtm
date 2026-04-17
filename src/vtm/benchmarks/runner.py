@@ -58,6 +58,8 @@ class BenchmarkRunner:
             "mode": self._config.mode,
             "seed": self._config.seed,
         }
+        if self._config.seed_on_base_query_on_head:
+            manifest_lock["seed_on_base_query_on_head"] = True
         if self._config.suite == "coding":
             manifest_lock["execution_engine"] = self._config.coding_engine
             manifest_lock["workspace_backend"] = self._config.workspace_backend

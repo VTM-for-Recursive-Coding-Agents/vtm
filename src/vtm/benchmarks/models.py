@@ -165,6 +165,7 @@ class BenchmarkRunConfig(VTMModel):
     seed: int = 0
     repo_filters: tuple[str, ...] = Field(default_factory=tuple)
     pair_filters: tuple[str, ...] = Field(default_factory=tuple)
+    seed_on_base_query_on_head: bool = False
     workspace_backend: WorkspaceBackendName = "local_workspace"
     coding_engine: CodingExecutionEngine = "vendored_rlm"
     docker_image: str | None = None
@@ -193,6 +194,10 @@ class BenchmarkRunConfig(VTMModel):
             raise ValueError("pass_k_values must not contain duplicates")
         if any(value > self.attempt_count for value in pass_k_values):
             raise ValueError("pass_k_values must be less than or equal to attempt_count")
+        if self.seed_on_base_query_on_head and self.suite != "retrieval":
+            raise ValueError(
+                "seed_on_base_query_on_head is only supported for retrieval suites"
+            )
         if self.suite != "coding":
             if self.attempt_count != 1:
                 raise ValueError("attempt_count > 1 is only supported for coding suites")

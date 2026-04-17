@@ -298,6 +298,14 @@ def test_benchmark_run_config_validates_attempt_controls() -> None:
 
     assert config.pass_k_values == (3, 1, 2)
 
+    with pytest.raises(ValidationError):
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="drift",
+            output_dir=".benchmarks/synthetic",
+            seed_on_base_query_on_head=True,
+        )
+
 
 def test_benchmark_run_config_validates_docker_workspace_settings() -> None:
     with pytest.raises(ValidationError):

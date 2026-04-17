@@ -64,6 +64,7 @@ class BenchmarkSuiteExecutor:
             kernel_factory=self._kernel_factory,
             top_k=self._config.top_k,
             mode=self._config.mode,
+            seed_on_base_query_on_head=self._config.seed_on_base_query_on_head,
         )
         return self._limit_cases(cases, results)
 
