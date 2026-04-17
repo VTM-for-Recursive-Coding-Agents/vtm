@@ -105,8 +105,13 @@ def test_attempt_rows_and_pass_at_k_aggregate_rlm_executor(
     install_fake_vendored_rlm,
 ) -> None:
     def apply_on_second_attempt(task_pack, workspace_root: Path, artifact_root: Path) -> None:
-        attempt_name = artifact_root.parent.name
-        attempt_marker = artifact_root.parent / "attempt.txt"
+        attempt_dir = next(
+            (path for path in artifact_root.parents if path.name.startswith("attempt-")),
+            None,
+        )
+        assert attempt_dir is not None
+        attempt_name = attempt_dir.name
+        attempt_marker = attempt_dir / "attempt.txt"
         attempt_marker.write_text(str(int(attempt_name.split("-")[-1])), encoding="utf-8")
         if attempt_name != "attempt-02":
             return

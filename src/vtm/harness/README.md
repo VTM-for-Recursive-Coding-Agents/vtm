@@ -20,7 +20,7 @@ Contents
 - `workspace_docker.py`: Docker-backed workspace backend and persistent in-container driver.
 
 Important contract details
-- `HarnessTaskPack`: canonical per-case task file, including optional `retrieval_query` and `execution_style`.
+- `HarnessTaskPack`: canonical per-case task file, including derived or explicit `retrieval_query`, `execution_style`, and visible task context such as `verifier_output` / `localization_notes`.
 - `ExecutorRequest`: per-attempt execution request, including `attempt_index`, `artifact_root`, and `workspace_backend`.
 - `ExecutorResult`: per-attempt execution output used for `attempts.jsonl`, plus normalized Docker metadata when applicable.
 - Local layout:

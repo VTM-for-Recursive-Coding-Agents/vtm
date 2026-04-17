@@ -16,17 +16,28 @@ Compatibility re-exports still exist for some older import paths, but new code s
 - frozen Pydantic v2 records for the durable memory and storage layer
 - SQLite metadata/events, cache storage, and derived embedding index storage
 - filesystem artifact capture with prepared/committed states and integrity audits
-- deterministic lexical retrieval, derived embedding retrieval, and optional RLM reranking
+- deterministic lexical retrieval with explicit `naive_lexical` and `verified_lexical` benchmark modes, derived embedding retrieval, and optional RLM reranking
 - verification, procedure validation, and deterministic consolidation
 - typed harness task packs plus local and Docker-backed workspace/executor contracts
 - vendored upstream `rlm` as the active recursive execution engine
-- retrieval, drift, coding-task, vendored-RLM, and SWE-bench Lite benchmark workflows
+- retrieval, drift, and coding-task benchmark workflows narrowed to a fair repository-memory study: no memory, naive lexical memory, verified lexical memory, and optional RLM reranking
 - checked-in `terminal-smoke` coding tasks for harder local terminal-style evaluation
 - checked-in `terminal-shell-smoke` coding tasks for shell-command-driven evaluation
 - repeated-attempt coding benchmarks with `attempts.jsonl`, `pass_at_k`, `resolved_at_k`, and `patch_applied_at_k`
 - Docker-sandboxed coding attempts with per-attempt container metadata and backend breakdowns
 - offline benchmark comparison via `vtm-bench-compare`, including paired case deltas and coding `pass_at_k` comparisons
 - preset-driven benchmark matrices via `vtm-bench-matrix`
+
+## Benchmark Scope
+
+The maintained study is now:
+
+- `no_memory`: no retrieval context
+- `naive_lexical`: lexical retrieval without validity gating or retrieval-time verification
+- `verified_lexical`: lexical retrieval plus retrieval-time verification/relocation before memories are surfaced
+- `lexical_rlm_rerank`: optional secondary ablation that reranks the verified lexical candidate set
+
+For external coding tasks such as SWE-bench, oracle `expected_changed_paths` and `touched_paths` are still preserved for scoring, but they are no longer injected into model-visible prompts by default.
 
 ## Intentionally Limited
 
@@ -161,6 +172,7 @@ nix shell .#vtm
 - [docs/code-reference.md](docs/code-reference.md): generated inventory of every Python file and top-level symbols
 - [docs/harness.md](docs/harness.md): task packs, executors, and workspace backends
 - [docs/current-state-audit.md](docs/current-state-audit.md): guarantees, gaps, and explicit limits
+- [docs/final-scope.md](docs/final-scope.md): narrowed benchmark study and maintained evaluation modes
 - [docs/benchmark-recipes.md](docs/benchmark-recipes.md): repeatable benchmark commands
 - [docs/runtime-example.md](docs/runtime-example.md): executable end-to-end kernel example
 - [docs/decisions/README.md](docs/decisions/README.md): ADR index

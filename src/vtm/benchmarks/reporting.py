@@ -153,6 +153,10 @@ class BenchmarkReporter:
             for metric in metrics
             if metric.get("command_timeout_count") is not None
         ]
+        verified_counts = [int(metric.get("verified_count", 0)) for metric in metrics]
+        relocated_counts = [int(metric.get("relocated_count", 0)) for metric in metrics]
+        stale_filtered_counts = [int(metric.get("stale_filtered_count", 0)) for metric in metrics]
+        stale_hit_rates = [float(metric.get("stale_hit_rate", 0.0)) for metric in metrics]
         attempt_runtimes = [
             float(attempt.metrics["runtime_ms"])
             for attempt in coding_attempts
@@ -205,6 +209,10 @@ class BenchmarkReporter:
             "retrieval_usage_rate": self._mean(
                 float(metric["retrieval_usage_rate"]) for metric in metrics
             ),
+            "mean_verified_count": self._mean(verified_counts),
+            "mean_relocated_count": self._mean(relocated_counts),
+            "mean_stale_filtered_count": self._mean(stale_filtered_counts),
+            "mean_stale_hit_rate": self._mean(stale_hit_rates),
             "median_context_chars": median(int(metric["context_chars"]) for metric in metrics),
             "median_turn_count": 0.0 if not turn_counts else median(turn_counts),
             "mean_tool_call_count": 0.0 if not tool_call_counts else self._mean(tool_call_counts),
@@ -332,6 +340,18 @@ class BenchmarkReporter:
             "median_latency_ms": median(latencies),
             "artifact_bytes_per_memory": self._mean(
                 float(metric["artifact_bytes_per_memory"]) for metric in metrics
+            ),
+            "mean_verified_count": self._mean(
+                float(metric.get("verified_count", 0.0)) for metric in metrics
+            ),
+            "mean_relocated_count": self._mean(
+                float(metric.get("relocated_count", 0.0)) for metric in metrics
+            ),
+            "mean_stale_filtered_count": self._mean(
+                float(metric.get("stale_filtered_count", 0.0)) for metric in metrics
+            ),
+            "mean_stale_hit_rate": self._mean(
+                float(metric.get("stale_hit_rate", 0.0)) for metric in metrics
             ),
         }
 

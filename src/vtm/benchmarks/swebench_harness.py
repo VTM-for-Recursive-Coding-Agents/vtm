@@ -109,7 +109,7 @@ class SWEbenchHarnessRunner:
             "--run_id",
             run_id,
             "--instance_ids",
-            ",".join(instance_ids),
+            *instance_ids,
             "--report_dir",
             ".",
         ]

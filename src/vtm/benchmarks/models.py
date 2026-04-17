@@ -11,10 +11,18 @@ from vtm.base import VTMModel
 from vtm.enums import ValidityStatus
 
 BenchmarkSuite = Literal["retrieval", "drift", "coding"]
-BenchmarkMode = Literal["no_memory", "lexical", "lexical_rlm_rerank", "embedding"]
+BenchmarkMode = Literal[
+    "no_memory",
+    "lexical",
+    "naive_lexical",
+    "verified_lexical",
+    "lexical_rlm_rerank",
+    "embedding",
+]
 RepoSourceKind = Literal["git", "synthetic_python_smoke", "synthetic_terminal_smoke"]
 CodingEvaluationBackend = Literal["local_subprocess", "swebench_harness"]
 CodingExecutionStyle = Literal["mixed_patch", "shell_command"]
+CodingExecutionEngine = Literal["vendored_rlm", "codex"]
 WorkspaceBackendName = Literal["local_workspace", "docker_workspace"]
 DockerNetworkMode = Literal["none", "bridge"]
 SWEbenchHarnessCacheLevel = Literal["none", "base", "env", "instance"]
@@ -99,6 +107,9 @@ class CodingTaskCase(VTMModel):
     touched_paths: tuple[str, ...] = Field(default_factory=tuple)
     expected_changed_paths: tuple[str, ...] = Field(default_factory=tuple)
     retrieval_query: str | None = None
+    verifier_output: str | None = None
+    localization_notes: tuple[str, ...] = Field(default_factory=tuple)
+    debug_expected_changed_paths: bool = False
     test_command: tuple[str, ...] = Field(default_factory=tuple)
     target_patch: str | None = None
     gold_test_patch_digest: str | None = None
@@ -157,6 +168,7 @@ class BenchmarkRunConfig(VTMModel):
     repo_filters: tuple[str, ...] = Field(default_factory=tuple)
     pair_filters: tuple[str, ...] = Field(default_factory=tuple)
     workspace_backend: WorkspaceBackendName = "local_workspace"
+    coding_engine: CodingExecutionEngine = "vendored_rlm"
     docker_image: str | None = None
     docker_binary: str = "docker"
     docker_network: DockerNetworkMode = "none"
@@ -199,6 +211,13 @@ class BenchmarkRunConfig(VTMModel):
                 raise ValueError("docker_network is only supported with docker_workspace")
         object.__setattr__(self, "pass_k_values", pass_k_values)
         return self
+
+
+def resolved_benchmark_mode(mode: BenchmarkMode) -> BenchmarkMode:
+    """Resolve deprecated aliases to the effective benchmark mode."""
+    if mode == "lexical":
+        return "verified_lexical"
+    return mode
 
 
 class BenchmarkCaseResult(VTMModel):

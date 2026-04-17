@@ -21,9 +21,9 @@ from vtm.benchmarks.run import execute_benchmark_run
 
 DEFAULT_MATRIX_MODES: tuple[BenchmarkMode, ...] = (
     "no_memory",
-    "lexical",
+    "naive_lexical",
+    "verified_lexical",
     "lexical_rlm_rerank",
-    "embedding",
 )
 
 
@@ -77,12 +77,19 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help=(
             "Mode to include in the matrix. Repeat to select multiple modes. "
-            "Defaults to the maintained four-mode matrix."
+            "Defaults to the maintained study matrix."
         ),
     )
     parser.add_argument(
         "--baseline-mode",
-        choices=("no_memory", "lexical", "lexical_rlm_rerank", "embedding"),
+        choices=(
+            "no_memory",
+            "lexical",
+            "naive_lexical",
+            "verified_lexical",
+            "lexical_rlm_rerank",
+            "embedding",
+        ),
         default="no_memory",
         help="Mode used as the comparison baseline.",
     )
@@ -100,6 +107,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="Optional commit-pair filter. Repeat to select multiple pairs.",
+    )
+    parser.add_argument(
+        "--coding-engine",
+        choices=("vendored_rlm", "codex"),
+        default="vendored_rlm",
+        help="Coding execution engine used for coding-task runs.",
     )
     parser.add_argument(
         "--workspace-backend",
@@ -249,6 +262,7 @@ def run_matrix_from_args(args: argparse.Namespace) -> BenchmarkMatrixResult:
             seed=args.seed,
             repo_filters=tuple(args.repo),
             pair_filters=tuple(args.pair),
+            coding_engine=args.coding_engine,
             workspace_backend=args.workspace_backend,
             docker_image=args.docker_image or None,
             docker_binary=args.docker_binary,

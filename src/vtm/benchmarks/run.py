@@ -11,7 +11,12 @@ from vtm.adapters import (
     OpenAIEmbeddingAdapter,
     OpenAIRLMAdapter,
 )
-from vtm.benchmarks.models import BenchmarkManifest, BenchmarkRunConfig, BenchmarkRunResult
+from vtm.benchmarks.models import (
+    BenchmarkManifest,
+    BenchmarkRunConfig,
+    BenchmarkRunResult,
+    resolved_benchmark_mode,
+)
 from vtm.benchmarks.runner import BenchmarkRunner
 
 
@@ -27,8 +32,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--mode",
-        choices=("no_memory", "lexical", "lexical_rlm_rerank", "embedding"),
-        default="lexical",
+        choices=(
+            "no_memory",
+            "lexical",
+            "naive_lexical",
+            "verified_lexical",
+            "lexical_rlm_rerank",
+            "embedding",
+        ),
+        default="verified_lexical",
         help="Retrieval mode to evaluate.",
     )
     parser.add_argument("--output", required=True, help="Directory for benchmark outputs.")
@@ -46,6 +58,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="Optional commit-pair filter. Repeat to select multiple pairs.",
+    )
+    parser.add_argument(
+        "--coding-engine",
+        choices=("vendored_rlm", "codex"),
+        default="vendored_rlm",
+        help="Coding execution engine used for coding-task runs.",
     )
     parser.add_argument(
         "--workspace-backend",
@@ -191,6 +209,7 @@ def main() -> int:
         seed=args.seed,
         repo_filters=tuple(args.repo),
         pair_filters=tuple(args.pair),
+        coding_engine=args.coding_engine,
         workspace_backend=args.workspace_backend,
         docker_image=args.docker_image or None,
         docker_binary=args.docker_binary,
@@ -233,13 +252,14 @@ def execute_benchmark_run(
     rlm_adapter = None
     embedding_adapter: EmbeddingAdapter | None = None
     resolved_config = config
+    resolved_mode = resolved_benchmark_mode(config.mode)
 
-    if config.mode == "lexical_rlm_rerank":
+    if resolved_mode == "lexical_rlm_rerank":
         model_name = rlm_model_name or os.getenv("VTM_OPENAI_MODEL")
         if not model_name:
             raise ValueError("lexical_rlm_rerank mode requires --rlm-model or VTM_OPENAI_MODEL")
         rlm_adapter = OpenAIRLMAdapter(model=model_name)
-    if config.mode == "embedding":
+    if resolved_mode == "embedding":
         resolved_embedding_model = embedding_model_name or os.getenv(
             "VTM_OPENAI_EMBEDDING_MODEL"
         )

@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,16 +17,19 @@ from vtm.benchmarks.models import (
     BenchmarkAttemptResult,
     BenchmarkCaseResult,
     BenchmarkManifest,
+    BenchmarkMode,
     BenchmarkRunConfig,
     CodingTaskCase,
     CommitPair,
     RepoSpec,
+    resolved_benchmark_mode,
 )
 from vtm.benchmarks.repo_materialization import RepoWorkspaceManager
 from vtm.benchmarks.swebench_harness import SWEbenchHarnessRunner
 from vtm.benchmarks.symbol_index import SymbolIndexer
-from vtm.enums import EvidenceBudget, EvidenceKind, ScopeKind
+from vtm.enums import EvidenceBudget, EvidenceKind, MemoryKind, ScopeKind, ValidityStatus
 from vtm.harness.executors import (
+    CodexBenchmarkExecutor,
     RLMBenchmarkExecutor,
 )
 from vtm.harness.models import ExecutorRequest, HarnessTaskPack, TaskMemoryContextItem
@@ -35,7 +40,7 @@ from vtm.harness.workspace import (
     WorkspaceBackend,
 )
 from vtm.harness.workspace_docker import DockerWorkspaceBackend
-from vtm.memory_items import MemoryItem, VisibilityScope
+from vtm.memory_items import ClaimPayload, MemoryItem, ValidityState, VisibilityScope
 from vtm.retrieval import RetrieveRequest
 from vtm.services import TransactionalMemoryKernel
 from vtm.stores import (
@@ -59,6 +64,19 @@ class PreparedCodingTask:
     target_patch_digest: str
     memory_context: tuple[TaskMemoryContextItem, ...]
     context_chars: int
+    retrieval_verified_count: int = 0
+    retrieval_relocated_count: int = 0
+    retrieval_stale_filtered_count: int = 0
+    retrieval_stale_hit_rate: float = 0.0
+
+
+@dataclass(frozen=True)
+class VisibleTaskContext:
+    """Visible, non-oracle task signals used for retrieval and prompting."""
+
+    retrieval_query: str
+    verifier_output: str | None
+    localization_notes: tuple[str, ...]
 
 
 def run_coding_suite(
@@ -166,6 +184,15 @@ def prepare_coding_task(
     repo_manager.git_checkout(repo_root, pair.base_ref)
     memory_context: tuple[TaskMemoryContextItem, ...] = ()
     expected_changed_paths = task.expected_changed_paths or task.touched_paths
+    visible_task_context = build_visible_task_context(
+        repo_root=repo_root,
+        task=task,
+        timeout_seconds=config.workspace_command_timeout_seconds,
+    )
+    retrieval_verified_count = 0
+    retrieval_relocated_count = 0
+    retrieval_stale_filtered_count = 0
+    retrieval_stale_hit_rate = 0.0
     kernel: TransactionalMemoryKernel | None = None
     metadata: SqliteMetadataStore | None = None
     artifacts: FilesystemArtifactStore | None = None
@@ -190,16 +217,26 @@ def prepare_coding_task(
             base_symbols,
             durable_scope,
         )
-        query = (
-            task.retrieval_query
-            or " ".join([task.task_statement, *task.failing_tests, *task.touched_paths])
-        ).strip()
+        current_dependency = benchmark_dependency_fingerprint(
+            kernel_factory=kernel_factory,
+            repo_root=repo_root,
+            pair=pair,
+        )
+        seed_task_conditioned_memories(
+            kernel=kernel,
+            scope=durable_scope,
+            task=task,
+            current_dependency=current_dependency,
+            visible_task_context=visible_task_context,
+        )
+        query = visible_task_context.retrieval_query
         retrieval_result = kernel.retrieve(
-            RetrieveRequest(
+            coding_retrieve_request(
+                mode=config.mode,
                 query=query,
-                scopes=(durable_scope,),
-                evidence_budget=EvidenceBudget.SUMMARY_ONLY,
+                scope=durable_scope,
                 limit=config.top_k,
+                current_dependency=current_dependency,
             )
         )
         memory_context = tuple(
@@ -210,6 +247,10 @@ def prepare_coding_task(
             )
             for candidate in retrieval_result.candidates
         )
+        retrieval_verified_count = retrieval_result.verified_count
+        retrieval_relocated_count = retrieval_result.relocated_count
+        retrieval_stale_filtered_count = retrieval_result.stale_filtered_count
+        retrieval_stale_hit_rate = retrieval_result.stale_hit_rate
 
     try:
         touched_paths = task.touched_paths or repo_manager.git_diff_paths(
@@ -245,7 +286,10 @@ def prepare_coding_task(
         pass_to_pass_tests=task.pass_to_pass_tests,
         expected_changed_paths=expected_changed_paths,
         touched_paths=touched_paths,
-        retrieval_query=task.retrieval_query,
+        retrieval_query=visible_task_context.retrieval_query,
+        verifier_output=visible_task_context.verifier_output,
+        localization_notes=visible_task_context.localization_notes,
+        debug_expected_changed_paths=task.debug_expected_changed_paths,
         test_command=task.test_command,
         target_patch_digest=target_patch_digest,
         gold_test_patch_digest=task.gold_test_patch_digest,
@@ -278,7 +322,307 @@ def prepare_coding_task(
         target_patch_digest=target_patch_digest,
         memory_context=memory_context,
         context_chars=context_chars,
+        retrieval_verified_count=retrieval_verified_count,
+        retrieval_relocated_count=retrieval_relocated_count,
+        retrieval_stale_filtered_count=retrieval_stale_filtered_count,
+        retrieval_stale_hit_rate=retrieval_stale_hit_rate,
     )
+
+
+def coding_retrieve_request(
+    *,
+    mode: BenchmarkMode,
+    query: str,
+    scope: VisibilityScope,
+    limit: int,
+    current_dependency: Any | None,
+) -> RetrieveRequest:
+    """Build the retrieval request that matches the configured benchmark mode."""
+    resolved_mode = resolved_benchmark_mode(mode)
+    if resolved_mode == "naive_lexical":
+        return RetrieveRequest(
+            query=query,
+            scopes=(scope,),
+            statuses=tuple(ValidityStatus),
+            evidence_budget=EvidenceBudget.SUMMARY_ONLY,
+            limit=limit,
+        )
+    if resolved_mode in {"verified_lexical", "lexical_rlm_rerank"}:
+        return RetrieveRequest(
+            query=query,
+            scopes=(scope,),
+            statuses=tuple(ValidityStatus),
+            evidence_budget=EvidenceBudget.SUMMARY_ONLY,
+            limit=limit,
+            current_dependency=current_dependency,
+            verify_on_read=True,
+            return_verified_only=True,
+        )
+    return RetrieveRequest(
+        query=query,
+        scopes=(scope,),
+        evidence_budget=EvidenceBudget.SUMMARY_ONLY,
+        limit=limit,
+    )
+
+
+def benchmark_dependency_fingerprint(
+    *,
+    kernel_factory: BenchmarkKernelFactory,
+    repo_root: Path,
+    pair: CommitPair,
+) -> Any:
+    """Build the benchmark dependency fingerprint for the current base checkout."""
+    return kernel_factory.dependency_builder().build(
+        str(repo_root),
+        dependency_ids=(f"benchmark:{pair.pair_id}",),
+        input_digests=(pair.base_ref,),
+    )
+
+
+def build_visible_task_context(
+    *,
+    repo_root: Path,
+    task: CodingTaskCase,
+    timeout_seconds: int,
+) -> VisibleTaskContext:
+    """Collect visible task signals without relying on oracle scoring fields."""
+    verifier_output = collect_verifier_output(
+        repo_root=repo_root,
+        test_command=task.test_command,
+        timeout_seconds=timeout_seconds,
+    )
+    localization_notes = tuple(
+        dict.fromkeys(
+            [
+                *task.localization_notes,
+                *infer_localization_notes(repo_root=repo_root, task=task),
+            ]
+        )
+    )
+    query = task.retrieval_query or " ".join(
+        part
+        for part in (
+            _compact_visible_text(task.task_statement),
+            _compact_visible_text(task.problem_statement),
+            " ".join(task.failing_tests),
+            " ".join(task.fail_to_pass_tests),
+            " ".join(task.pass_to_pass_tests),
+            " ".join(localization_notes),
+            _compact_visible_text(verifier_output),
+        )
+        if part
+    ).strip()
+    return VisibleTaskContext(
+        retrieval_query=query,
+        verifier_output=verifier_output,
+        localization_notes=localization_notes,
+    )
+
+
+def collect_verifier_output(
+    *,
+    repo_root: Path,
+    test_command: tuple[str, ...],
+    timeout_seconds: int,
+) -> str | None:
+    """Capture a compact verifier excerpt from the visible failing command."""
+    if not test_command:
+        return None
+    try:
+        completed = subprocess.run(
+            list(test_command),
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+        signal = completed.stderr.strip() or completed.stdout.strip()
+    except subprocess.TimeoutExpired as exc:
+        signal = (
+            _coerce_timeout_text(exc.stderr)
+            or _coerce_timeout_text(exc.stdout)
+            or "Verifier command timed out before producing output."
+        )
+    if not signal:
+        return None
+    return _clip_visible_text(signal, max_chars=700)
+
+
+def infer_localization_notes(
+    *,
+    repo_root: Path,
+    task: CodingTaskCase,
+) -> tuple[str, ...]:
+    """Infer deterministic localization notes from visible tests and imports."""
+    notes: list[str] = []
+    for test_name in (*task.fail_to_pass_tests, *task.failing_tests, *task.pass_to_pass_tests):
+        test_path = resolve_test_path(repo_root=repo_root, test_name=test_name)
+        if test_path is None:
+            continue
+        try:
+            relative_test_path = test_path.relative_to(repo_root).as_posix()
+        except ValueError:
+            continue
+        notes.append(f"Failing test file: {relative_test_path}")
+        notes.extend(imported_module_notes(repo_root=repo_root, test_path=test_path))
+    return tuple(dict.fromkeys(notes))
+
+
+def resolve_test_path(*, repo_root: Path, test_name: str) -> Path | None:
+    """Resolve a pytest-style or dotted unittest identifier to a repository file."""
+    candidate = test_name.split("::", 1)[0].strip()
+    direct_path = repo_root / candidate
+    if candidate and direct_path.exists():
+        return direct_path
+    dotted = candidate.replace(".", "/")
+    if dotted.endswith(".py"):
+        dotted_path = repo_root / dotted
+    else:
+        dotted_path = repo_root / f"{dotted}.py"
+    if candidate and dotted_path.exists():
+        return dotted_path
+    return None
+
+
+def imported_module_notes(*, repo_root: Path, test_path: Path) -> tuple[str, ...]:
+    """Extract simple source-file hints from test imports."""
+    notes: list[str] = []
+    for raw_line in test_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line.startswith("from "):
+            module_name = line[5:].split(" import ", 1)[0].strip()
+        elif line.startswith("import "):
+            module_name = line[7:].split(",", 1)[0].strip()
+        else:
+            continue
+        if not module_name or module_name.startswith("tests"):
+            continue
+        module_path = repo_root / f"{module_name.replace('.', '/')}.py"
+        if module_path.exists():
+            relative_module_path = module_path.relative_to(repo_root).as_posix()
+            notes.append(f"Referenced module from test import: {relative_module_path}")
+    return tuple(dict.fromkeys(notes))
+
+
+def seed_task_conditioned_memories(
+    *,
+    kernel: TransactionalMemoryKernel,
+    scope: VisibilityScope,
+    task: CodingTaskCase,
+    current_dependency: Any,
+    visible_task_context: VisibleTaskContext,
+) -> None:
+    """Seed compact task-conditioned memory cards from visible benchmark inputs."""
+    cards = [
+        (
+            "problem",
+            f"Task problem for {task.case_id}",
+            "Visible issue summary derived from the task statement and problem statement.",
+            " ".join(
+                part
+                for part in (
+                    _compact_visible_text(task.task_statement),
+                    _compact_visible_text(task.problem_statement),
+                )
+                if part
+            ),
+        ),
+        (
+            "tests",
+            f"Failing tests for {task.case_id}",
+            "Visible failing and stability tests attached to this task.",
+            " ".join(
+                part
+                for part in (
+                    f"Failing tests: {', '.join(task.fail_to_pass_tests or task.failing_tests)}"
+                    if (task.fail_to_pass_tests or task.failing_tests)
+                    else "",
+                    f"Pass-to-pass tests: {', '.join(task.pass_to_pass_tests)}"
+                    if task.pass_to_pass_tests
+                    else "",
+                )
+                if part
+            ),
+        ),
+        (
+            "verifier",
+            f"Verifier signal for {task.case_id}",
+            "Visible verifier output captured from the failing task command.",
+            visible_task_context.verifier_output or "",
+        ),
+        (
+            "localization",
+            f"Localization notes for {task.case_id}",
+            "Deterministic localization notes inferred from visible test paths and imports.",
+            " ".join(visible_task_context.localization_notes),
+        ),
+    ]
+    tx = kernel.begin_transaction(scope)
+    for card_kind, title, summary, claim in cards:
+        cleaned_claim = claim.strip()
+        if not cleaned_claim:
+            continue
+        artifact = kernel.capture_artifact(
+            cleaned_claim.encode("utf-8"),
+            content_type="text/plain",
+            tool_name="benchmark-task-card",
+            metadata={"case_id": task.case_id, "card_kind": card_kind},
+        )
+        kernel.stage_memory_item(
+            tx.tx_id,
+            MemoryItem(
+                memory_id=task_memory_id(task.case_id, card_kind),
+                kind=MemoryKind.CLAIM,
+                title=title,
+                summary=_clip_visible_text(summary, max_chars=180),
+                payload=ClaimPayload(claim=_clip_visible_text(cleaned_claim, max_chars=700)),
+                evidence=(
+                    kernel.artifact_evidence(
+                        artifact,
+                        label=f"task-{card_kind}",
+                        summary="Visible benchmark task signal",
+                    ),
+                ),
+                tags=("benchmark_task", task.case_id, card_kind),
+                visibility=scope,
+                validity=ValidityState(
+                    status=ValidityStatus.PENDING,
+                    dependency_fingerprint=current_dependency,
+                ),
+                metadata={"generated_by": "benchmark_task_card"},
+            ),
+        )
+    kernel.commit_transaction(tx.tx_id)
+
+
+def task_memory_id(case_id: str, card_kind: str) -> str:
+    """Return a deterministic id for a task-conditioned memory card."""
+    digest = hashlib.sha256(f"{case_id}:{card_kind}".encode()).hexdigest()
+    return f"task_{digest[:24]}"
+
+
+def _compact_visible_text(text: str | None) -> str:
+    if not text:
+        return ""
+    collapsed = " ".join(line.strip() for line in text.splitlines() if line.strip())
+    collapsed = re.sub(r"\s+", " ", collapsed).strip()
+    return _clip_visible_text(collapsed, max_chars=280)
+
+
+def _clip_visible_text(text: str, *, max_chars: int) -> str:
+    if len(text) <= max_chars:
+        return text
+    return f"{text[: max_chars - 3].rstrip()}..."
+
+
+def _coerce_timeout_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace").strip()
+    return value.strip()
 
 
 def evaluate_coding_attempt(
@@ -367,25 +711,35 @@ def evaluate_coding_attempt(
             raise ValueError(
                 "coding runs require --rlm-model-id, VTM_AGENT_MODEL, or VTM_LOCAL_LLM_MODEL"
             )
-        outcome = RLMBenchmarkExecutor(
-            model_id=config.rlm_model_id,
-            base_url=(
-                os.getenv("VTM_AGENT_BASE_URL")
-                or os.getenv("VTM_LOCAL_LLM_BASE_URL")
-                or None
-            ),
-            api_key=(
-                os.getenv("VTM_AGENT_API_KEY")
-                or os.getenv("VTM_LOCAL_LLM_API_KEY")
-                or None
-            ),
-            max_iterations=config.rlm_max_iterations,
-            max_timeout_seconds=config.rlm_max_runtime_seconds,
-        ).execute(
-            request=executor_request,
-            prepared_workspace=prepared_workspace,
-            runtime_context=runtime_context,
-        )
+        if config.coding_engine == "codex":
+            outcome = CodexBenchmarkExecutor(
+                model_id=config.rlm_model_id,
+                max_timeout_seconds=config.rlm_max_runtime_seconds,
+            ).execute(
+                request=executor_request,
+                prepared_workspace=prepared_workspace,
+                runtime_context=runtime_context,
+            )
+        else:
+            outcome = RLMBenchmarkExecutor(
+                model_id=config.rlm_model_id,
+                base_url=(
+                    os.getenv("VTM_AGENT_BASE_URL")
+                    or os.getenv("VTM_LOCAL_LLM_BASE_URL")
+                    or None
+                ),
+                api_key=(
+                    os.getenv("VTM_AGENT_API_KEY")
+                    or os.getenv("VTM_LOCAL_LLM_API_KEY")
+                    or None
+                ),
+                max_iterations=config.rlm_max_iterations,
+                max_timeout_seconds=config.rlm_max_runtime_seconds,
+            ).execute(
+                request=executor_request,
+                prepared_workspace=prepared_workspace,
+                runtime_context=runtime_context,
+            )
         executed = True
 
         if outcome is not None:
@@ -421,7 +775,7 @@ def evaluate_coding_attempt(
                 produced_changed_paths=produced_changed_paths,
             )
             executor_metadata = {
-                "execution_engine": "vendored_rlm_vtm",
+                "execution_engine": config.coding_engine,
                 "attempt_index": attempt_index,
                 "artifact_root": str(prepared_workspace.artifact_root),
                 "execution_style": task.execution_style,
@@ -458,7 +812,7 @@ def evaluate_coding_attempt(
         else:
             incomplete = True
             executor_metadata = {
-                "execution_engine": "vendored_rlm_vtm",
+                "execution_engine": config.coding_engine,
                 "attempt_index": attempt_index,
                 "execution_style": task.execution_style,
                 "workspace_backend": config.workspace_backend,
@@ -471,7 +825,7 @@ def evaluate_coding_attempt(
         infra_failure = True
         incomplete = True
         executor_metadata = {
-            "execution_engine": "vendored_rlm_vtm",
+            "execution_engine": config.coding_engine,
             "attempt_index": attempt_index,
             "infra_error": str(exc),
             "execution_style": task.execution_style,
@@ -513,6 +867,10 @@ def evaluate_coding_attempt(
             "runtime_ms": runtime_ms,
             "patch_similarity": patch_similarity_score,
             "retrieval_usage_rate": 0.0 if not prepared_task.memory_context else 1.0,
+            "verified_count": prepared_task.retrieval_verified_count,
+            "relocated_count": prepared_task.retrieval_relocated_count,
+            "stale_filtered_count": prepared_task.retrieval_stale_filtered_count,
+            "stale_hit_rate": prepared_task.retrieval_stale_hit_rate,
             "context_chars": prepared_task.context_chars,
             **(outcome.agent_metrics if outcome is not None else {}),
         },
@@ -534,8 +892,10 @@ def evaluate_coding_attempt(
             "hints_text": task.hints_text,
             "fail_to_pass_tests": list(task.fail_to_pass_tests),
             "pass_to_pass_tests": list(task.pass_to_pass_tests),
+            "verifier_output": prepared_task.task_pack.verifier_output,
+            "localization_notes": list(prepared_task.task_pack.localization_notes),
             "gold_test_patch_digest": task.gold_test_patch_digest,
-            "retrieval_query": task.retrieval_query,
+            "retrieval_query": prepared_task.task_pack.retrieval_query,
             "base_ref": pair.base_ref,
             "head_ref": pair.head_ref,
             "commit_pair_label": pair.label,

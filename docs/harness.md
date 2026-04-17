@@ -8,8 +8,9 @@ It owns the contracts that should stay stable even when benchmark orchestration,
 
 - `HarnessTaskPack`
   - typed on-disk task definition used by the vendored-RLM coding executor
-  - includes optional `retrieval_query` when the benchmark author wants explicit retrieval phrasing
+  - includes `retrieval_query`, which is either author-provided or derived from visible task signals
   - includes `execution_style` so patch-oriented and shell-command tasks can share the same suite
+  - includes optional `verifier_output` and `localization_notes` for visible, non-oracle task context
 - `TaskMemoryContextItem`
   - normalized retrieval context embedded in a task pack
 - `ExecutorRequest`
@@ -89,12 +90,15 @@ Important fields:
 - task identity: `case_id`, `repo_name`, `commit_pair_id`
 - repo state: `base_ref`, `head_ref`, optional `commit_pair_label`
 - task statement: `task_statement`, optional `problem_statement`, optional `hints_text`
+- visible task signals: optional `verifier_output`, optional `localization_notes`
 - evaluation metadata: `evaluation_backend`, `dataset_name`, `instance_id`
 - scoring inputs: `expected_changed_paths`, `target_patch_digest`, optional `gold_test_patch_digest`
 - execution settings: `memory_mode`, `top_k`
 - execution style: `execution_style`
 - retrieval override: optional `retrieval_query`
 - retrieval context: `memory_context`
+
+For external coding tasks, `expected_changed_paths` stays in the canonical task pack for scoring, but prompt builders and the vendored-RLM `TASK` tool hide those oracle hints by default unless `debug_expected_changed_paths=True`.
 
 `HarnessTaskPack` stays canonical across attempts. Attempt-local data belongs in
 `ExecutorRequest`, `ExecutorResult`, and the benchmark runner outputs, not in

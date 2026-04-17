@@ -13,7 +13,11 @@ from vtm.memory_items import VisibilityScope
 from vtm.services import TransactionalMemoryKernel
 from vtm_rlm._vendored import load_rlm_runtime
 from vtm_rlm.memory_bridge import VTMMemoryBridge
-from vtm_rlm.prompting import build_phase1_task_prompt
+from vtm_rlm.prompting import (
+    CODING_RLM_SYSTEM_PROMPT,
+    build_phase1_task_prompt,
+    model_visible_task_pack,
+)
 
 
 @dataclass(frozen=True)
@@ -52,18 +56,15 @@ def run_vendored_rlm(
 
     logger = rlm_logger_class(log_dir=str(trajectory_dir))
     bridge = VTMMemoryBridge(kernel=kernel, scopes=scopes)
+    model_task_pack = model_visible_task_pack(task_pack)
     custom_tools: dict[str, object] = {
         "WORKSPACE_ROOT": {
             "tool": str(workspace_root),
             "description": "Absolute path to the writable benchmark workspace.",
         },
         "TASK": {
-            "tool": task_pack.model_dump(mode="json"),
+            "tool": model_task_pack.model_dump(mode="json"),
             "description": "Full coding-task payload for the current benchmark case.",
-        },
-        "PRELOADED_MEMORY": {
-            "tool": [item.model_dump(mode="json") for item in task_pack.memory_context],
-            "description": "VTM memory retrieved before execution started.",
         },
         **bridge.custom_tools(),
     }
@@ -82,13 +83,14 @@ def run_vendored_rlm(
         max_depth=max_depth,
         max_iterations=max_iterations,
         max_timeout=max_timeout_seconds,
+        custom_system_prompt=CODING_RLM_SYSTEM_PROMPT,
         logger=logger,
         custom_tools=custom_tools,
         verbose=False,
     )
     completion = runtime.completion(
         build_phase1_task_prompt(task_pack, workspace_root),
-        root_prompt=task_pack.task_statement,
+        root_prompt=None,
     )
 
     response_path = artifact_root / "response.txt"
