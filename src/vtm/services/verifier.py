@@ -49,13 +49,9 @@ class BasicVerifier:
             current_status = ValidityStatus.UNKNOWN
             reasons.append("missing dependency fingerprint")
         elif not dependency_changed:
-            if previous_status in {ValidityStatus.VERIFIED, ValidityStatus.RELOCATED}:
-                current_status = previous_status
-                skipped = True
-                reasons.append("dependency fingerprint unchanged")
-            else:
-                current_status = ValidityStatus.VERIFIED
-                reasons.append("dependency fingerprint unchanged; promoting to verified")
+            current_status = previous_status
+            skipped = True
+            reasons.append("dependency fingerprint unchanged")
         else:
             anchor_indexes = [
                 index

@@ -108,7 +108,7 @@ def test_export_paper_tables_includes_drifted_retrieval_metrics(
     markdown = Path(artifacts["markdown"]).read_text(encoding="utf-8")
 
     assert retrieval_rows[0]["valid_recall_at_1"]
-    assert retrieval_rows[0]["stale_rejection_rate"] == "0.5"
-    assert retrieval_rows[0]["stale_hit_rate"] == "0.5"
+    assert retrieval_rows[0]["stale_rejection_rate"] == "1.0"
+    assert retrieval_rows[0]["stale_hit_rate"] == "0.0"
     assert "Valid Recall@1" in markdown
     assert "Stale Reject" in markdown

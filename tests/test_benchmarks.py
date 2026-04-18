@@ -849,15 +849,15 @@ def test_drifted_retrieval_tracks_valid_recall_and_stale_rejection(
     assert verified_deleted["metrics"]["stale_filtered_count"] >= 1
     assert verified_deleted["metadata"]["expected_head_status"] == ValidityStatus.STALE.value
     assert verified_deleted_smoke["metadata"]["expected_head_status"] == ValidityStatus.STALE.value
-    assert verified_deleted_smoke["metrics"]["rank"] == 1
+    assert verified_deleted_smoke["metrics"]["rank"] is None
     assert "valid_recall_at_1" in naive.metrics
     assert naive.metrics["valid_recall_at_1"] == verified.metrics["valid_recall_at_1"]
     assert naive.metrics["valid_recall_at_3"] == verified.metrics["valid_recall_at_3"]
     assert naive.metrics["valid_recall_at_5"] == verified.metrics["valid_recall_at_5"]
     assert naive.metrics["stale_rejection_rate"] == 0.0
     assert naive.metrics["stale_hit_rate"] == 1.0
-    assert verified.metrics["stale_rejection_rate"] == 0.5
-    assert verified.metrics["stale_hit_rate"] == 0.5
+    assert verified.metrics["stale_rejection_rate"] == 1.0
+    assert verified.metrics["stale_hit_rate"] == 0.0
     assert verified.metrics["valid_recall_at_1"] > verified.metrics["recall_at_1"]
 
 

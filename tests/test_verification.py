@@ -20,6 +20,18 @@ def test_unchanged_dependencies_skip_verified_memory(memory_factory, dep_fp) -> 
     assert result.dependency_changed is False
 
 
+def test_unchanged_dependencies_preserve_stale_memory(memory_factory, dep_fp) -> None:
+    verifier = BasicVerifier()
+    item = memory_factory(validity_status=ValidityStatus.STALE, dependency=dep_fp)
+
+    result = verifier.verify(item, dep_fp)
+
+    assert result.current_status is ValidityStatus.STALE
+    assert result.current_status is not ValidityStatus.VERIFIED
+    assert result.skipped is True
+    assert result.dependency_changed is False
+
+
 def test_changed_anchor_dependency_marks_memory_stale(
     memory_factory,
     anchor_evidence,
@@ -35,7 +47,7 @@ def test_changed_anchor_dependency_marks_memory_stale(
     assert result.dependency_changed is True
 
 
-def test_pending_memory_promotes_to_verified_when_dependencies_match(
+def test_pending_memory_stays_pending_when_dependencies_match(
     memory_factory,
     dep_fp,
 ) -> None:
@@ -55,8 +67,8 @@ def test_pending_memory_promotes_to_verified_when_dependencies_match(
 
     result = verifier.verify(item, dep_fp)
 
-    assert result.current_status is ValidityStatus.VERIFIED
-    assert result.skipped is False
+    assert result.current_status is ValidityStatus.PENDING
+    assert result.skipped is True
 
 
 def test_changed_dependency_with_removed_symbol_becomes_stale(

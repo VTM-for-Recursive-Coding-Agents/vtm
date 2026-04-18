@@ -154,11 +154,10 @@ def test_naive_vs_verified_retrieval_semantics(
     }
     assert {candidate.memory.memory_id for candidate in verified_only.candidates} == {
         verified.memory_id,
-        pending.memory_id,
     }
-    assert verified_only.verified_count == 2
+    assert verified_only.verified_count == 1
     assert verified_only.relocated_count == 0
-    assert verified_only.stale_filtered_count == 1
+    assert verified_only.stale_filtered_count == 2
     assert verified_only.stale_hit_rate > 0.0
 
 
