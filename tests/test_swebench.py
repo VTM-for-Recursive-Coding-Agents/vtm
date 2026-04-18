@@ -11,7 +11,7 @@ import pytest
 
 from vtm.benchmarks import BenchmarkManifest, BenchmarkRunConfig, BenchmarkRunner
 from vtm.benchmarks.models import BenchmarkCaseResult, CodingTaskCase, CommitPair, RepoSpec
-from vtm.benchmarks.repo_materialization import RepoWorkspaceManager
+from vtm.benchmarks.repo_materialization import RepoWorkspaceCommandError, RepoWorkspaceManager
 from vtm.benchmarks.swebench import (
     PreparedInstanceRefs,
     PreparedRepoCache,
@@ -403,6 +403,149 @@ def test_repo_materialization_fetches_missing_prepared_ref_on_checkout(tmp_path:
     manager.git_checkout(materialized, prepared_ref)
 
     assert _run(materialized, "git", "rev-parse", "HEAD") == base
+
+
+def test_repo_materialization_resolves_local_relative_remote_before_clone(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    remote_repo = tmp_path / ".benchmarks" / "swebench-lite" / "repos" / "example__repo"
+    remote_repo.mkdir(parents=True)
+    repo_spec = RepoSpec(
+        repo_name="example__repo",
+        source_kind="git",
+        remote_url=".benchmarks/swebench-lite/repos/example__repo",
+        branch="main",
+        commit_pairs=(
+            CommitPair(
+                pair_id="example__repo-1",
+                base_ref="base",
+                head_ref="head",
+            ),
+        ),
+    )
+    manager = RepoWorkspaceManager()
+    commands: list[tuple[list[str], Path | None, bool]] = []
+
+    def fake_run(command, *, cwd=None, check=True):  # noqa: ANN001, ANN202
+        commands.append((list(command), cwd, check))
+        return subprocess.CompletedProcess(list(command), 0, stdout="", stderr="")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(manager, "run", fake_run)
+
+    manager.materialize_repo(repo_spec, tmp_path / "corpus")
+
+    assert commands
+    assert commands[0][0][6] == str(remote_repo.resolve())
+
+
+@pytest.mark.parametrize(
+    ("remote_url", "expected_remote"),
+    [
+        ("https://github.com/example/repo.git", "https://github.com/example/repo.git"),
+        ("git@github.com:example/repo.git", "git@github.com:example/repo.git"),
+    ],
+)
+def test_repo_materialization_leaves_network_remotes_unchanged(
+    tmp_path: Path,
+    monkeypatch,
+    remote_url: str,
+    expected_remote: str,
+) -> None:
+    repo_spec = RepoSpec(
+        repo_name="example__repo",
+        source_kind="git",
+        remote_url=remote_url,
+        branch="main",
+        commit_pairs=(
+            CommitPair(
+                pair_id="example__repo-1",
+                base_ref="base",
+                head_ref="head",
+            ),
+        ),
+    )
+    manager = RepoWorkspaceManager()
+    commands: list[list[str]] = []
+
+    def fake_run(command, *, cwd=None, check=True):  # noqa: ANN001, ANN202
+        del cwd, check
+        commands.append(list(command))
+        return subprocess.CompletedProcess(list(command), 0, stdout="", stderr="")
+
+    monkeypatch.setattr(manager, "run", fake_run)
+
+    manager.materialize_repo(repo_spec, tmp_path / "corpus")
+
+    assert commands[0][6] == expected_remote
+
+
+def test_repo_materialization_clone_failure_includes_stderr(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repo_spec = RepoSpec(
+        repo_name="example__repo",
+        source_kind="git",
+        remote_url="https://github.com/example/repo.git",
+        branch="main",
+        commit_pairs=(
+            CommitPair(
+                pair_id="example__repo-1",
+                base_ref="base",
+                head_ref="head",
+            ),
+        ),
+    )
+    manager = RepoWorkspaceManager()
+
+    def fake_subprocess_run(command, cwd, check, capture_output, text):  # noqa: ANN001, ANN202
+        del cwd, check, capture_output, text
+        raise subprocess.CalledProcessError(
+            returncode=128,
+            cmd=list(command),
+            output="clone stdout",
+            stderr="fatal: repository not found",
+        )
+
+    monkeypatch.setattr("vtm.benchmarks.repo_materialization.subprocess.run", fake_subprocess_run)
+
+    with pytest.raises(RepoWorkspaceCommandError) as exc_info:
+        manager.materialize_repo(repo_spec, tmp_path / "corpus")
+
+    message = str(exc_info.value)
+    assert "git clone --quiet --filter=blob:none --branch main" in message
+    assert "return code: 128" in message
+    assert "clone stdout" in message
+    assert "fatal: repository not found" in message
+
+
+def test_repo_materialization_fails_for_existing_non_git_destination(tmp_path: Path) -> None:
+    repo_spec = RepoSpec(
+        repo_name="example__repo",
+        source_kind="git",
+        remote_url="https://github.com/example/repo.git",
+        branch="main",
+        commit_pairs=(
+            CommitPair(
+                pair_id="example__repo-1",
+                base_ref="base",
+                head_ref="head",
+            ),
+        ),
+    )
+    repo_root = tmp_path / "corpus" / "example__repo"
+    repo_root.mkdir(parents=True)
+    (repo_root / "README.txt").write_text("partial clone debris\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError) as exc_info:
+        RepoWorkspaceManager().materialize_repo(repo_spec, tmp_path / "corpus")
+
+    message = str(exc_info.value)
+    assert "existing repo root is not a complete git repository" in message
+    assert str(repo_root) in message
+    assert "delete the directory and rerun materialization" in message
 
 
 def test_swebench_coding_suite_runs_fake_harness_and_writes_artifacts(
