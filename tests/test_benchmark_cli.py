@@ -13,6 +13,7 @@ from vtm.benchmarks import (
     BenchmarkRunner,
     BenchmarkRunResult,
     matrix,
+    prepare_swebench_lite,
     run,
 )
 
@@ -167,6 +168,18 @@ def test_run_cli_help_marks_legacy_docker_backend() -> None:
 
     assert "docker_workspace" in help_text
     assert "legacy/non-" in help_text
+
+
+def test_prepare_swebench_lite_cli_parser_accepts_skip_failed_instances() -> None:
+    args = prepare_swebench_lite.build_parser().parse_args(
+        [
+            "--output-manifest",
+            "out.json",
+            "--skip-failed-instances",
+        ]
+    )
+
+    assert args.skip_failed_instances is True
 
 
 def test_execute_benchmark_run_resolves_openrouter_defaults(

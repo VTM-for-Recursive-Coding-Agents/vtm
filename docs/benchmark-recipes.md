@@ -325,15 +325,27 @@ Prepare a generated manifest:
 ```bash
 uv sync --extra bench
 
-vtm-prepare-swebench-lite \
+uv run --extra bench vtm-prepare-swebench-lite \
   --output-manifest .benchmarks/generated/swebench-lite.json \
   --cache-root .benchmarks/swebench-lite
 ```
 
+Prepare a robust pilot manifest that skips failed instances and keeps scanning for successful ones:
+
+```bash
+uv run --extra bench vtm-prepare-swebench-lite \
+  --output-manifest .benchmarks/generated/swebench-lite-pilot.json \
+  --cache-root .benchmarks/swebench-lite \
+  --max-instances 3 \
+  --skip-failed-instances
+```
+
+SWE-bench harness-backed coding runs require benchmark extras and a running Docker daemon.
+
 Targeted no-memory run:
 
 ```bash
-uv run python -m vtm.benchmarks.run \
+uv run --extra bench python -m vtm.benchmarks.run \
   --manifest .benchmarks/generated/swebench-lite.json \
   --suite coding \
   --mode no_memory \
@@ -347,7 +359,7 @@ uv run python -m vtm.benchmarks.run \
 Targeted verified lexical run:
 
 ```bash
-uv run python -m vtm.benchmarks.run \
+uv run --extra bench python -m vtm.benchmarks.run \
   --manifest .benchmarks/generated/swebench-lite.json \
   --suite coding \
   --mode verified_lexical \

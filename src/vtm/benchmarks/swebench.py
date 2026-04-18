@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
 import subprocess
 import tempfile
 from collections import OrderedDict
@@ -78,6 +79,7 @@ class SWEbenchLitePreparer:
         repo_filters: Sequence[str] = (),
         instance_filters: Sequence[str] = (),
         max_instances: int | None = None,
+        skip_failed_instances: bool = False,
     ) -> BenchmarkManifest:
         """Prepare repos and write a VTM benchmark manifest for SWE-bench Lite."""
         cache_root_path = Path(cache_root)
@@ -86,9 +88,14 @@ class SWEbenchLitePreparer:
             dataset_path=dataset_path,
             repo_filters=repo_filters,
             instance_filters=instance_filters,
-            max_instances=max_instances,
+            max_instances=max_instances if not skip_failed_instances else None,
         )
-        prepared = self.prepare_instances(instances=instances, cache_root=cache_root_path)
+        prepared = self.prepare_instances(
+            instances=instances,
+            cache_root=cache_root_path,
+            max_instances=max_instances,
+            skip_failed_instances=skip_failed_instances,
+        )
         manifest = self.build_manifest(
             dataset_name=dataset_name,
             prepared_instances=prepared,
@@ -106,6 +113,8 @@ class SWEbenchLitePreparer:
         *,
         instances: Sequence[SWEbenchLiteInstance],
         cache_root: str | Path,
+        max_instances: int | None = None,
+        skip_failed_instances: bool = False,
     ) -> list[PreparedSWEbenchLiteInstance]:
         """Prepare local git refs and metadata for each selected instance."""
         cache_root_path = Path(cache_root)
@@ -115,27 +124,58 @@ class SWEbenchLitePreparer:
         worktrees_root.mkdir(parents=True, exist_ok=True)
         prepared: list[PreparedSWEbenchLiteInstance] = []
         repo_cache: dict[str, PreparedRepoCache] = {}
-        for instance in instances:
-            cached_repo = repo_cache.get(instance.repo_name)
-            if cached_repo is None:
-                cached_repo = self._prepare_repo_cache(instance, repos_root)
-                repo_cache[instance.repo_name] = cached_repo
-            refs = self._prepare_instance_refs(
-                instance=instance,
-                cache_root=cache_root_path,
-                repo_cache=cached_repo,
-            )
-            prepared.append(
-                PreparedSWEbenchLiteInstance(
-                    instance=instance,
-                    repo_cache=cached_repo,
-                    base_ref=refs.base_ref,
-                    gold_ref=refs.gold_ref,
-                    expected_changed_paths=self._modified_paths_from_patch(instance.patch),
-                    gold_test_patch_digest=self._sha256(instance.test_patch)
-                    if instance.test_patch.strip()
-                    else None,
+        skipped_failures: list[SWEbenchPreparationFailureRecord] = []
+        failed_instance: SWEbenchPreparationFailureRecord | None = None
+        try:
+            for instance in instances:
+                if max_instances is not None and len(prepared) >= max_instances:
+                    break
+                try:
+                    cached_repo = repo_cache.get(instance.repo_name)
+                    if cached_repo is None:
+                        cached_repo = self._prepare_repo_cache(instance, repos_root)
+                        repo_cache[instance.repo_name] = cached_repo
+                    refs = self._prepare_instance_refs(
+                        instance=instance,
+                        cache_root=cache_root_path,
+                        repo_cache=cached_repo,
+                    )
+                except Exception as exc:
+                    instance_error = self._wrap_instance_preparation_error(
+                        instance=instance,
+                        failure_stage="prepare_repo_cache",
+                        patch_kind=None,
+                        error=exc,
+                    )
+                    if skip_failed_instances:
+                        skipped_failures.append(
+                            SWEbenchPreparationFailureRecord.from_exception(instance_error)
+                        )
+                        continue
+                    failed_instance = SWEbenchPreparationFailureRecord.from_exception(
+                        instance_error
+                    )
+                    if instance_error is exc:
+                        raise
+                    raise instance_error from exc
+                prepared.append(
+                    PreparedSWEbenchLiteInstance(
+                        instance=instance,
+                        repo_cache=cached_repo,
+                        base_ref=refs.base_ref,
+                        gold_ref=refs.gold_ref,
+                        expected_changed_paths=self._modified_paths_from_patch(instance.patch),
+                        gold_test_patch_digest=self._sha256(instance.test_patch)
+                        if instance.test_patch.strip()
+                        else None,
+                    )
                 )
+        finally:
+            self._write_prepare_report(
+                cache_root=cache_root_path,
+                successful_instance_ids=[item.instance.instance_id for item in prepared],
+                skipped_failures=skipped_failures,
+                failed_instance=failed_instance,
             )
         return prepared
 
@@ -231,7 +271,9 @@ class SWEbenchLitePreparer:
             from datasets import load_dataset  # type: ignore[import-not-found]
         except ImportError as exc:
             raise RuntimeError(
-                "Loading SWE-bench datasets by name requires the optional 'datasets' package"
+                "Loading SWE-bench datasets by name requires the optional 'datasets' package. "
+                "Install benchmark dependencies with `uv sync --extra bench` or run "
+                "`uv run --extra bench vtm-prepare-swebench-lite ...`."
             ) from exc
         dataset = load_dataset(dataset_name, split="test")
         return [self._require_dict(row) for row in dataset]
@@ -291,32 +333,48 @@ class SWEbenchLitePreparer:
     ) -> PreparedInstanceRefs:
         base_ref = f"refs/vtm-swebench/{instance.instance_id}/base"
         gold_ref = f"refs/vtm-swebench/{instance.instance_id}/gold"
-        self._run(
-            ["git", "fetch", "--quiet", "origin", instance.base_commit],
-            cwd=repo_cache.repo_root,
-        )
-        self._run(["git", "update-ref", base_ref, instance.base_commit], cwd=repo_cache.repo_root)
+        failure_stage = "fetch_base_commit"
+        patch_kind: str | None = None
+        active_error: SWEbenchInstancePreparationError | None = None
+        worktree_added = False
         with tempfile.TemporaryDirectory(dir=cache_root / "worktrees") as temp_dir:
             worktree = Path(temp_dir)
-            self._run(
-                [
-                    "git",
-                    "worktree",
-                    "add",
-                    "--quiet",
-                    "--detach",
-                    str(worktree),
-                    instance.base_commit,
-                ],
-                cwd=repo_cache.repo_root,
-            )
             try:
+                self._run(
+                    ["git", "fetch", "--quiet", "origin", instance.base_commit],
+                    cwd=repo_cache.repo_root,
+                )
+                failure_stage = "update_base_ref"
+                self._run(
+                    ["git", "update-ref", base_ref, instance.base_commit],
+                    cwd=repo_cache.repo_root,
+                )
+                failure_stage = "add_worktree"
+                self._run(
+                    [
+                        "git",
+                        "worktree",
+                        "add",
+                        "--quiet",
+                        "--detach",
+                        str(worktree),
+                        instance.base_commit,
+                    ],
+                    cwd=repo_cache.repo_root,
+                )
+                worktree_added = True
+                failure_stage = "configure_worktree_git_identity"
                 self._run(["git", "config", "user.name", "VTM SWE-bench"], cwd=worktree)
                 self._run(["git", "config", "user.email", "vtm-swebench@example.com"], cwd=worktree)
                 if instance.patch.strip():
+                    failure_stage = "apply_patch"
+                    patch_kind = "patch"
                     self._apply_patch(worktree, instance.patch)
                 if instance.test_patch.strip():
+                    failure_stage = "apply_patch"
+                    patch_kind = "test_patch"
                     self._apply_patch(worktree, instance.test_patch)
+                failure_stage = "commit_prepared_gold_ref"
                 self._run(["git", "add", "--all"], cwd=worktree)
                 self._run(
                     [
@@ -328,13 +386,36 @@ class SWEbenchLitePreparer:
                     ],
                     cwd=worktree,
                 )
+                failure_stage = "read_gold_commit"
                 gold_commit = self._run(["git", "rev-parse", "HEAD"], cwd=worktree).strip()
+                failure_stage = "update_gold_ref"
                 self._run(["git", "update-ref", gold_ref, gold_commit], cwd=repo_cache.repo_root)
-            finally:
-                self._run(
-                    ["git", "worktree", "remove", "--force", str(worktree)],
-                    cwd=repo_cache.repo_root,
+            except Exception as exc:
+                active_error = self._wrap_instance_preparation_error(
+                    instance=instance,
+                    failure_stage=failure_stage,
+                    patch_kind=patch_kind,
+                    error=exc,
                 )
+                if active_error is exc:
+                    raise
+                raise active_error from exc
+            finally:
+                if worktree_added:
+                    try:
+                        self._run(
+                            ["git", "worktree", "remove", "--force", str(worktree)],
+                            cwd=repo_cache.repo_root,
+                        )
+                    except Exception as exc:
+                        if active_error is None:
+                            cleanup_error = self._wrap_instance_preparation_error(
+                                instance=instance,
+                                failure_stage="remove_worktree",
+                                patch_kind=None,
+                                error=exc,
+                            )
+                            raise cleanup_error from exc
         return PreparedInstanceRefs(base_ref=base_ref, gold_ref=gold_ref)
 
     def _apply_patch(self, repo_root: Path, patch_text: str) -> None:
@@ -393,14 +474,61 @@ class SWEbenchLitePreparer:
         *,
         cwd: Path | None,
     ) -> str:
-        completed = subprocess.run(
-            list(command),
-            cwd=cwd,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            completed = subprocess.run(
+                list(command),
+                cwd=cwd,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise SWEbenchPrepareCommandError(
+                command=command,
+                cwd=cwd,
+                returncode=exc.returncode,
+                stdout=str(getattr(exc, "stdout", None) or getattr(exc, "output", None) or ""),
+                stderr=str(getattr(exc, "stderr", None) or ""),
+            ) from exc
         return completed.stdout
+
+    def _wrap_instance_preparation_error(
+        self,
+        *,
+        instance: SWEbenchLiteInstance,
+        failure_stage: str,
+        patch_kind: str | None,
+        error: Exception,
+    ) -> SWEbenchInstancePreparationError:
+        if isinstance(error, SWEbenchInstancePreparationError):
+            return error
+        return SWEbenchInstancePreparationError(
+            instance=instance,
+            failure_stage=failure_stage,
+            patch_kind=patch_kind,
+            error=error,
+        )
+
+    def _write_prepare_report(
+        self,
+        *,
+        cache_root: Path,
+        successful_instance_ids: Sequence[str],
+        skipped_failures: Sequence[SWEbenchPreparationFailureRecord],
+        failed_instance: SWEbenchPreparationFailureRecord | None,
+    ) -> None:
+        report_path = cache_root / "prepare-report.json"
+        payload: dict[str, object] = {
+            "successful_instance_ids": list(successful_instance_ids),
+            "skipped_instance_ids": [item.instance_id for item in skipped_failures],
+            "skipped_instances": [item.to_report_dict() for item in skipped_failures],
+        }
+        if failed_instance is not None:
+            payload["failed_instance"] = failed_instance.to_report_dict()
+        report_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
     def _optional_str(self, value: object) -> str | None:
         if value is None:
@@ -451,8 +579,163 @@ class PreparedSWEbenchLiteInstance:
     gold_test_patch_digest: str | None
 
 
+class SWEbenchPrepareCommandError(RuntimeError):
+    """Command failure that preserves stdout and stderr for debugging."""
+
+    def __init__(
+        self,
+        *,
+        command: Sequence[str],
+        cwd: Path | None,
+        returncode: int,
+        stdout: str,
+        stderr: str,
+    ) -> None:
+        self.command = tuple(command)
+        self.cwd = str(cwd) if cwd is not None else None
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+        super().__init__(self._build_message())
+
+    @property
+    def command_text(self) -> str:
+        return shlex.join(self.command)
+
+    def _build_message(self) -> str:
+        stdout = self.stdout.rstrip() or "<empty>"
+        stderr = self.stderr.rstrip() or "<empty>"
+        cwd = self.cwd or "<none>"
+        return (
+            "command failed during SWE-bench preparation\n"
+            f"command: {self.command_text}\n"
+            f"cwd: {cwd}\n"
+            f"return code: {self.returncode}\n"
+            f"stdout:\n{stdout}\n"
+            f"stderr:\n{stderr}"
+        )
+
+
+class SWEbenchInstancePreparationError(RuntimeError):
+    """Instance-scoped preparation failure with stage and subprocess context."""
+
+    def __init__(
+        self,
+        *,
+        instance: SWEbenchLiteInstance,
+        failure_stage: str,
+        patch_kind: str | None,
+        error: Exception,
+    ) -> None:
+        self.instance_id = instance.instance_id
+        self.repo = instance.repo
+        self.base_commit = instance.base_commit
+        self.failure_stage = failure_stage
+        self.patch_kind = patch_kind
+        self.command: tuple[str, ...] | None = None
+        self.cwd: str | None = None
+        self.returncode: int | None = None
+        self.stdout: str | None = None
+        self.stderr: str | None = None
+        if isinstance(error, SWEbenchPrepareCommandError):
+            self.command = error.command
+            self.cwd = error.cwd
+            self.returncode = error.returncode
+            self.stdout = error.stdout
+            self.stderr = error.stderr
+            self.error_summary = (
+                f"{error.command_text} exited with return code {error.returncode}"
+            )
+        else:
+            self.error_summary = f"{type(error).__name__}: {error}"
+        super().__init__(self._build_message())
+
+    def _build_message(self) -> str:
+        lines = [
+            "SWE-bench instance preparation failed",
+            f"instance_id: {self.instance_id}",
+            f"repo: {self.repo}",
+            f"base_commit: {self.base_commit}",
+            f"failure stage: {self.failure_stage}",
+        ]
+        if self.patch_kind is not None:
+            lines.append(f"patch kind: {self.patch_kind}")
+        lines.append(f"error summary: {self.error_summary}")
+        if self.command is not None:
+            lines.append(f"command: {shlex.join(self.command)}")
+        if self.cwd is not None:
+            lines.append(f"cwd: {self.cwd}")
+        if self.returncode is not None:
+            lines.append(f"return code: {self.returncode}")
+        if self.stdout is not None:
+            lines.append(f"stdout:\n{self.stdout.rstrip() or '<empty>'}")
+        if self.stderr is not None:
+            lines.append(f"stderr:\n{self.stderr.rstrip() or '<empty>'}")
+        return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class SWEbenchPreparationFailureRecord:
+    """Report payload describing a skipped or terminally failed instance."""
+
+    instance_id: str
+    repo: str
+    base_commit: str
+    failure_stage: str
+    patch_kind: str | None
+    error_summary: str
+    stderr: str | None
+    stdout: str | None
+    command: tuple[str, ...] | None
+    cwd: str | None
+    returncode: int | None
+
+    @classmethod
+    def from_exception(
+        cls,
+        error: SWEbenchInstancePreparationError,
+    ) -> SWEbenchPreparationFailureRecord:
+        return cls(
+            instance_id=error.instance_id,
+            repo=error.repo,
+            base_commit=error.base_commit,
+            failure_stage=error.failure_stage,
+            patch_kind=error.patch_kind,
+            error_summary=error.error_summary,
+            stderr=error.stderr,
+            stdout=error.stdout,
+            command=error.command,
+            cwd=error.cwd,
+            returncode=error.returncode,
+        )
+
+    def to_report_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "instance_id": self.instance_id,
+            "repo": self.repo,
+            "base_commit": self.base_commit,
+            "failure_stage": self.failure_stage,
+            "error_summary": self.error_summary,
+        }
+        if self.patch_kind is not None:
+            payload["patch_kind"] = self.patch_kind
+        if self.stderr is not None:
+            payload["stderr"] = self.stderr
+        if self.stdout is not None:
+            payload["stdout"] = self.stdout
+        if self.command is not None:
+            payload["command"] = shlex.join(self.command)
+        if self.cwd is not None:
+            payload["cwd"] = self.cwd
+        if self.returncode is not None:
+            payload["returncode"] = self.returncode
+        return payload
+
+
 __all__ = [
     "PreparedSWEbenchLiteInstance",
+    "SWEbenchInstancePreparationError",
     "SWEbenchLiteInstance",
     "SWEbenchLitePreparer",
+    "SWEbenchPrepareCommandError",
 ]
