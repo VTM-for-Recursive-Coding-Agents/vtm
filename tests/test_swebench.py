@@ -1,14 +1,25 @@
 from __future__ import annotations
 
+import builtins
 import json
 import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from vtm.benchmarks import BenchmarkManifest, BenchmarkRunConfig, BenchmarkRunner
 from vtm.benchmarks.models import BenchmarkCaseResult, CodingTaskCase, CommitPair, RepoSpec
 from vtm.benchmarks.repo_materialization import RepoWorkspaceManager
+from vtm.benchmarks.swebench import (
+    PreparedInstanceRefs,
+    PreparedRepoCache,
+    SWEbenchInstancePreparationError,
+    SWEbenchLiteInstance,
+    SWEbenchLitePreparer,
+    SWEbenchPrepareCommandError,
+)
 from vtm.benchmarks.swebench_harness import (
     SWEbenchHarnessInstanceResult,
     SWEbenchHarnessRunArtifacts,
@@ -66,6 +77,58 @@ def _build_swebench_repo(repo: Path) -> tuple[str, str]:
 def _git_diff(repo: Path, base: str, head: str, *paths: str) -> str:
     command = ["git", "diff", "--binary", "--no-ext-diff", f"{base}..{head}", "--", *paths]
     return _run(repo, *command)
+
+
+def _make_swebench_instance(instance_id: str) -> SWEbenchLiteInstance:
+    return SWEbenchLiteInstance(
+        instance_id=instance_id,
+        repo="example/repo",
+        repo_name="example__repo",
+        remote_url="https://github.com/example/repo.git",
+        base_commit=f"base-{instance_id}",
+        patch="diff --git a/example.py b/example.py\n",
+        test_patch="",
+        problem_statement=f"Fix {instance_id}.",
+        hints_text=None,
+        fail_to_pass_tests=(),
+        pass_to_pass_tests=(),
+        dataset_name="princeton-nlp/SWE-bench_Lite",
+    )
+
+
+def _make_swebench_row(instance_id: str) -> dict[str, object]:
+    instance = _make_swebench_instance(instance_id)
+    return {
+        "instance_id": instance.instance_id,
+        "repo": instance.repo,
+        "remote_url": instance.remote_url,
+        "base_commit": instance.base_commit,
+        "patch": instance.patch,
+        "test_patch": instance.test_patch,
+        "problem_statement": instance.problem_statement,
+        "FAIL_TO_PASS": [],
+        "PASS_TO_PASS": [],
+    }
+
+
+def _make_prepare_error(
+    instance: SWEbenchLiteInstance,
+    *,
+    patch_kind: str = "patch",
+    stderr: str = "error: patch failed",
+) -> SWEbenchInstancePreparationError:
+    return SWEbenchInstancePreparationError(
+        instance=instance,
+        failure_stage="apply_patch",
+        patch_kind=patch_kind,
+        error=SWEbenchPrepareCommandError(
+            command=("git", "apply", "--3way", "/tmp/failing.patch"),
+            cwd=Path("/tmp/worktree"),
+            returncode=128,
+            stdout="",
+            stderr=stderr,
+        ),
+    )
 
 
 def test_prepare_swebench_manifest_cli_generates_local_refs(tmp_path: Path) -> None:
@@ -129,6 +192,181 @@ def test_prepare_swebench_manifest_cli_generates_local_refs(tmp_path: Path) -> N
         "refs/vtm-swebench/example__repo-1/gold",
         "smoke_module.py",
     )
+
+
+def test_swebench_prepare_run_includes_stderr_in_failures(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    preparer = SWEbenchLitePreparer()
+
+    def fake_run(command, cwd, check, capture_output, text):  # noqa: ANN001, ANN202
+        del command, cwd, check, capture_output, text
+        raise subprocess.CalledProcessError(
+            returncode=128,
+            cmd=["git", "apply", "/tmp/failing.patch"],
+            output="stdout body",
+            stderr="stderr body",
+        )
+
+    monkeypatch.setattr("vtm.benchmarks.swebench.subprocess.run", fake_run)
+
+    with pytest.raises(SWEbenchPrepareCommandError) as exc_info:
+        preparer._run(["git", "apply", "/tmp/failing.patch"], cwd=tmp_path)
+
+    message = str(exc_info.value)
+    assert "git apply /tmp/failing.patch" in message
+    assert f"cwd: {tmp_path}" in message
+    assert "return code: 128" in message
+    assert "stdout body" in message
+    assert "stderr body" in message
+
+
+def test_swebench_load_rows_missing_datasets_package_reports_fix(
+    monkeypatch,
+) -> None:
+    preparer = SWEbenchLitePreparer()
+    original_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: ANN001, ANN202
+        if name == "datasets":
+            raise ModuleNotFoundError("No module named 'datasets'")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        preparer._load_rows(
+            dataset_name="princeton-nlp/SWE-bench_Lite",
+            dataset_path=None,
+        )
+
+    message = str(exc_info.value)
+    assert "uv sync --extra bench" in message
+    assert "uv run --extra bench vtm-prepare-swebench-lite" in message
+
+
+def test_prepare_instances_skip_failed_instance_and_write_report(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    preparer = SWEbenchLitePreparer()
+    cache_root = tmp_path / "cache"
+    repo_root = cache_root / "repos" / "example__repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    instances = [
+        _make_swebench_instance("example__repo-1"),
+        _make_swebench_instance("example__repo-2"),
+    ]
+
+    monkeypatch.setattr(
+        preparer,
+        "_prepare_repo_cache",
+        lambda instance, repos_root: PreparedRepoCache(  # noqa: ARG005
+            repo_root=repo_root,
+            default_branch="main",
+        ),
+    )
+
+    def fake_prepare_refs(*, instance, cache_root, repo_cache):  # noqa: ANN001, ANN202
+        del cache_root, repo_cache
+        if instance.instance_id == "example__repo-1":
+            raise _make_prepare_error(instance, stderr="error: patch does not apply")
+        return PreparedInstanceRefs(
+            base_ref=f"refs/vtm-swebench/{instance.instance_id}/base",
+            gold_ref=f"refs/vtm-swebench/{instance.instance_id}/gold",
+        )
+
+    monkeypatch.setattr(preparer, "_prepare_instance_refs", fake_prepare_refs)
+
+    prepared = preparer.prepare_instances(
+        instances=instances,
+        cache_root=cache_root,
+        skip_failed_instances=True,
+    )
+
+    assert [item.instance.instance_id for item in prepared] == ["example__repo-2"]
+    report = json.loads((cache_root / "prepare-report.json").read_text(encoding="utf-8"))
+    assert report["successful_instance_ids"] == ["example__repo-2"]
+    assert report["skipped_instance_ids"] == ["example__repo-1"]
+    skipped = report["skipped_instances"][0]
+    assert skipped["instance_id"] == "example__repo-1"
+    assert skipped["repo"] == "example/repo"
+    assert skipped["failure_stage"] == "apply_patch"
+    assert skipped["patch_kind"] == "patch"
+    assert skipped["stderr"] == "error: patch does not apply"
+
+
+def test_prepare_manifest_counts_successful_instances_when_skipping(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    preparer = SWEbenchLitePreparer()
+    cache_root = tmp_path / "cache"
+    output_manifest = tmp_path / "swebench-lite.json"
+    repo_root = cache_root / "repos" / "example__repo"
+    repo_root.mkdir(parents=True, exist_ok=True)
+    attempted: list[str] = []
+
+    monkeypatch.setattr(
+        preparer,
+        "_load_rows",
+        lambda dataset_name, dataset_path: [  # noqa: ARG005
+            _make_swebench_row("example__repo-1"),
+            _make_swebench_row("example__repo-2"),
+            _make_swebench_row("example__repo-3"),
+            _make_swebench_row("example__repo-4"),
+            _make_swebench_row("example__repo-5"),
+        ],
+    )
+    monkeypatch.setattr(
+        preparer,
+        "_prepare_repo_cache",
+        lambda instance, repos_root: PreparedRepoCache(  # noqa: ARG005
+            repo_root=repo_root,
+            default_branch="main",
+        ),
+    )
+
+    def fake_prepare_refs(*, instance, cache_root, repo_cache):  # noqa: ANN001, ANN202
+        del cache_root, repo_cache
+        attempted.append(instance.instance_id)
+        if instance.instance_id in {"example__repo-1", "example__repo-2"}:
+            raise _make_prepare_error(instance, stderr="error: patch failed")
+        return PreparedInstanceRefs(
+            base_ref=f"refs/vtm-swebench/{instance.instance_id}/base",
+            gold_ref=f"refs/vtm-swebench/{instance.instance_id}/gold",
+        )
+
+    monkeypatch.setattr(preparer, "_prepare_instance_refs", fake_prepare_refs)
+
+    manifest = preparer.prepare_manifest(
+        dataset_name="princeton-nlp/SWE-bench_Lite",
+        cache_root=cache_root,
+        output_manifest=output_manifest,
+        max_instances=3,
+        skip_failed_instances=True,
+    )
+
+    assert attempted == [
+        "example__repo-1",
+        "example__repo-2",
+        "example__repo-3",
+        "example__repo-4",
+        "example__repo-5",
+    ]
+    assert [case.case_id for case in manifest.coding_tasks] == [
+        "example__repo-3",
+        "example__repo-4",
+        "example__repo-5",
+    ]
+    report = json.loads((cache_root / "prepare-report.json").read_text(encoding="utf-8"))
+    assert report["successful_instance_ids"] == [
+        "example__repo-3",
+        "example__repo-4",
+        "example__repo-5",
+    ]
+    assert report["skipped_instance_ids"] == ["example__repo-1", "example__repo-2"]
 
 
 def test_repo_materialization_fetches_missing_prepared_ref_on_checkout(tmp_path: Path) -> None:
@@ -379,6 +617,69 @@ def test_swebench_harness_uses_absolute_predictions_path(
         "example__repo-1",
         "example__repo-2",
     ]
+
+
+def test_swebench_harness_failure_reports_docker_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    runner = SWEbenchHarnessRunner()
+
+    def fake_run(command, cwd, check, capture_output, text):  # noqa: ANN001, ANN202
+        del command, cwd, check, capture_output, text
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr=(
+                "Traceback (most recent call last):\n"
+                "docker.errors.DockerException: Error while fetching server API version: "
+                "('Connection aborted.', FileNotFoundError(2, 'No such file or directory'))\n"
+            ),
+        )
+
+    monkeypatch.setattr("vtm.benchmarks.swebench_harness.subprocess.run", fake_run)
+
+    cases = [
+        CodingTaskCase(
+            case_id="example__repo-1",
+            repo_name="example__repo",
+            commit_pair_id="example__repo-1",
+            evaluation_backend="swebench_harness",
+            instance_id="example__repo-1",
+            dataset_name="princeton-nlp/SWE-bench_Lite",
+            task_statement="Fix buggy_increment so it adds one.",
+            problem_statement="Fix buggy_increment so it adds one.",
+        )
+    ]
+    results = [
+        BenchmarkCaseResult(
+            suite="coding",
+            mode="verified_lexical",
+            case_id="example__repo-1",
+            repo_name="example__repo",
+            commit_pair_id="example__repo-1",
+            metadata={"produced_patch_text": "diff --git a/foo b/foo\n"},
+        )
+    ]
+
+    with pytest.raises(RuntimeError) as exc_info:
+        runner.evaluate_predictions(
+            cases=cases,
+            results=results,
+            config=BenchmarkRunConfig(
+                manifest_path="swebench-harness.json",
+                suite="coding",
+                mode="verified_lexical",
+                output_dir=str(tmp_path / "run"),
+                swebench_dataset_name="princeton-nlp/SWE-bench_Lite",
+                swebench_harness_workers=1,
+            ),
+            output_dir=tmp_path / "run",
+        )
+
+    message = str(exc_info.value)
+    assert "Docker daemon is unavailable" in message
+    assert "harness.stderr" in message
 
 
 def test_external_task_pack_avoids_changed_path_leakage_in_retrieval_query(

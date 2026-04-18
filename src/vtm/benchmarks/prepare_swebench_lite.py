@@ -48,6 +48,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional limit for smoke or development runs.",
     )
+    parser.add_argument(
+        "--skip-failed-instances",
+        action="store_true",
+        help="Skip instance preparation failures, write a preparation report, and continue.",
+    )
     return parser
 
 
@@ -62,6 +67,7 @@ def main() -> int:
         repo_filters=tuple(args.repo),
         instance_filters=tuple(args.instance),
         max_instances=args.max_instances,
+        skip_failed_instances=args.skip_failed_instances,
     )
     print(manifest.to_json())
     return 0

@@ -124,9 +124,10 @@ class SWEbenchHarnessRunner:
         stdout_path.write_text(completed.stdout, encoding="utf-8")
         stderr_path.write_text(completed.stderr, encoding="utf-8")
         if completed.returncode != 0:
+            summary = self._failure_summary(completed.stderr)
             raise RuntimeError(
                 "SWE-bench harness evaluation failed; "
-                f"see {stderr_path}"
+                f"{summary}; see {stderr_path}"
             )
 
         normalized = self._parse_run_report(
@@ -165,6 +166,19 @@ class SWEbenchHarnessRunner:
         if override:
             return tuple(shlex.split(override))
         return (sys.executable, "-m", "swebench.harness.run_evaluation")
+
+    def _failure_summary(self, stderr: str) -> str:
+        docker_markers = (
+            "docker.errors.DockerException",
+            "Error while fetching server API version",
+            "FileNotFoundError(2, 'No such file or directory')",
+        )
+        if any(marker in stderr for marker in docker_markers):
+            return "Docker daemon is unavailable"
+        lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+        if not lines:
+            return "harness returned a non-zero exit status"
+        return lines[-1]
 
     def _parse_run_report(
         self,
