@@ -31,6 +31,7 @@ class LoadedBenchmarkRun:
     """Completed benchmark run plus the resolved on-disk summary path."""
 
     summary_path: Path
+    run_label: str
     result: BenchmarkRunResult
 
 
@@ -136,11 +137,18 @@ def _load_runs(
             raise ValueError(
                 f"expected {expected_suite} run but found {result.suite}: {summary_path}"
             )
-        runs.append(LoadedBenchmarkRun(summary_path=summary_path, result=result))
+        runs.append(
+            LoadedBenchmarkRun(
+                summary_path=summary_path,
+                run_label=_derive_run_label(summary_path),
+                result=result,
+            )
+        )
     return sorted(
         runs,
         key=lambda run: (
             MODE_ORDER[run.result.mode],
+            run.run_label,
             run.result.manifest_id,
             run.result.run_id,
             str(run.summary_path),
@@ -155,12 +163,21 @@ def _resolve_summary_path(location: Path) -> Path:
     return summary_path
 
 
+def _derive_run_label(summary_path: Path) -> str:
+    run_dir = summary_path.parent
+    for ancestor in (run_dir, *run_dir.parents):
+        if ancestor.name == "runs" and ancestor.parent.name:
+            return ancestor.parent.name
+    return run_dir.name or summary_path.stem
+
+
 def _retrieval_csv_rows(runs: list[LoadedBenchmarkRun]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for run in runs:
         metrics = run.result.metrics
         rows.append(
             {
+                "run_label": run.run_label,
                 "suite": run.result.suite,
                 "mode": run.result.mode,
                 "method": MODE_LABELS[run.result.mode],
@@ -175,6 +192,8 @@ def _retrieval_csv_rows(runs: list[LoadedBenchmarkRun]) -> list[dict[str, Any]]:
                 "valid_recall_at_5": metrics.get("valid_recall_at_5"),
                 "stale_rejection_rate": metrics.get("stale_rejection_rate"),
                 "stale_hit_rate": metrics.get("stale_hit_rate"),
+                "safe_retrieval_at_1": metrics.get("safe_retrieval_at_1"),
+                "safe_retrieval_at_5": metrics.get("safe_retrieval_at_5"),
                 "mrr": metrics.get("mrr"),
                 "ndcg": metrics.get("ndcg"),
                 "median_latency_ms": metrics.get("median_latency_ms"),
@@ -194,6 +213,7 @@ def _drift_csv_rows(runs: list[LoadedBenchmarkRun]) -> list[dict[str, Any]]:
         metrics = run.result.metrics
         rows.append(
             {
+                "run_label": run.run_label,
                 "suite": run.result.suite,
                 "mode": run.result.mode,
                 "method": MODE_LABELS[run.result.mode],
@@ -222,6 +242,7 @@ def _coding_csv_rows(runs: list[LoadedBenchmarkRun]) -> list[dict[str, Any]]:
         metrics = run.result.metrics
         rows.append(
             {
+                "run_label": run.run_label,
                 "suite": run.result.suite,
                 "mode": run.result.mode,
                 "method": MODE_LABELS[run.result.mode],
@@ -272,6 +293,7 @@ def _render_markdown(
                     "valid_recall_at_5",
                     "stale_rejection_rate",
                     "stale_hit_rate",
+                    "safe_retrieval_at_1",
                 )
             )
             for run in retrieval_runs
@@ -281,21 +303,20 @@ def _render_markdown(
             lines.extend(
                 [
                     (
-                        "| Method | Cases | Recall@1 | Recall@3 | Recall@5 | "
-                        "Valid Recall@1 | Valid Recall@3 | Valid Recall@5 | "
-                        "Stale Reject | Stale Hit | MRR | nDCG |"
+                        "| Run/Corpus | Method | Cases | Valid Recall@1 | "
+                        "Valid Recall@5 | Stale Reject | Stale Hit | Safe@1 | MRR | nDCG |"
                     ),
                     (
-                        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
-                        "---: | ---: | ---: | ---: |"
+                        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | "
+                        "---: | ---: |"
                     ),
                 ]
             )
         else:
             lines.extend(
                 [
-                    "| Method | Cases | Recall@1 | Recall@3 | Recall@5 | MRR | nDCG |",
-                    "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+                    "| Run/Corpus | Method | Cases | Recall@1 | Recall@3 | Recall@5 | MRR | nDCG |",
+                    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
                 ]
             )
         for run in retrieval_runs:
@@ -303,22 +324,21 @@ def _render_markdown(
             if include_drifted_metrics:
                 lines.append(
                     "| "
+                    f"{run.run_label} | "
                     f"{MODE_LABELS[run.result.mode]} | "
                     f"{run.result.case_count} | "
-                    f"{_format_metric(metrics.get('recall_at_1'))} | "
-                    f"{_format_metric(metrics.get('recall_at_3'))} | "
-                    f"{_format_metric(metrics.get('recall_at_5'))} | "
                     f"{_format_metric(metrics.get('valid_recall_at_1'))} | "
-                    f"{_format_metric(metrics.get('valid_recall_at_3'))} | "
                     f"{_format_metric(metrics.get('valid_recall_at_5'))} | "
                     f"{_format_metric(metrics.get('stale_rejection_rate'))} | "
                     f"{_format_metric(metrics.get('stale_hit_rate'))} | "
+                    f"{_format_metric(metrics.get('safe_retrieval_at_1'))} | "
                     f"{_format_metric(metrics.get('mrr'))} | "
                     f"{_format_metric(metrics.get('ndcg'))} |"
                 )
             else:
                 lines.append(
                     "| "
+                    f"{run.run_label} | "
                     f"{MODE_LABELS[run.result.mode]} | "
                     f"{run.result.case_count} | "
                     f"{_format_metric(metrics.get('recall_at_1'))} | "
@@ -334,16 +354,17 @@ def _render_markdown(
                 "## Drift",
                 "",
                 (
-                    "| Method | Cases | Relocation Precision | Relocation Recall | "
+                    "| Run/Corpus | Method | Cases | Relocation Precision | Relocation Recall | "
                     "False Verified Rate | Median Verification Latency (ms) |"
                 ),
-                "| --- | ---: | ---: | ---: | ---: | ---: |",
+                "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
             ]
         )
         for run in drift_runs:
             metrics = run.result.metrics
             lines.append(
                 "| "
+                f"{run.run_label} | "
                 f"{MODE_LABELS[run.result.mode]} | "
                 f"{run.result.case_count} | "
                 f"{_format_metric(metrics.get('relocation_precision'))} | "
@@ -358,16 +379,17 @@ def _render_markdown(
                 "## Coding",
                 "",
                 (
-                    "| Method | Cases | Pass Rate | Resolved Rate | "
+                    "| Run/Corpus | Method | Cases | Pass Rate | Resolved Rate | "
                     "Patch Applied Rate | Pass@1 | Median Runtime (ms) |"
                 ),
-                "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+                "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
             ]
         )
         for run in coding_runs:
             metrics = run.result.metrics
             lines.append(
                 "| "
+                f"{run.run_label} | "
                 f"{MODE_LABELS[run.result.mode]} | "
                 f"{run.result.case_count} | "
                 f"{_format_metric(metrics.get('pass_rate'))} | "

@@ -391,6 +391,12 @@ class BenchmarkReporter:
         summary["stale_hit_rate"] = self._mean(
             1.0 if result.metrics.get("rank") is not None else 0.0 for result in stale_results
         )
+        summary["safe_retrieval_at_1"] = self._mean(
+            self._safe_retrieval_hit(result, k=1) for result in drifted_results
+        )
+        summary["safe_retrieval_at_5"] = self._mean(
+            self._safe_retrieval_hit(result, k=5) for result in drifted_results
+        )
         return summary
 
     def _summarize_retrieval_slices(
@@ -583,6 +589,15 @@ class BenchmarkReporter:
         if not collected:
             return 0.0
         return sum(collected) / len(collected)
+
+    def _safe_retrieval_hit(self, result: BenchmarkCaseResult, *, k: int) -> float:
+        expected_status = str(result.metadata.get("expected_head_status"))
+        if expected_status in VALID_RETRIEVAL_STATUSES:
+            metric_name = f"recall_at_{k}"
+            return 1.0 if float(result.metrics.get(metric_name, 0.0)) == 1.0 else 0.0
+        if expected_status == ValidityStatus.STALE.value:
+            return 1.0 if result.metrics.get("rank") is None else 0.0
+        return 0.0
 
     def _group_attempts_by_case(
         self,
