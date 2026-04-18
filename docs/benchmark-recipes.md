@@ -340,43 +340,67 @@ uv run --extra bench vtm-prepare-swebench-lite \
   --skip-failed-instances
 ```
 
-SWE-bench harness-backed coding runs require benchmark extras and a running Docker daemon.
-
-Targeted no-memory run:
+SWE-bench harness-backed coding runs require benchmark extras, a running Docker daemon, and OpenRouter credentials:
 
 ```bash
-uv run --extra bench python -m vtm.benchmarks.run \
-  --manifest .benchmarks/generated/swebench-lite.json \
-  --suite coding \
-  --mode no_memory \
-  --output .benchmarks/swebench-lite-no-memory \
-  --repo astropy__astropy \
-  --pair astropy__astropy-14182 \
-  --execution-model "$VTM_EXECUTION_MODEL" \
-  --swebench-dataset-name princeton-nlp/SWE-bench_Lite
+export OPENROUTER_API_KEY=...
+export VTM_OPENROUTER_BASE_URL="${VTM_OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
 ```
 
-Targeted verified lexical run:
+Run coding pilot modes one at a time. Avoid matrix mode here because OpenRouter free models can rate limit if the modes start back-to-back.
+
+Optional helper for sequential pilot runs:
 
 ```bash
-uv run --extra bench python -m vtm.benchmarks.run \
-  --manifest .benchmarks/generated/swebench-lite.json \
-  --suite coding \
-  --mode verified_lexical \
-  --output .benchmarks/swebench-lite-verified-lexical \
-  --repo astropy__astropy \
-  --pair astropy__astropy-14182 \
-  --execution-model "$VTM_EXECUTION_MODEL" \
-  --swebench-dataset-name princeton-nlp/SWE-bench_Lite
+run_swebench_pilot_mode() {
+  local mode="$1"
+  local cases="$2"
+  local output_root="$3"
+  uv run --extra bench python -m vtm.benchmarks.run \
+    --manifest .benchmarks/generated/swebench-lite-pilot.json \
+    --suite coding \
+    --mode "$mode" \
+    --output "${output_root}/${mode}" \
+    --max-cases "$cases" \
+    --execution-model "$VTM_EXECUTION_MODEL" \
+    --swebench-dataset-name princeton-nlp/SWE-bench_Lite
+}
 ```
 
-Optional compare:
+Nano smoke/debug workflow only. Use this to prove the harness path works, not to report results:
 
 ```bash
-uv run python -m vtm.benchmarks.compare \
-  --baseline .benchmarks/swebench-lite-no-memory \
-  --candidate .benchmarks/swebench-lite-verified-lexical \
-  --output .benchmarks/swebench-lite-compare
+export VTM_EXECUTION_MODEL=nvidia/nemotron-3-nano-30b-a3b:free
+
+run_swebench_pilot_mode no_memory 1 .benchmarks/swebench-lite-pilot
+run_swebench_pilot_mode naive_lexical 1 .benchmarks/swebench-lite-pilot
+run_swebench_pilot_mode verified_lexical 1 .benchmarks/swebench-lite-pilot
+```
+
+Nemotron Super is the stronger maintained pilot model. This is still a small agent pilot, not a statistically powered SWE-bench benchmark:
+
+```bash
+export VTM_EXECUTION_MODEL=nvidia/nemotron-3-super-120b-a12b:free
+
+# One-case pilot
+run_swebench_pilot_mode no_memory 1 .benchmarks/swebench-lite-pilot
+run_swebench_pilot_mode naive_lexical 1 .benchmarks/swebench-lite-pilot
+run_swebench_pilot_mode verified_lexical 1 .benchmarks/swebench-lite-pilot
+
+# Three-case pilot
+run_swebench_pilot_mode no_memory 3 .benchmarks/swebench-lite-pilot-3
+run_swebench_pilot_mode naive_lexical 3 .benchmarks/swebench-lite-pilot-3
+run_swebench_pilot_mode verified_lexical 3 .benchmarks/swebench-lite-pilot-3
+```
+
+Export the final three-row coding table once the `naive_lexical` pilot exists:
+
+```bash
+uv run python -m vtm.benchmarks.report \
+  --coding-run .benchmarks/swebench-lite-pilot/no_memory \
+  --coding-run .benchmarks/swebench-lite-pilot/naive_lexical \
+  --coding-run .benchmarks/swebench-lite-pilot/verified_lexical \
+  --output .benchmarks/paper-tables/final-swebench-lite-pilot
 ```
 
 ## Comparing Completed Runs

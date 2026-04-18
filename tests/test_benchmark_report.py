@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from pathlib import Path
 
 from vtm.benchmarks import BenchmarkManifest, BenchmarkRunConfig, BenchmarkRunner
@@ -16,13 +17,14 @@ def _write_summary(
     suite: str,
     mode: str = "verified_lexical",
     case_count: int = 1,
+    manifest_id: str = "synthetic_python_smoke",
     metrics: dict[str, object] | None = None,
 ) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         BenchmarkRunResult(
             run_id=f"{path.parent.name}-run",
-            manifest_id="synthetic_python_smoke",
+            manifest_id=manifest_id,
             manifest_digest="deadbeef",
             suite=suite,
             mode=mode,
@@ -181,25 +183,44 @@ def test_export_paper_tables_writes_suite_csvs_and_combined_markdown(
         csv.DictReader(Path(artifacts["coding_csv"]).read_text(encoding="utf-8").splitlines())
     )
     markdown = Path(artifacts["markdown"]).read_text(encoding="utf-8")
+    metadata = json.loads(Path(artifacts["metadata_json"]).read_text(encoding="utf-8"))
 
     assert retrieval_rows[0]["suite"] == "retrieval"
+    assert retrieval_rows[0]["corpus"] == "Synthetic"
     assert retrieval_rows[0]["run_label"] == "retrieval"
     assert retrieval_rows[0]["method"] == "Verified Lexical"
     assert "recall_at_1" in retrieval_rows[0]
+    assert "median_latency_ms" in retrieval_rows[0]
     assert drift_rows[0]["suite"] == "drift"
+    assert drift_rows[0]["corpus"] == "Synthetic"
     assert drift_rows[0]["run_label"] == "drift"
     assert drift_rows[0]["status_confusion"]
     assert coding_rows[0]["suite"] == "coding"
+    assert coding_rows[0]["corpus"] == "Synthetic"
     assert coding_rows[0]["run_label"] == "coding"
     assert coding_rows[0]["pass_at_1"] == "1.0"
     assert "## Retrieval" in markdown
     assert "## Drift" in markdown
     assert "## Coding" in markdown
-    assert "| Run/Corpus | Method | Cases |" in markdown
-    assert "| retrieval | Verified Lexical | 1 |" in markdown
+    assert "| Corpus | Method | Cases |" in markdown
+    assert "| Synthetic | Verified Lexical | 1 |" in markdown
+    assert metadata["generated_at"]
+    assert metadata["input_summary_json_paths"]["retrieval"] == [
+        str(Path(retrieval_run.artifacts["summary_json"]))
+    ]
+    assert metadata["input_summary_json_paths"]["drift"] == [
+        str(Path(drift_run.artifacts["summary_json"]))
+    ]
+    assert metadata["input_summary_json_paths"]["coding"] == [
+        str(Path(coding_run.artifacts["summary_json"]))
+    ]
+    assert "git_branch" in metadata
+    assert "git_commit_sha" in metadata
 
 
-def test_export_paper_tables_derives_run_label_from_matrix_layout(tmp_path: Path) -> None:
+def test_export_paper_tables_derives_run_label_and_corpus_from_matrix_layout(
+    tmp_path: Path,
+) -> None:
     summary_path = _write_summary(
         tmp_path / "matrix-drift" / "runs" / "verified_lexical" / "summary.json",
         suite="drift",
@@ -225,7 +246,12 @@ def test_export_paper_tables_derives_run_label_from_matrix_layout(tmp_path: Path
     markdown = Path(artifacts["markdown"]).read_text(encoding="utf-8")
 
     assert drift_rows[0]["run_label"] == "matrix-drift"
-    assert "| matrix-drift | Verified Lexical | 1 | 1.000 | 1.000 | 0.000 | 12.0 |" in markdown
+    assert drift_rows[0]["corpus"] == "Synthetic"
+    assert (
+        "| Corpus | Cases | Relocation Precision | Relocation Recall | "
+        "False Verified Rate | Median Verification Latency (ms) |"
+    ) in markdown
+    assert "| Synthetic | 1 | 1.000 | 1.000 | 0.000 | 12.0 |" in markdown
 
 
 def test_export_paper_tables_includes_drifted_retrieval_metrics(
@@ -257,14 +283,176 @@ def test_export_paper_tables_includes_drifted_retrieval_metrics(
     )
     markdown = Path(artifacts["markdown"]).read_text(encoding="utf-8")
 
+    assert retrieval_rows[0]["corpus"] == "Synthetic"
     assert retrieval_rows[0]["valid_recall_at_1"]
     assert retrieval_rows[0]["stale_rejection_rate"] == "1.0"
     assert retrieval_rows[0]["stale_hit_rate"] == "0.0"
     assert retrieval_rows[0]["safe_retrieval_at_1"] == "1.0"
     assert retrieval_rows[0]["safe_retrieval_at_5"] == "1.0"
-    assert "Run/Corpus" in markdown
+    assert "| Corpus | Method | Cases |" in markdown
     assert "Valid Recall@1" in markdown
     assert "Valid Recall@5" in markdown
     assert "Stale Reject" in markdown
-    assert "Safe@1" in markdown
+    assert "Stale Hit" in markdown
+    assert "Safe@1" not in markdown
+    assert "nDCG" not in markdown
     assert "Recall@1 | Recall@3 | Recall@5" not in markdown
+
+
+def test_infer_corpus_label_maps_paper_run_names() -> None:
+    cases = {
+        "matrix-retrieval": "Synthetic",
+        "matrix-retrieval-drifted-fixed": "Synthetic",
+        "oss-click-flag-default": "Click",
+        "oss-rich-cells-default": "Rich",
+        "oss-attrs-frozen-default": "attrs",
+        "swebench-lite-pilot": "SWE-bench Lite Pilot",
+        "swebench-lite-pilot-3": "SWE-bench Lite Pilot",
+    }
+
+    for run_label, expected in cases.items():
+        run = benchmark_report.LoadedBenchmarkRun(
+            summary_path=Path("/tmp") / run_label / "summary.json",
+            run_label=run_label,
+            result=BenchmarkRunResult(
+                run_id=f"{run_label}-run",
+                manifest_id="paper_manifest",
+                manifest_digest="deadbeef",
+                suite="retrieval",
+                mode="verified_lexical",
+                case_count=1,
+                started_at="2026-01-01T00:00:00Z",
+                completed_at="2026-01-01T00:00:01Z",
+                metrics={},
+                artifacts={},
+            ),
+        )
+        assert benchmark_report._infer_corpus_label(run) == expected
+
+
+def test_export_paper_tables_labels_swebench_pilot_coding_rows_from_path(
+    tmp_path: Path,
+) -> None:
+    no_memory_summary = _write_summary(
+        tmp_path / "swebench-lite-pilot-3" / "no_memory" / "summary.json",
+        suite="coding",
+        mode="no_memory",
+        manifest_id="paper_manifest",
+        metrics={
+            "pass_rate": 0.0,
+            "resolved_rate": 0.0,
+            "patch_applied_rate": 0.0,
+            "retrieval_usage_rate": 0.0,
+            "mean_verified_count": 0.0,
+            "mean_stale_filtered_count": 0.0,
+        },
+    )
+    naive_summary = _write_summary(
+        tmp_path / "swebench-lite-pilot-3" / "naive_lexical" / "summary.json",
+        suite="coding",
+        mode="naive_lexical",
+        manifest_id="paper_manifest",
+        metrics={
+            "pass_rate": 1.0,
+            "resolved_rate": 1.0,
+            "patch_applied_rate": 1.0,
+            "retrieval_usage_rate": 1.0,
+            "mean_verified_count": 0.0,
+            "mean_stale_filtered_count": 0.0,
+        },
+    )
+
+    artifacts = benchmark_report.export_paper_tables(
+        retrieval_locations=[],
+        drift_locations=[],
+        coding_locations=[str(no_memory_summary), str(naive_summary)],
+        output_dir=tmp_path / "paper-tables",
+    )
+
+    coding_rows = list(
+        csv.DictReader(Path(artifacts["coding_csv"]).read_text(encoding="utf-8").splitlines())
+    )
+    markdown = Path(artifacts["markdown"]).read_text(encoding="utf-8")
+    metadata = json.loads(Path(artifacts["metadata_json"]).read_text(encoding="utf-8"))
+
+    assert [row["corpus"] for row in coding_rows] == [
+        "SWE-bench Lite Pilot",
+        "SWE-bench Lite Pilot",
+    ]
+    assert [row["method"] for row in coding_rows] == ["No Memory", "Naive Lexical"]
+    assert coding_rows[1]["corpus"] != coding_rows[1]["mode"]
+    assert "| SWE-bench Lite Pilot | Naive Lexical | 1 | 1.000 | 1.000 | 1.000 | 1.000 | 0.000 | 0.000 |" in markdown
+    assert metadata["input_summary_json_paths"]["coding"] == [
+        str(no_memory_summary),
+        str(naive_summary),
+    ]
+
+
+def test_export_paper_tables_emits_metadata_json(tmp_path: Path) -> None:
+    summary_path = _write_summary(
+        tmp_path / "matrix-retrieval" / "runs" / "verified_lexical" / "summary.json",
+        suite="retrieval",
+        metrics={
+            "recall_at_1": 1.0,
+            "recall_at_3": 1.0,
+            "recall_at_5": 1.0,
+            "mrr": 1.0,
+            "ndcg": 1.0,
+            "median_latency_ms": 10.0,
+        },
+    )
+
+    artifacts = benchmark_report.export_paper_tables(
+        retrieval_locations=[str(summary_path)],
+        drift_locations=[],
+        coding_locations=[],
+        output_dir=tmp_path / "paper-tables",
+    )
+
+    metadata_path = Path(artifacts["metadata_json"])
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+
+    assert metadata_path.exists()
+    assert metadata["generated_at"]
+    assert metadata["input_summary_json_paths"] == {
+        "retrieval": [str(summary_path)],
+        "drift": [],
+        "coding": [],
+    }
+    assert "git_branch" in metadata
+    assert "git_commit_sha" in metadata
+
+
+def test_export_paper_tables_resolves_runs_prefix_to_flat_coding_layout(
+    tmp_path: Path,
+) -> None:
+    summary_path = _write_summary(
+        tmp_path / "swebench-lite-pilot" / "no_memory" / "summary.json",
+        suite="coding",
+        mode="no_memory",
+        manifest_id="swebench-lite-pilot",
+        metrics={
+            "pass_rate": 0.0,
+            "resolved_rate": 0.0,
+            "patch_applied_rate": 0.0,
+            "retrieval_usage_rate": 0.0,
+            "mean_verified_count": 0.0,
+            "mean_stale_filtered_count": 0.0,
+        },
+    )
+
+    artifacts = benchmark_report.export_paper_tables(
+        retrieval_locations=[],
+        drift_locations=[],
+        coding_locations=[str(tmp_path / "swebench-lite-pilot" / "runs" / "no_memory")],
+        output_dir=tmp_path / "paper-tables",
+    )
+
+    coding_rows = list(
+        csv.DictReader(Path(artifacts["coding_csv"]).read_text(encoding="utf-8").splitlines())
+    )
+    metadata = json.loads(Path(artifacts["metadata_json"]).read_text(encoding="utf-8"))
+
+    assert coding_rows[0]["summary_json"] == str(summary_path)
+    assert coding_rows[0]["corpus"] == "SWE-bench Lite Pilot"
+    assert metadata["input_summary_json_paths"]["coding"] == [str(summary_path)]
