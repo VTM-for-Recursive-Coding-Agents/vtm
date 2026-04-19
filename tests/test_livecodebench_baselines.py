@@ -169,6 +169,7 @@ def test_livecodebench_docs_mark_baseline_only_scope() -> None:
     assert "LiveCodeBench support is available for baseline model coding ability checks" in readme
     assert "main VTM evidence remains retrieval, drift, and drifted retrieval" in readme
     assert "LiveCodeBench is available here as an external baseline model benchmark only" in recipes
+    assert "bash scripts/run_livecodebench_baseline.sh --smoke --execute" in recipes
     assert "It is not the main VTM memory benchmark" in baselines
     assert "SWE-bench Lite remains demoted after empty-patch pilot failures" in baselines
     assert "VTM_OPENROUTER_BASE_URL" in baselines

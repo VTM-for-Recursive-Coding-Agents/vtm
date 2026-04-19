@@ -22,7 +22,7 @@ This is the maintained snapshot of what still matters for the narrowed paper art
 - Repeated attempts and `pass@k` reporting exist only for coding suites.
 - The maintained benchmark modes are `no_memory`, `naive_lexical`, `verified_lexical`, and optional `lexical_rlm_rerank`.
 - The maintained benchmark layers are static retrieval, drift verification, drifted retrieval, and controlled coding-drift.
-- Embeddings, terminal-only tracks, and Codex execution are outside the maintained surface.
+- Historical branches covered embeddings, terminal-only tracks, and Codex execution, but those are outside the maintained surface now.
 
 ## Documentation policy
 

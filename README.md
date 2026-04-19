@@ -15,6 +15,7 @@ The maintained package boundaries are:
 ## Maintained Study Surface
 
 - Maintained inference/execution: OpenRouter only
+- Main benchmark layers: static retrieval, drift verification, drifted retrieval, controlled coding-drift
 - Static retrieval: `no_memory`, `naive_lexical`, `verified_lexical`
 - Drift verification: `verified_lexical`
 - Drifted retrieval: `no_memory`, `naive_lexical`, `verified_lexical`
@@ -43,6 +44,7 @@ DSPy is the recommended forward-facing agent and programming interface for VTM m
 LiveCodeBench support is available for baseline model coding ability checks under OpenRouter, but it is not a maintained VTM memory benchmark.
 
 - LiveCodeBench baseline runs live under `.benchmarks/livecodebench/`
+- LiveCodeBench summaries export under `.benchmarks/paper-tables/livecodebench-baselines/`
 - No VTM memory mode is wired into that baseline runner yet
 - The main VTM evidence remains retrieval, drift, and drifted retrieval
 - SWE-bench Lite remains removed from the maintained result surface after empty-patch pilot failures

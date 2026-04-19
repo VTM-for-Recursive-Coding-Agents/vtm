@@ -30,6 +30,7 @@ SWE-bench Lite was attempted as an external agent pilot, but the OpenRouter-back
 - The maintained coding benchmark is `controlled_coding_drift`, not SWE-bench Lite.
 - OpenRouter-backed vendored RLM is the maintained execution path.
 - DSPy is an optional forward-facing agent interface, not part of the frozen quantitative benchmark surface.
+- LiveCodeBench is external baseline-model infrastructure, not part of the frozen quantitative memory result.
 
 ## Final run commands
 
@@ -78,7 +79,9 @@ uv run python -m vtm.benchmarks.report \
 
 ## Known limitations
 
-"SWE-bench Lite was attempted as an external agent pilot, but the OpenRouter-backed RLM produced empty patches and no resolved tasks. We removed it from the maintained result surface and use controlled coding-drift plus retrieval/drifted retrieval for the final paper."
+- SWE-bench Lite was attempted as an external agent pilot, but it is not part of the maintained result surface or paper claim.
+- DSPy is integrated as an optional agent-facing layer, but the quantitative evidence still comes from retrieval, drift verification, drifted retrieval, and controlled coding-drift.
+- LiveCodeBench is useful for baseline model capability checks, but it is not a direct VTM memory benchmark.
 
 ## Future work
 

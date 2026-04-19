@@ -26,6 +26,8 @@ Verified lexical memory should outperform a no-memory baseline without relying o
 4. controlled coding-drift
    `no_memory`, `naive_lexical`, `verified_lexical`
 
+These four layers are the main maintained benchmark story for the repository and paper artifact.
+
 ## Removed from scope
 
 - SWE-bench Lite as a maintained benchmark or paper result
@@ -60,6 +62,7 @@ Synthetic smoke tasks remain only as a maintained local/dev validation path for 
 
 External agent benchmarks such as SWE-bench or LongCoT can be revisited later, but they are not part of the final maintained evaluation.
 DSPy can grow as the main agent scaffold on top of VTM, while the final quantitative evidence remains retrieval, drift, and drifted retrieval.
+LiveCodeBench can stay in-tree as external baseline-model infrastructure without becoming a core VTM memory result.
 
 ## OpenRouter defaults
 

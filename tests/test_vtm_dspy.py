@@ -166,8 +166,13 @@ def test_docs_frame_dspy_and_livecodebench_correctly() -> None:
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     final_scope = (REPO_ROOT / "docs" / "final-scope.md").read_text(encoding="utf-8")
     dspy_doc = (REPO_ROOT / "docs" / "dspy-integration.md").read_text(encoding="utf-8")
+    recipes = (REPO_ROOT / "docs" / "benchmark-recipes.md").read_text(encoding="utf-8")
 
     assert "DSPy is the recommended forward-facing agent and programming interface" in readme
+    assert (
+        "Main benchmark layers: static retrieval, drift verification, drifted retrieval, "
+        "controlled coding-drift"
+    ) in readme
     assert "LiveCodeBench support is available for baseline model coding ability checks" in readme
     assert "main VTM evidence remains retrieval, drift, and drifted retrieval" in readme
     assert "DSPy is the recommended forward-facing agent interface for VTM memory" in final_scope
@@ -178,3 +183,4 @@ def test_docs_frame_dspy_and_livecodebench_correctly() -> None:
         "DSPy is the recommended forward-facing agent and programming interface for VTM"
         in dspy_doc
     )
+    assert "uv run python scripts/run_dspy_vtm_smoke.py --workspace-root ." in recipes

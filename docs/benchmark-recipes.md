@@ -1,6 +1,6 @@
 # Benchmark Recipes
 
-These are the maintained commands for the narrowed paper artifact: OpenRouter-only inference, a verified lexical memory study, no embeddings, and no terminal track.
+These are the maintained commands for the narrowed paper artifact: OpenRouter-only inference, a verified lexical memory study, DSPy as the forward-facing optional agent integration, and LiveCodeBench as external baseline-model infrastructure.
 
 ## Environments
 
@@ -17,6 +17,12 @@ uv sync --dev --extra rlm
 ```
 
 The full eval environment is the maintained setup for OpenRouter-backed coding runs, rerank ablations, and paper-table export. If you only install the basic dev environment, vendored-RLM tests that import the optional `openai` package may skip.
+
+Optional DSPy environment:
+
+```bash
+uv sync --dev --extra dspy
+```
 
 ## OpenRouter Setup
 
@@ -55,7 +61,37 @@ export VTM_EXECUTION_MODEL=google/gemma-4-31b-it:free
 bash scripts/run_livecodebench_baseline.sh --smoke
 ```
 
+Opt in to actual execution explicitly:
+
+```bash
+bash scripts/run_livecodebench_baseline.sh --smoke --execute
+```
+
+Preview the maintained OpenRouter baseline trio without calling the API:
+
+```bash
+bash scripts/run_livecodebench_baseline.sh \
+  --model-matrix openrouter-baselines \
+  --smoke
+```
+
 This baseline runner is memory-free by design. No VTM retrieval or verifier path is involved.
+
+## DSPy Smoke
+
+Dry-run smoke for the optional DSPy integration:
+
+```bash
+uv run python scripts/run_dspy_vtm_smoke.py --workspace-root .
+```
+
+Opt-in model execution:
+
+```bash
+uv run --extra dspy python scripts/run_dspy_vtm_smoke.py --workspace-root . --run-model
+```
+
+DSPy is the main forward-facing agent interface for VTM memory, but it does not change the maintained retrieval, drift, drifted-retrieval, or controlled coding-drift scoring surfaces.
 
 ## Retrieval
 
@@ -253,6 +289,14 @@ uv run python -m vtm.benchmarks.report \
   --output .benchmarks/paper-tables/controlled-coding-drift-super
 ```
 
+LiveCodeBench metadata export:
+
+```bash
+uv run python scripts/livecodebench/export_results.py \
+  --input-root .benchmarks/livecodebench \
+  --output-root .benchmarks/paper-tables/livecodebench-baselines
+```
+
 ## Paper Table Export
 
 Final static retrieval table:
@@ -322,4 +366,4 @@ uv run python -m vtm.benchmarks.compare \
 
 ## Scope note
 
-SWE-bench Lite was removed from the maintained result surface after the external pilot produced empty patches and no resolved tasks. Future external agent benchmarks such as SWE-bench or LongCoT can be explored later, but they are not final paper results.
+SWE-bench Lite was removed from the maintained result surface after the external pilot produced empty patches and no resolved tasks. Future external agent benchmarks can be explored later, but they are not final paper results.
