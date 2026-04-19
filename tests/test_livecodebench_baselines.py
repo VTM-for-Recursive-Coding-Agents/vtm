@@ -1,9 +1,20 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
+
+from vtm.benchmarks.livecodebench_dspy_pilot import (
+    FilesystemProblemSource,
+    aggregate_summary,
+    build_attempt_prompt,
+    method_run_dir,
+)
+from vtm.benchmarks.livecodebench_dspy_pilot import (
+    main as livecodebench_dspy_pilot_main,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -22,6 +33,7 @@ def _load_baseline_module():
 def test_livecodebench_script_paths_exist() -> None:
     expected = [
         REPO_ROOT / "scripts" / "livecodebench" / "baseline.py",
+        REPO_ROOT / "scripts" / "livecodebench" / "export_dspy_pilot_results.py",
         REPO_ROOT / "scripts" / "livecodebench" / "export_results.py",
         REPO_ROOT / "scripts" / "livecodebench" / "setup_livecodebench.sh",
         REPO_ROOT / "scripts" / "shared" / "run_livecodebench.sh",
@@ -29,6 +41,7 @@ def test_livecodebench_script_paths_exist() -> None:
         REPO_ROOT / "scripts" / "local" / "run_livecodebench_baseline.sh",
         REPO_ROOT / "scripts" / "local" / "preflight_checks.sh",
         REPO_ROOT / "scripts" / "run_livecodebench_baseline.sh",
+        REPO_ROOT / "scripts" / "run_livecodebench_dspy_pilot.py",
         REPO_ROOT / "docs" / "livecodebench-baselines.md",
         REPO_ROOT / "results" / "README.md",
     ]
@@ -170,6 +183,7 @@ def test_livecodebench_docs_mark_baseline_only_scope() -> None:
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     recipes = (REPO_ROOT / "docs" / "benchmark-recipes.md").read_text(encoding="utf-8")
     baselines = (REPO_ROOT / "docs" / "livecodebench-baselines.md").read_text(encoding="utf-8")
+    dspy_doc = (REPO_ROOT / "docs" / "dspy-integration.md").read_text(encoding="utf-8")
 
     assert "LiveCodeBench support is available for baseline model coding ability checks" in readme
     assert (
@@ -178,15 +192,19 @@ def test_livecodebench_docs_mark_baseline_only_scope() -> None:
     ) in readme
     assert "LiveCodeBench is available here as an external baseline model benchmark only" in recipes
     assert "bash scripts/run_livecodebench_baseline.sh --smoke --execute" in recipes
+    assert "scripts/run_livecodebench_dspy_pilot.py" in recipes
+    assert "qwen/qwen3-coder-next" in recipes
     assert "It is not the main VTM memory benchmark" in baselines
     assert (
         "Main VTM evidence remains retrieval, drift verification, drifted retrieval, "
         "and controlled coding-drift"
     ) in baselines
+    assert "The DSPy plus VTM LiveCodeBench path is a scaffolded pilot only" in baselines
     assert "SWE-bench Lite remains demoted after empty-patch pilot failures" in baselines
     assert "VTM_OPENROUTER_BASE_URL" in baselines
     assert "OPENROUTER_API_KEY" in baselines
     assert "VTM_EXECUTION_MODEL" in baselines
+    assert "scaffolded pilot" in dspy_doc
 
 
 def test_shell_wrapper_defaults_to_dry_run() -> None:
@@ -207,7 +225,9 @@ def test_new_baseline_surface_has_no_swebench_cli_references() -> None:
     checked_paths = [
         REPO_ROOT / "docs" / "livecodebench-baselines.md",
         REPO_ROOT / "results" / "README.md",
+        REPO_ROOT / "scripts" / "run_livecodebench_dspy_pilot.py",
         REPO_ROOT / "scripts" / "livecodebench" / "setup_livecodebench.sh",
+        REPO_ROOT / "scripts" / "livecodebench" / "export_dspy_pilot_results.py",
         REPO_ROOT / "scripts" / "livecodebench" / "export_results.py",
         REPO_ROOT / "scripts" / "local" / "run_livecodebench.sh",
         REPO_ROOT / "scripts" / "local" / "run_livecodebench_baseline.sh",
@@ -218,3 +238,128 @@ def test_new_baseline_surface_has_no_swebench_cli_references() -> None:
         text = path.read_text(encoding="utf-8")
         assert "run_swebench" not in text
         assert "scripts/local/run_swebench.sh" not in text
+
+
+def test_livecodebench_dspy_pilot_dry_run_supports_all_methods(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    problem_file = tmp_path / "problems.jsonl"
+    problem_file.write_text(
+        json.dumps(
+            {
+                "question_id": "lcb-1",
+                "prompt": "Write solve() that returns 42.",
+                "starter_code": "def solve():\n    pass\n",
+                "hidden_tests": ["assert solve() == 42"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = livecodebench_dspy_pilot_main(
+        [
+            "--method",
+            "all",
+            "--scenario",
+            "code_generation",
+            "--max-problems",
+            "1",
+            "--output-root",
+            str(tmp_path / ".benchmarks" / "livecodebench-dspy"),
+            "--benchmark-root",
+            str(tmp_path / "benchmarks" / "LiveCodeBench"),
+            "--problem-file",
+            str(problem_file),
+            "--dry-run",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["dry_run"] is True
+    assert payload["methods"] == ["direct", "dspy_baseline", "dspy_vtm"]
+    assert payload["problem_count"] == 1
+    assert len(payload["runs"]) == 3
+    assert all(
+        str(tmp_path / ".benchmarks" / "livecodebench-dspy") in run["run_dir"]
+        for run in payload["runs"]
+    )
+
+
+def test_livecodebench_dspy_summary_aggregation_handles_missing_retrieval_metrics() -> None:
+    summary = aggregate_summary(
+        [
+            {
+                "problem_id": "lcb-1",
+                "method": "direct",
+                "evaluation": {"available": True, "passed": True, "syntax_error": False},
+                "tool_calls": 0,
+            },
+            {
+                "problem_id": "lcb-2",
+                "method": "direct",
+                "evaluation": {"available": True, "passed": False, "syntax_error": False},
+                "tool_calls": 0,
+            },
+        ],
+        method="direct",
+        scenario="code_generation",
+        model="qwen/qwen3-coder-next",
+    )
+
+    assert summary["pass_count"] == 1
+    assert summary["pass_rate"] == 0.5
+    assert summary["retrieval_usage_rate"] == 0.0
+    assert summary["mean_verified_count"] == 0.0
+    assert summary["mean_stale_filtered_count"] == 0.0
+    assert summary["mean_tool_calls"] == 0.0
+
+
+def test_livecodebench_dspy_prompt_omits_gold_and_hidden_fields(tmp_path: Path) -> None:
+    problem_file = tmp_path / "problems.jsonl"
+    hidden_solution = "def solve():\n    return 42\n"
+    hidden_test = "assert solve() == 42"
+    problem_file.write_text(
+        json.dumps(
+            {
+                "question_id": "lcb-1",
+                "prompt": "Write solve() that returns 42.",
+                "starter_code": "def solve():\n    pass\n",
+                "public_feedback": "Sample case expects 42.",
+                "solution": hidden_solution,
+                "hidden_tests": [hidden_test],
+                "private_notes": "do not leak",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    source = FilesystemProblemSource(
+        benchmark_root=tmp_path / "benchmarks" / "LiveCodeBench",
+        problem_file=problem_file,
+    )
+    problem = source.load_problems("code_generation", max_problems=1)[0]
+
+    prompt = build_attempt_prompt(problem, attempt_index=1)
+
+    assert hidden_solution not in prompt
+    assert hidden_test not in prompt
+    assert "do not leak" not in prompt
+    assert "Write solve() that returns 42." in prompt
+    assert "Sample case expects 42." in prompt
+
+
+def test_livecodebench_dspy_output_paths_stay_under_pilot_root(tmp_path: Path) -> None:
+    output_root = tmp_path / ".benchmarks" / "livecodebench-dspy"
+
+    run_dir = method_run_dir(
+        output_root,
+        scenario="self_repair",
+        model="qwen/qwen3-coder-next",
+        run_id="pilot_run",
+        method="dspy_vtm",
+    )
+
+    assert run_dir.is_relative_to(output_root)

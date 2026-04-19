@@ -9,6 +9,7 @@ DSPy is the recommended forward-facing agent and programming interface for VTM, 
 - The final quantitative evidence remains retrieval, drift verification, drifted retrieval, and controlled coding-drift.
 - `controlled_coding_drift` remains the small maintained agent-loop benchmark.
 - LiveCodeBench remains a baseline model coding benchmark only.
+- The LiveCodeBench DSPy plus VTM path is a scaffolded pilot, not the main VTM memory-drift benchmark.
 - SWE-bench Lite is still not maintained after the empty-patch pilot failures.
 
 ## Install
@@ -41,6 +42,8 @@ export VTM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 export VTM_EXECUTION_MODEL=google/gemma-4-31b-it:free
 export VTM_RERANK_MODEL=nvidia/nemotron-3-nano-30b-a3b:free
 ```
+
+For the first paid coding-model run, prefer `qwen/qwen3-coder-next`.
 
 Optional DSPy model override:
 
@@ -101,4 +104,23 @@ Actual model execution is opt-in:
 
 ```bash
 uv run --extra dspy python scripts/run_dspy_vtm_smoke.py --run-model
+```
+
+## LiveCodeBench DSPy Pilot
+
+`scripts/run_livecodebench_dspy_pilot.py` is a small scaffolded pilot for external LiveCodeBench tasks. It compares a direct OpenRouter baseline, a DSPy baseline without VTM memory, and DSPy with VTM verified-memory tools.
+
+It is deliberately separate from the maintained VTM evidence:
+
+- LiveCodeBench is an external coding benchmark.
+- The DSPy plus VTM LiveCodeBench path is a scaffolded pilot only.
+- The main VTM evidence remains retrieval, drift verification, drifted retrieval, and controlled coding-drift.
+
+Dry-run:
+
+```bash
+uv run --extra dspy python scripts/run_livecodebench_dspy_pilot.py \
+  --method all \
+  --scenario self_repair \
+  --max-problems 3
 ```

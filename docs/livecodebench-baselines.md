@@ -6,6 +6,7 @@ LiveCodeBench is available in this repository as an external baseline model benc
 
 - LiveCodeBench here is baseline-only
 - No VTM memory mode is wired into the baseline runner yet
+- The DSPy plus VTM LiveCodeBench path is a scaffolded pilot only
 - Main VTM evidence remains retrieval, drift verification, drifted retrieval, and controlled coding-drift
 - Controlled coding-drift remains the maintained coding benchmark inside the paper story
 - SWE-bench Lite remains demoted after empty-patch pilot failures and is not part of the maintained result surface
@@ -28,6 +29,8 @@ export VTM_RERANK_MODEL=nvidia/nemotron-3-nano-30b-a3b:free
 ```
 
 Single-model runs default to `VTM_EXECUTION_MODEL`.
+
+For paid coding runs, use `qwen/qwen3-coder-next` as the recommended first model.
 
 The maintained OpenRouter baseline matrix is:
 
@@ -103,6 +106,44 @@ That export writes:
 - `.benchmarks/paper-tables/livecodebench-baselines/summary.md`
 
 The repository ignores `.benchmarks/` by default, so raw outputs are not committed unless you override that policy.
+
+## DSPy Pilot
+
+The repository also includes a small scaffolded LiveCodeBench DSPy pilot that compares:
+
+- direct OpenRouter calls
+- DSPy without VTM memory
+- DSPy with VTM verified-memory tools
+
+That pilot is intentionally separate from the maintained retrieval, drift verification, drifted retrieval, and controlled coding-drift evidence. It does not change VTM retrieval scoring, drift scoring, drifted retrieval scoring, or verifier semantics.
+
+Preview the pilot without calling the model:
+
+```bash
+uv run --extra dspy python scripts/run_livecodebench_dspy_pilot.py \
+  --method all \
+  --scenario self_repair \
+  --max-problems 3
+```
+
+Run the pilot once the external benchmark checkout and OpenRouter credentials are ready:
+
+```bash
+uv run --extra dspy python scripts/run_livecodebench_dspy_pilot.py \
+  --method all \
+  --scenario self_repair \
+  --max-problems 3 \
+  --model qwen/qwen3-coder-next \
+  --execute
+```
+
+Export pilot tables:
+
+```bash
+uv run python scripts/livecodebench/export_dspy_pilot_results.py \
+  --input-root .benchmarks/livecodebench-dspy \
+  --output-root .benchmarks/paper-tables/livecodebench-dspy-pilot
+```
 
 ## Paper Citation
 

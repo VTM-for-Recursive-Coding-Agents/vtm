@@ -40,6 +40,7 @@ Recommended models:
 - smoke or cheap rerank runs: `nvidia/nemotron-3-nano-30b-a3b:free`
 - main execution runs: `google/gemma-4-31b-it:free`
 - optional stronger ablation: `nvidia/nemotron-3-super-120b-a12b:free`
+- first paid coding model: `qwen/qwen3-coder-next`
 
 ## LiveCodeBench Baseline
 
@@ -76,6 +77,36 @@ bash scripts/run_livecodebench_baseline.sh \
 ```
 
 This baseline runner is memory-free by design. No VTM retrieval or verifier path is involved.
+
+Optional scaffolded DSPy plus VTM pilot on external LiveCodeBench:
+
+```bash
+uv run --extra dspy python scripts/run_livecodebench_dspy_pilot.py \
+  --method all \
+  --scenario self_repair \
+  --max-problems 3
+```
+
+Execute a small three-problem pilot:
+
+```bash
+uv run --extra dspy python scripts/run_livecodebench_dspy_pilot.py \
+  --method all \
+  --scenario self_repair \
+  --max-problems 3 \
+  --model qwen/qwen3-coder-next \
+  --execute
+```
+
+Export the pilot table:
+
+```bash
+uv run python scripts/livecodebench/export_dspy_pilot_results.py \
+  --input-root .benchmarks/livecodebench-dspy \
+  --output-root .benchmarks/paper-tables/livecodebench-dspy-pilot
+```
+
+This pilot is not part of the maintained retrieval, drift verification, drifted retrieval, or controlled coding-drift result surface.
 
 ## DSPy Smoke
 

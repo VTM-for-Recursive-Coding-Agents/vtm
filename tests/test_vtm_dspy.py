@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 import vtm_dspy
+from vtm.benchmarks.livecodebench_dspy_pilot import describe_method_runtime
 from vtm.enums import ValidityStatus
 from vtm.fingerprints import DependencyFingerprint
 from vtm.retrieval import RetrieveCandidate, RetrieveExplanation, RetrieveRequest, RetrieveResult
@@ -142,6 +143,35 @@ def test_react_agent_constructs_tools_without_running_a_model(
     assert description["workspace_tools_enabled"] is True
     assert description["memory_tools_enabled"] is True
     assert description["workspace_root"] == str(tmp_path.resolve())
+
+
+def test_livecodebench_dspy_vtm_runtime_exposes_memory_tools() -> None:
+    runtime = describe_method_runtime(
+        "dspy_vtm",
+        model="qwen/qwen3-coder-next",
+        base_url="https://openrouter.example/api/v1",
+        api_key="openrouter-test-key",
+    )
+
+    assert runtime.uses_dspy is True
+    assert runtime.uses_vtm_memory is True
+    assert runtime.memory_tools_enabled is True
+    assert "search_verified_memory" in runtime.tool_names
+    assert "verify_memory" in runtime.tool_names
+
+
+def test_livecodebench_dspy_baseline_runtime_hides_memory_tools() -> None:
+    runtime = describe_method_runtime(
+        "dspy_baseline",
+        model="qwen/qwen3-coder-next",
+        base_url="https://openrouter.example/api/v1",
+        api_key="openrouter-test-key",
+    )
+
+    assert runtime.uses_dspy is True
+    assert runtime.uses_vtm_memory is False
+    assert runtime.memory_tools_enabled is False
+    assert runtime.tool_names == ()
 
 
 def test_openrouter_config_maps_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
