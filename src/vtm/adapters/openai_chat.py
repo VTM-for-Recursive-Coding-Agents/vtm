@@ -82,13 +82,34 @@ class OpenAICompatibleChatClient:
         if isinstance(content, str):
             return content
         if isinstance(content, list):
-            collected = [
-                str(item.get("text", ""))
-                for item in content
-                if isinstance(item, dict) and item.get("type") in {None, "text"}
-            ]
-            return "".join(collected)
+            collected = []
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                item_type = item.get("type")
+                if item_type not in {None, "text", "output_text"}:
+                    continue
+                text = self._content_part_text(item)
+                if text:
+                    collected.append(text)
+            if collected:
+                return "".join(collected)
         raise RuntimeError("OpenAI-compatible chat response contained unsupported content")
+
+    def _content_part_text(self, item: dict[str, Any]) -> str:
+        text = item.get("text")
+        if isinstance(text, str):
+            return text
+        if isinstance(text, dict):
+            for key in ("value", "text"):
+                value = text.get(key)
+                if isinstance(value, str):
+                    return value
+        for key in ("output_text", "content"):
+            value = item.get(key)
+            if isinstance(value, str):
+                return value
+        return ""
 
     def _chat_endpoint(self, base_url: str) -> str:
         normalized = base_url.rstrip("/")

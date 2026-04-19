@@ -6,6 +6,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+import vtm.benchmarks.livecodebench_dspy_pilot as livecodebench_dspy_pilot
 from vtm.benchmarks.livecodebench_dspy_pilot import (
     FilesystemProblemSource,
     aggregate_summary,
@@ -363,3 +366,61 @@ def test_livecodebench_dspy_output_paths_stay_under_pilot_root(tmp_path: Path) -
     )
 
     assert run_dir.is_relative_to(output_root)
+
+
+def test_livecodebench_dspy_source_loads_checkout_problems_via_benchmark_venv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    benchmark_root = tmp_path / "benchmarks" / "LiveCodeBench"
+    python_bin = benchmark_root / ".venv" / "bin" / "python"
+    python_bin.parent.mkdir(parents=True, exist_ok=True)
+    python_bin.write_text("", encoding="utf-8")
+
+    payload = [
+        {
+            "question_id": "lcb-1",
+            "question_title": "Return 42",
+            "question_content": "Write solve() that returns 42.",
+            "starter_code": "def solve():\n    pass\n",
+            "difficulty": "easy",
+            "platform": "leetcode",
+            "contest_date": "2024-01-01T00:00:00",
+            "metadata": {"func_name": "solve"},
+            "public_test_cases": [{"input": "", "output": "42", "testtype": "functional"}],
+        }
+    ]
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args=args[0],
+            returncode=0,
+            stdout=json.dumps(payload),
+            stderr="",
+        )
+
+    monkeypatch.setattr(livecodebench_dspy_pilot.subprocess, "run", fake_run)
+    source = FilesystemProblemSource(benchmark_root=benchmark_root)
+
+    problems = source.load_problems("code_generation", max_problems=1)
+
+    assert len(problems) == 1
+    assert problems[0].problem_id == "lcb-1"
+    assert problems[0].prompt == "Write solve() that returns 42."
+
+
+def test_livecodebench_dspy_execute_missing_checkout_exits_cleanly(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit, match="setup_livecodebench.sh"):
+        livecodebench_dspy_pilot_main(
+            [
+                "--method",
+                "all",
+                "--scenario",
+                "code_generation",
+                "--max-problems",
+                "1",
+                "--benchmark-root",
+                str(tmp_path / "benchmarks" / "LiveCodeBench"),
+                "--execute",
+            ]
+        )

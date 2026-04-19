@@ -7,6 +7,7 @@ import importlib.util
 import json
 import platform
 import re
+import subprocess
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,6 +45,8 @@ DEFAULT_MAX_PROBLEMS: Final[int] = 3
 DEFAULT_MAX_TOKENS: Final[int] = 8192
 DEFAULT_TEMPERATURE: Final[float] = 0.0
 DEFAULT_SCENARIO: Final[PilotScenario] = "self_repair"
+DEFAULT_DATASET_REPO: Final[str] = "livecodebench/code_generation_lite"
+DEFAULT_DATASET_FILENAME: Final[str] = "test.jsonl"
 METHODS: Final[tuple[PilotMethod, ...]] = ("direct", "dspy_baseline", "dspy_vtm")
 CODE_BLOCK_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"```(?:python)?\s*\n(.*?)```",
@@ -198,7 +201,7 @@ class PilotMemorySession:
 
 
 class FilesystemProblemSource:
-    """Best-effort JSON or JSONL loader for a local LiveCodeBench checkout."""
+    """Public problem loader using either a supplied JSON file or the checkout's own venv."""
 
     def __init__(
         self,
@@ -210,10 +213,15 @@ class FilesystemProblemSource:
         self._problem_file = problem_file
 
     def describe(self) -> dict[str, Any]:
+        python_bin = self._checkout_python()
         return {
             "kind": "filesystem",
             "benchmark_root": str(self._benchmark_root),
             "benchmark_root_exists": self._benchmark_root.exists(),
+            "benchmark_python": str(python_bin) if python_bin is not None else None,
+            "benchmark_python_exists": python_bin.exists() if python_bin is not None else False,
+            "dataset_repo": DEFAULT_DATASET_REPO,
+            "dataset_filename": DEFAULT_DATASET_FILENAME,
             "problem_file": str(self._problem_file) if self._problem_file is not None else None,
             "problem_file_exists": self._problem_file.exists() if self._problem_file else False,
             "supported_scenarios": sorted(self.supported_scenarios()),
@@ -222,6 +230,8 @@ class FilesystemProblemSource:
     def supported_scenarios(self) -> set[PilotScenario]:
         if self._problem_file is not None:
             return {DEFAULT_SCENARIO, "code_generation"}
+        if self._checkout_python() is not None:
+            return {"code_generation", "self_repair"}
         supported: set[PilotScenario] = set()
         for scenario in SCENARIO_TOKENS:
             if self._resolve_data_path(scenario) is not None:
@@ -234,19 +244,33 @@ class FilesystemProblemSource:
         *,
         max_problems: int,
     ) -> list[LiveCodeBenchProblem]:
-        data_path = self._problem_file or self._resolve_data_path(scenario)
-        if data_path is None:
-            raise FileNotFoundError(
-                f"unable to locate LiveCodeBench data for scenario={scenario!r} under "
-                f"{self._benchmark_root}"
-            )
-        raw_records = _load_problem_records(data_path)
+        if self._problem_file is not None:
+            raw_records = _load_problem_records(self._problem_file)
+            source_path = self._problem_file
+        else:
+            checkout_python = self._checkout_python()
+            if checkout_python is not None:
+                raw_records = self._load_problems_from_checkout(
+                    checkout_python,
+                    scenario=scenario,
+                    max_problems=max_problems,
+                )
+                source_path = self._benchmark_root / ".venv"
+            else:
+                data_path = self._resolve_data_path(scenario)
+                if data_path is None:
+                    raise FileNotFoundError(
+                        f"unable to locate LiveCodeBench data for scenario={scenario!r} under "
+                        f"{self._benchmark_root}"
+                    )
+                raw_records = _load_problem_records(data_path)
+                source_path = data_path
         problems: list[LiveCodeBenchProblem] = []
         for index, record in enumerate(raw_records):
             problem = _problem_from_record(
                 record,
                 scenario=scenario,
-                source_path=data_path,
+                source_path=source_path,
                 fallback_id=f"{scenario}-{index + 1}",
             )
             if problem is not None:
@@ -264,6 +288,8 @@ class FilesystemProblemSource:
     ) -> dict[str, Any] | None:
         public_tests = problem.evaluator_payload.get("public_tests")
         if not isinstance(public_tests, list | tuple) or not public_tests:
+            return None
+        if any(isinstance(test, Mapping) for test in public_tests):
             return None
         code_text = extracted_code or response_text
         failures = []
@@ -293,6 +319,57 @@ class FilesystemProblemSource:
         if candidates:
             return candidates[0]
         return None
+
+    def _checkout_python(self) -> Path | None:
+        candidate = self._benchmark_root / ".venv" / "bin" / "python"
+        if candidate.exists():
+            return candidate
+        return None
+
+    def _load_problems_from_checkout(
+        self,
+        python_bin: Path,
+        *,
+        scenario: PilotScenario,
+        max_problems: int,
+    ) -> list[dict[str, Any]]:
+        script = f"""
+import json
+from huggingface_hub import hf_hub_download
+
+path = hf_hub_download(
+    repo_id={DEFAULT_DATASET_REPO!r},
+    repo_type='dataset',
+    filename={DEFAULT_DATASET_FILENAME!r},
+)
+rows = []
+with open(path, 'r', encoding='utf-8') as handle:
+    for line in handle:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        rows.append(json.loads(stripped))
+        if len(rows) >= {max_problems}:
+            break
+print(json.dumps(rows))
+"""
+        completed = subprocess.run(
+            [str(python_bin), "-c", script],
+            cwd=self._benchmark_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            stderr = completed.stderr.strip() or completed.stdout.strip()
+            raise RuntimeError(
+                "LiveCodeBench checkout loader failed. "
+                f"benchmark_root={self._benchmark_root} stderr={stderr}"
+            )
+        payload = json.loads(completed.stdout)
+        if not isinstance(payload, list):
+            raise RuntimeError("LiveCodeBench checkout loader did not return a list of problems")
+        return [row for row in payload if isinstance(row, dict)]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -637,7 +714,7 @@ def run_pilot(
         problems = source.load_problems(config.resolved_scenario, max_problems=config.max_problems)
     except FileNotFoundError as exc:
         if not config.dry_run:
-            raise
+            raise SystemExit(_problem_source_error_message(config, source, exc)) from exc
         problems = []
         source_error = str(exc)
     payload: dict[str, Any] = {
@@ -701,6 +778,40 @@ def run_pilot(
         write_summary(paths.summary_json, summary)
         run_payload["summary"] = summary
     return payload
+
+
+def _problem_source_error_message(
+    config: PilotRunConfig,
+    source: ProblemSource,
+    exc: FileNotFoundError,
+) -> str:
+    description = source.describe()
+    benchmark_root_exists = bool(description.get("benchmark_root_exists"))
+    problem_file = description.get("problem_file")
+    supported = description.get("supported_scenarios", [])
+    if problem_file:
+        return (
+            f"{exc}. The supplied --problem-file was not usable. "
+            "Pass a readable JSON/JSONL file with public LiveCodeBench problems."
+        )
+    if not benchmark_root_exists:
+        return (
+            f"{exc}. LiveCodeBench checkout not found at {config.benchmark_root}. "
+            "Run `bash scripts/livecodebench/setup_livecodebench.sh` first, or pass "
+            "`--problem-file <public-problems.jsonl>`."
+        )
+    if supported:
+        return (
+            f"{exc}. Supported scenarios discovered under {config.benchmark_root}: "
+            f"{', '.join(str(item) for item in supported)}. "
+            "Pick one of those or pass `--problem-file <public-problems.jsonl>`."
+        )
+    return (
+        f"{exc}. No problem data was discovered under {config.benchmark_root}. "
+        "Run `bash scripts/livecodebench/setup_livecodebench.sh` first, confirm the "
+        "external checkout contains public problem JSON/JSONL files, or pass "
+        "`--problem-file <public-problems.jsonl>`."
+    )
 
 
 def execute_method(
@@ -1218,6 +1329,10 @@ def _problem_from_record(
         for key, value in record.items()
         if key in PUBLIC_METADATA_KEYS and value not in (None, "", [], {})
     }
+    for key in ("question_title", "platform", "contest_id"):
+        value = record.get(key)
+        if value not in (None, "", [], {}):
+            prompt_metadata[key] = value
     public_feedback = tuple(
         str(record[key]).strip()
         for key in VISIBLE_FEEDBACK_FIELD_CANDIDATES
@@ -1228,6 +1343,14 @@ def _problem_from_record(
         evaluator_payload["public_tests"] = record.get("public_tests")
     if "sample_tests" in record:
         evaluator_payload["public_tests"] = record.get("sample_tests")
+    public_test_cases = _normalize_public_test_cases(record.get("public_test_cases"))
+    if public_test_cases:
+        evaluator_payload["public_tests"] = public_test_cases
+        if not public_feedback:
+            public_feedback = tuple(
+                _format_public_test_feedback(test_case)
+                for test_case in public_test_cases[:3]
+            )
     return LiveCodeBenchProblem(
         problem_id=problem_id,
         scenario=scenario,
@@ -1246,6 +1369,26 @@ def _first_string(payload: Mapping[str, Any], keys: Iterable[str]) -> str | None
         if isinstance(value, str) and value.strip():
             return value.strip()
     return None
+
+
+def _normalize_public_test_cases(raw_value: Any) -> list[dict[str, Any]]:
+    if raw_value is None:
+        return []
+    value = raw_value
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, Mapping)]
+
+
+def _format_public_test_feedback(test_case: Mapping[str, Any]) -> str:
+    input_text = compact_text(str(test_case.get("input", "")), limit=100)
+    output_text = compact_text(str(test_case.get("output", "")), limit=100)
+    return f"Public sample: input={input_text!r} output={output_text!r}"
 
 
 def _looks_hidden(key: str) -> bool:

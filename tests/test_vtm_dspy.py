@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import builtins
+import importlib
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +68,7 @@ class FakeKernel:
 
 def test_importing_vtm_dspy_stays_optional(monkeypatch: pytest.MonkeyPatch) -> None:
     original_import = builtins.__import__
+    original_import_module = importlib.import_module
 
     def fake_import(
         name: str,
@@ -78,7 +81,14 @@ def test_importing_vtm_dspy_stays_optional(monkeypatch: pytest.MonkeyPatch) -> N
             raise ImportError("missing dspy")
         return original_import(name, globals, locals, fromlist, level)
 
+    def fake_import_module(name: str, package: str | None = None) -> Any:
+        if name == "dspy":
+            raise ImportError("missing dspy")
+        return original_import_module(name, package)
+
+    monkeypatch.delitem(sys.modules, "dspy", raising=False)
     monkeypatch.setattr(builtins, "__import__", fake_import)
+    monkeypatch.setattr(importlib, "import_module", fake_import_module)
 
     with pytest.raises(ImportError, match="optional 'dspy' dependency"):
         vtm_dspy.require_dspy()
