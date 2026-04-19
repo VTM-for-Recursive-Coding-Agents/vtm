@@ -75,40 +75,66 @@ class OpenAICompatibleChatClient:
         choices = response_payload.get("choices")
         if not isinstance(choices, list) or not choices:
             raise RuntimeError("OpenAI-compatible chat response contained no choices")
-        message = choices[0].get("message")
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            raise RuntimeError("OpenAI-compatible chat response contained no choice object")
+        message = choice.get("message")
         if not isinstance(message, dict):
             raise RuntimeError("OpenAI-compatible chat response contained no message object")
-        content = message.get("content")
-        if isinstance(content, str):
+        content = self._coerce_text(message.get("content"))
+        if content:
             return content
-        if isinstance(content, list):
-            collected = []
-            for item in content:
-                if not isinstance(item, dict):
-                    continue
-                item_type = item.get("type")
-                if item_type not in {None, "text", "output_text"}:
-                    continue
-                text = self._content_part_text(item)
-                if text:
-                    collected.append(text)
-            if collected:
-                return "".join(collected)
-        raise RuntimeError("OpenAI-compatible chat response contained unsupported content")
+        refusal = self._coerce_text(message.get("refusal"))
+        if refusal:
+            return refusal
+        choice_text = self._coerce_text(choice.get("text"))
+        if choice_text:
+            return choice_text
+        detail = json.dumps(
+            {
+                "choice_keys": sorted(choice.keys()),
+                "message_keys": sorted(message.keys()),
+                "content_type": type(message.get("content")).__name__,
+            },
+            sort_keys=True,
+        )
+        raise RuntimeError(
+            "OpenAI-compatible chat response contained unsupported content. "
+            f"shape={detail}"
+        )
 
-    def _content_part_text(self, item: dict[str, Any]) -> str:
-        text = item.get("text")
-        if isinstance(text, str):
-            return text
-        if isinstance(text, dict):
-            for key in ("value", "text"):
-                value = text.get(key)
-                if isinstance(value, str):
-                    return value
-        for key in ("output_text", "content"):
-            value = item.get(key)
-            if isinstance(value, str):
-                return value
+    def _coerce_text(self, value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            collected = [self._coerce_text(item) for item in value]
+            return "".join(part for part in collected if part)
+        if isinstance(value, dict):
+            item_type = value.get("type")
+            if isinstance(item_type, str) and item_type not in {
+                "text",
+                "output_text",
+                "message",
+                "content",
+            }:
+                nested = self._coerce_text(value.get("content"))
+                if nested:
+                    return nested
+                nested = self._coerce_text(value.get("output_text"))
+                if nested:
+                    return nested
+                return ""
+            text = value.get("text")
+            if isinstance(text, str):
+                return text
+            if isinstance(text, dict):
+                nested = self._coerce_text(text)
+                if nested:
+                    return nested
+            for key in ("output_text", "content", "value"):
+                nested = self._coerce_text(value.get(key))
+                if nested:
+                    return nested
         return ""
 
     def _chat_endpoint(self, base_url: str) -> str:

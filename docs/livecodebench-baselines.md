@@ -126,6 +126,7 @@ Preview the pilot without calling the model:
 uv run --extra dspy python scripts/run_livecodebench_dspy_pilot.py \
   --method all \
   --scenario self_repair \
+  --problem-offset 0 \
   --max-problems 3
 ```
 
@@ -135,9 +136,30 @@ Run the pilot once the external benchmark checkout and OpenRouter credentials ar
 uv run --extra dspy python scripts/run_livecodebench_dspy_pilot.py \
   --method all \
   --scenario self_repair \
+  --problem-offset 0 \
   --max-problems 3 \
   --model qwen/qwen3-coder-next \
   --execute
+```
+
+Run the next 22 public problems after an initial 3-problem smoke:
+
+```bash
+uv run --extra dspy python scripts/run_livecodebench_dspy_pilot.py \
+  --method all \
+  --scenario self_repair \
+  --problem-offset 3 \
+  --max-problems 22 \
+  --model qwen/qwen3-coder-next \
+  --execute
+```
+
+Run fixed 25-problem batches with the helper wrapper:
+
+```bash
+bash scripts/run_livecodebench_dspy_pilot_batch.sh \
+  --batch-index 0 \
+  -- --method all --scenario self_repair --model qwen/qwen3-coder-next --execute
 ```
 
 Export pilot tables:

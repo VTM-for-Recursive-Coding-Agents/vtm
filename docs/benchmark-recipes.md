@@ -86,6 +86,7 @@ Optional scaffolded DSPy plus VTM pilot on external LiveCodeBench:
 uv run --extra dspy python scripts/run_livecodebench_dspy_pilot.py \
   --method all \
   --scenario self_repair \
+  --problem-offset 0 \
   --max-problems 3
 ```
 
@@ -95,9 +96,30 @@ Execute a small three-problem pilot:
 uv run --extra dspy python scripts/run_livecodebench_dspy_pilot.py \
   --method all \
   --scenario self_repair \
+  --problem-offset 0 \
   --max-problems 3 \
   --model qwen/qwen3-coder-next \
   --execute
+```
+
+Run the next 22 public problems after an initial 3-problem smoke:
+
+```bash
+uv run --extra dspy python scripts/run_livecodebench_dspy_pilot.py \
+  --method all \
+  --scenario self_repair \
+  --problem-offset 3 \
+  --max-problems 22 \
+  --model qwen/qwen3-coder-next \
+  --execute
+```
+
+Run fixed 25-problem batches with stable run ids:
+
+```bash
+bash scripts/run_livecodebench_dspy_pilot_batch.sh \
+  --batch-index 0 \
+  -- --method all --scenario self_repair --model qwen/qwen3-coder-next --execute
 ```
 
 Export the pilot table:

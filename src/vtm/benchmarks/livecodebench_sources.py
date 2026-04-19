@@ -97,6 +97,7 @@ class ProblemSource(Protocol):
         self,
         scenario: PilotScenario,
         *,
+        problem_offset: int = 0,
         max_problems: int,
     ) -> list[LiveCodeBenchProblem]:
         """Load a bounded set of public problems."""
@@ -196,10 +197,12 @@ class BaseProblemSource:
         *,
         scenario: PilotScenario,
         source_path: Path,
+        problem_offset: int,
         max_problems: int,
     ) -> list[LiveCodeBenchProblem]:
         problems: list[LiveCodeBenchProblem] = []
-        for index, record in enumerate(raw_records):
+        window = raw_records[problem_offset : problem_offset + max_problems]
+        for index, record in enumerate(window, start=problem_offset):
             problem = _problem_from_record(
                 record,
                 scenario=scenario,
@@ -234,6 +237,7 @@ class ProblemFileSource(BaseProblemSource):
         self,
         scenario: PilotScenario,
         *,
+        problem_offset: int = 0,
         max_problems: int,
     ) -> list[LiveCodeBenchProblem]:
         raw_records = _load_problem_records(self._problem_file)
@@ -241,6 +245,7 @@ class ProblemFileSource(BaseProblemSource):
             raw_records,
             scenario=scenario,
             source_path=self._problem_file,
+            problem_offset=max(0, int(problem_offset)),
             max_problems=max_problems,
         )
 
@@ -283,6 +288,7 @@ class LiveCodeBenchCheckoutSource(BaseProblemSource):
         self,
         scenario: PilotScenario,
         *,
+        problem_offset: int = 0,
         max_problems: int,
     ) -> list[LiveCodeBenchProblem]:
         checkout_python = self._checkout_python()
@@ -294,11 +300,16 @@ class LiveCodeBenchCheckoutSource(BaseProblemSource):
             raise FileNotFoundError(
                 f"unable to locate checkout loader script at {CHECKOUT_LOADER_SCRIPT}"
             )
-        raw_records = self._load_problems_from_checkout(checkout_python, max_problems=max_problems)
+        raw_records = self._load_problems_from_checkout(
+            checkout_python,
+            problem_offset=max(0, int(problem_offset)),
+            max_problems=max_problems,
+        )
         return self._materialize_problems(
             raw_records,
             scenario=scenario,
             source_path=self._benchmark_root / ".venv",
+            problem_offset=0,
             max_problems=max_problems,
         )
 
@@ -312,6 +323,7 @@ class LiveCodeBenchCheckoutSource(BaseProblemSource):
         self,
         python_bin: Path,
         *,
+        problem_offset: int,
         max_problems: int,
     ) -> list[dict[str, Any]]:
         completed = subprocess.run(
@@ -322,6 +334,8 @@ class LiveCodeBenchCheckoutSource(BaseProblemSource):
                 self._dataset_repo,
                 "--dataset-filename",
                 self._dataset_filename,
+                "--problem-offset",
+                str(problem_offset),
                 "--max-problems",
                 str(max_problems),
             ],

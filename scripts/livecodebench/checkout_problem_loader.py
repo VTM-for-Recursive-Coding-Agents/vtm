@@ -19,6 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--dataset-repo", default=DEFAULT_DATASET_REPO)
     parser.add_argument("--dataset-filename", default=DEFAULT_DATASET_FILENAME)
+    parser.add_argument("--problem-offset", type=int, default=0)
     parser.add_argument("--max-problems", type=int, required=True)
     return parser
 
@@ -27,6 +28,7 @@ def load_rows(
     *,
     dataset_repo: str,
     dataset_filename: str,
+    problem_offset: int,
     max_problems: int,
 ) -> list[dict[str, object]]:
     dataset_path = Path(
@@ -38,9 +40,11 @@ def load_rows(
     )
     rows: list[dict[str, object]] = []
     with dataset_path.open("r", encoding="utf-8") as handle:
-        for line in handle:
+        for index, line in enumerate(handle):
             stripped = line.strip()
             if not stripped:
+                continue
+            if index < problem_offset:
                 continue
             payload = json.loads(stripped)
             if isinstance(payload, dict):
@@ -55,6 +59,7 @@ def main() -> int:
     rows = load_rows(
         dataset_repo=args.dataset_repo,
         dataset_filename=args.dataset_filename,
+        problem_offset=max(0, int(args.problem_offset)),
         max_problems=max(1, int(args.max_problems)),
     )
     print(json.dumps(rows))

@@ -124,5 +124,8 @@ Dry-run:
 uv run --extra dspy python scripts/run_livecodebench_dspy_pilot.py \
   --method all \
   --scenario self_repair \
+  --problem-offset 0 \
   --max-problems 3
 ```
+
+Larger slices can use `--problem-offset` directly or the `scripts/run_livecodebench_dspy_pilot_batch.sh` helper, which defaults to 25-problem batches.

@@ -52,3 +52,65 @@ def test_extract_message_text_supports_nested_text_value() -> None:
     )
 
     assert text == "hello world"
+
+
+def test_extract_message_text_supports_nested_content_objects() -> None:
+    client = _client()
+
+    text = client.extract_message_text(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": {
+                            "type": "message",
+                            "content": [
+                                {
+                                    "type": "output_text",
+                                    "content": {"type": "text", "text": "print(42)"},
+                                }
+                            ],
+                        }
+                    }
+                }
+            ]
+        }
+    )
+
+    assert text == "print(42)"
+
+
+def test_extract_message_text_falls_back_to_choice_text() -> None:
+    client = _client()
+
+    text = client.extract_message_text(
+        {
+            "choices": [
+                {
+                    "text": "plain completion text",
+                    "message": {"content": None},
+                }
+            ]
+        }
+    )
+
+    assert text == "plain completion text"
+
+
+def test_extract_message_text_supports_message_refusal() -> None:
+    client = _client()
+
+    text = client.extract_message_text(
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": None,
+                        "refusal": "I can't help with that.",
+                    }
+                }
+            ]
+        }
+    )
+
+    assert text == "I can't help with that."

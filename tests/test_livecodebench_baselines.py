@@ -12,6 +12,7 @@ import vtm.benchmarks.livecodebench_dspy_pilot as livecodebench_dspy_pilot
 import vtm.benchmarks.livecodebench_sources as livecodebench_sources
 from vtm.benchmarks.livecodebench_dspy_pilot import (
     RepairContext,
+    _request_direct_completion,
     aggregate_summary,
     build_attempt_prompt,
     method_run_dir,
@@ -53,6 +54,7 @@ def test_livecodebench_script_paths_exist() -> None:
         REPO_ROOT / "scripts" / "local" / "preflight_checks.sh",
         REPO_ROOT / "scripts" / "run_livecodebench_baseline.sh",
         REPO_ROOT / "scripts" / "run_livecodebench_dspy_pilot.py",
+        REPO_ROOT / "scripts" / "run_livecodebench_dspy_pilot_batch.sh",
         REPO_ROOT / "docs" / "livecodebench-baselines.md",
         REPO_ROOT / "results" / "README.md",
     ]
@@ -275,6 +277,8 @@ def test_livecodebench_dspy_pilot_dry_run_supports_all_methods(
             "all",
             "--scenario",
             "code_generation",
+            "--problem-offset",
+            "0",
             "--max-problems",
             "1",
             "--output-root",
@@ -291,6 +295,7 @@ def test_livecodebench_dspy_pilot_dry_run_supports_all_methods(
     payload = json.loads(capsys.readouterr().out)
     assert payload["dry_run"] is True
     assert payload["methods"] == ["direct", "dspy_baseline", "dspy_vtm"]
+    assert payload["problem_offset"] == 0
     assert payload["problem_count"] == 1
     assert len(payload["runs"]) == 3
     assert all(
@@ -347,6 +352,20 @@ def test_livecodebench_dspy_discovers_explicit_source_backends(tmp_path: Path) -
         ),
         LiveCodeBenchCheckoutSource,
     )
+
+
+def test_problem_file_source_honors_problem_offset(tmp_path: Path) -> None:
+    problem_file = tmp_path / "problems.jsonl"
+    problem_file.write_text(
+        json.dumps({"question_id": "lcb-1", "prompt": "First problem"}) + "\n" +
+        json.dumps({"question_id": "lcb-2", "prompt": "Second problem"}) + "\n",
+        encoding="utf-8",
+    )
+    source = ProblemFileSource(problem_file)
+
+    problems = source.load_problems("code_generation", problem_offset=1, max_problems=1)
+
+    assert [problem.problem_id for problem in problems] == ["lcb-2"]
 
 
 def test_livecodebench_dspy_evaluate_public_stdin_tests() -> None:
@@ -485,6 +504,7 @@ def test_livecodebench_dspy_reference_command_uses_selfrepair_token() -> None:
         api_key="openrouter-test-key",
         temperature=0.0,
         max_tokens=8192,
+        problem_offset=0,
         max_problems=3,
         execute=False,
         output_root=Path(".benchmarks/livecodebench-dspy"),
@@ -522,7 +542,10 @@ def test_livecodebench_dspy_source_loads_checkout_problems_via_benchmark_venv(
         }
     ]
 
+    calls: list[list[str]] = []
+
     def fake_run(*args, **kwargs):
+        calls.append(args[0])
         return subprocess.CompletedProcess(
             args=args[0],
             returncode=0,
@@ -533,11 +556,13 @@ def test_livecodebench_dspy_source_loads_checkout_problems_via_benchmark_venv(
     monkeypatch.setattr(livecodebench_sources.subprocess, "run", fake_run)
     source = LiveCodeBenchCheckoutSource(benchmark_root=benchmark_root)
 
-    problems = source.load_problems("code_generation", max_problems=1)
+    problems = source.load_problems("code_generation", problem_offset=7, max_problems=1)
 
     assert len(problems) == 1
     assert problems[0].problem_id == "lcb-1"
     assert problems[0].prompt == "Write solve() that returns 42."
+    assert "--problem-offset" in calls[0]
+    assert "7" in calls[0]
 
 
 def test_livecodebench_dspy_execute_missing_checkout_exits_cleanly(tmp_path: Path) -> None:
@@ -580,6 +605,8 @@ def test_livecodebench_dspy_dry_run_reports_self_repair_semantics(
             "all",
             "--scenario",
             "self_repair",
+            "--problem-offset",
+            "1",
             "--max-problems",
             "1",
             "--benchmark-root",
@@ -592,5 +619,53 @@ def test_livecodebench_dspy_dry_run_reports_self_repair_semantics(
 
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
+    assert payload["problem_offset"] == 1
     assert payload["resolved_scenario"] == "self_repair"
     assert "previous candidate code" in payload["scenario_semantics"].lower()
+
+
+def test_livecodebench_dspy_direct_completion_retries_empty_provider_response() -> None:
+    client = livecodebench_dspy_pilot.OpenAICompatibleChatClient(
+        livecodebench_dspy_pilot.OpenAICompatibleChatConfig(
+            base_url="https://openrouter.example/api/v1",
+            api_key="openrouter-test-key",
+        )
+    )
+    responses = [
+        {
+            "choices": [
+                {
+                    "finish_reason": None,
+                    "message": {"role": "assistant", "content": None, "refusal": None},
+                }
+            ],
+            "usage": {"completion_tokens": 0},
+        },
+        {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": "```python\nprint(42)\n```"},
+                }
+            ],
+            "usage": {"completion_tokens": 6},
+        },
+    ]
+
+    def fake_create_chat_completion(**kwargs):
+        return responses.pop(0)
+
+    client.create_chat_completion = fake_create_chat_completion  # type: ignore[method-assign]
+
+    payload, text, retry_count, error_text = _request_direct_completion(
+        client,
+        model="qwen/qwen3-coder-next",
+        prompt="print 42",
+        temperature=0.0,
+        max_tokens=512,
+    )
+
+    assert text == "```python\nprint(42)\n```"
+    assert retry_count == 1
+    assert error_text is not None
+    assert payload["usage"]["completion_tokens"] == 6

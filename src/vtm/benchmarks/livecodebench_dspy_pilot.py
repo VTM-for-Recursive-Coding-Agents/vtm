@@ -51,6 +51,7 @@ DEFAULT_MAX_PROBLEMS: Final[int] = 3
 DEFAULT_MAX_TOKENS: Final[int] = 8192
 DEFAULT_TEMPERATURE: Final[float] = 0.0
 DEFAULT_SCENARIO: Final[PilotScenario] = "self_repair"
+DEFAULT_DIRECT_EMPTY_RESPONSE_RETRIES: Final[int] = 2
 METHODS: Final[tuple[PilotMethod, ...]] = ("direct", "dspy_baseline", "dspy_vtm")
 CODE_BLOCK_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"```(?:python)?\s*\n(.*?)```",
@@ -79,6 +80,7 @@ class PilotRunConfig:
     api_key: str | None
     temperature: float
     max_tokens: int
+    problem_offset: int
     max_problems: int
     execute: bool
     output_root: Path
@@ -146,6 +148,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("code_generation", "self_repair"),
         default=DEFAULT_SCENARIO,
     )
+    parser.add_argument("--problem-offset", type=int, default=0)
     parser.add_argument("--max-problems", type=int, default=DEFAULT_MAX_PROBLEMS)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--model", default="")
@@ -228,6 +231,7 @@ def resolve_config(
 ) -> PilotRunConfig:
     max_problems = max(1, int(args.max_problems))
     max_tokens = max(1, int(args.max_tokens))
+    problem_offset = max(0, int(args.problem_offset))
     model = execution_model(args.model or None)
     base_url = (args.base_url or openrouter_base_url()).strip()
     api_key = (args.api_key or openrouter_api_key() or "").strip() or None
@@ -244,6 +248,7 @@ def resolve_config(
         api_key=api_key,
         temperature=float(args.temperature),
         max_tokens=max_tokens,
+        problem_offset=problem_offset,
         max_problems=max_problems,
         execute=bool(args.execute),
         output_root=args.output_root,
@@ -474,7 +479,11 @@ def run_pilot(
 ) -> dict[str, Any]:
     source_error: str | None = None
     try:
-        problems = source.load_problems(config.resolved_scenario, max_problems=config.max_problems)
+        problems = source.load_problems(
+            config.resolved_scenario,
+            problem_offset=config.problem_offset,
+            max_problems=config.max_problems,
+        )
     except FileNotFoundError as exc:
         if not config.dry_run:
             raise SystemExit(_problem_source_error_message(config, source, exc)) from exc
@@ -490,6 +499,7 @@ def run_pilot(
         "api_key_configured": config.api_key is not None,
         "output_root": str(config.output_root),
         "benchmark_root": str(config.benchmark_root),
+        "problem_offset": config.problem_offset,
         "problem_source": source.describe(),
         "problem_source_error": source_error,
         "problem_count": len(problems),
@@ -538,6 +548,7 @@ def run_pilot(
         summary["run_id"] = config.run_id
         summary["generated_at"] = utc_now().isoformat()
         summary["problem_source"] = source.describe()
+        summary["problem_offset"] = config.problem_offset
         summary["scenario_semantics"] = _scenario_semantics(config.resolved_scenario)
         write_problem_rows(paths.problems_jsonl, rows)
         write_summary(paths.summary_json, summary)
@@ -638,6 +649,8 @@ def execute_problem(
     evaluation: dict[str, Any] | None = None
     retrieval_payload: dict[str, Any] | None = None
     dspy_tool_calls = 0
+    direct_retry_count = 0
+    direct_response_error: str | None = None
     repair_context: RepairContext | None = None
 
     with TemporaryDirectory(prefix=f"vtm-lcb-{problem.problem_id}-") as temp_dir:
@@ -669,13 +682,15 @@ def execute_problem(
                     repair_context=repair_context,
                 )
                 if method == "direct":
-                    response_payload = client.create_chat_completion(
-                        model=config.model,
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=config.temperature,
-                        max_tokens=config.max_tokens,
+                    response_payload, response_text, direct_retry_count, direct_response_error = (
+                        _request_direct_completion(
+                            client,
+                            model=config.model,
+                            prompt=prompt,
+                            temperature=config.temperature,
+                            max_tokens=config.max_tokens,
+                        )
                     )
-                    response_text = client.extract_message_text(response_payload)
                     usage = _normalize_usage(response_payload.get("usage"))
                 else:
                     response_payload = run_dspy_attempt(
@@ -742,9 +757,74 @@ def execute_problem(
         "usage": usage,
         "retrieval": retrieval_payload,
         "tool_calls": total_tool_calls,
+        "direct_retry_count": direct_retry_count,
+        "response_error": direct_response_error,
         "attempt_count": 2 if repair_context is not None else 1,
         "repair_used": repair_context is not None,
     }
+
+
+def _request_direct_completion(
+    client: OpenAICompatibleChatClient,
+    *,
+    model: str,
+    prompt: str,
+    temperature: float,
+    max_tokens: int,
+) -> tuple[dict[str, Any], str, int, str | None]:
+    last_payload: dict[str, Any] | None = None
+    last_error: str | None = None
+    for retry_count in range(DEFAULT_DIRECT_EMPTY_RESPONSE_RETRIES + 1):
+        response_payload = client.create_chat_completion(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        last_payload = response_payload
+        try:
+            response_text = client.extract_message_text(response_payload)
+        except RuntimeError as exc:
+            if _is_retryable_empty_chat_response(response_payload):
+                last_error = str(exc)
+                continue
+            raise
+        if response_text.strip() or not _is_retryable_empty_chat_response(response_payload):
+            return response_payload, response_text, retry_count, last_error
+        last_error = "OpenAI-compatible chat response returned empty text content."
+    assert last_payload is not None
+    return last_payload, "", DEFAULT_DIRECT_EMPTY_RESPONSE_RETRIES, last_error
+
+
+def _is_retryable_empty_chat_response(response_payload: Mapping[str, Any]) -> bool:
+    choices = response_payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return False
+    choice = choices[0]
+    if not isinstance(choice, Mapping):
+        return False
+    message = choice.get("message")
+    if not isinstance(message, Mapping):
+        return False
+    has_text = any(
+        isinstance(value, str) and value.strip()
+        for value in (
+            choice.get("text"),
+            message.get("content"),
+            message.get("refusal"),
+        )
+    )
+    if has_text:
+        return False
+    usage = response_payload.get("usage")
+    if isinstance(usage, Mapping):
+        completion_tokens = usage.get("completion_tokens")
+        if isinstance(completion_tokens, int) and completion_tokens == 0:
+            return True
+    finish_reason = choice.get("finish_reason")
+    if finish_reason in (None, "", "error"):
+        return True
+    return message.get("content") is None
 
 
 def run_dspy_attempt(
