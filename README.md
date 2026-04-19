@@ -7,6 +7,7 @@ Does verified lexical repository memory help coding agents more than no memory, 
 The maintained package boundaries are:
 
 - `vtm`: kernel records, stores, verification, lexical retrieval, procedures, consolidation
+- `vtm_dspy`: optional DSPy ReAct and RLM integration on top of the VTM kernel
 - `vtm.harness`: task packs, workspaces, executors, scoring
 - `vtm_rlm`: thin vendored-RLM bridge and writeback helpers
 - `vtm.benchmarks`: manifests, runners, reports, and maintained benchmark orchestration
@@ -25,6 +26,17 @@ The maintained package boundaries are:
 External coding prompts no longer expose oracle `expected_changed_paths` or `touched_paths` by default. Those fields remain available for scoring only.
 
 SWE-bench Lite was attempted as an external agent pilot, but the OpenRouter-backed vendored RLM produced empty patches and zero resolved tasks. It is not part of the final maintained benchmark surface or paper claim.
+
+## DSPy Interface
+
+DSPy is the recommended forward-facing agent and programming interface for VTM memory, while VTM itself remains the verified-memory kernel.
+
+- DSPy ReAct plus tools is the preferred tool-using workflow surface
+- DSPy RLM is optional long-context reasoning glue, not the maintained local repo-editing executor
+- DSPy remains optional and does not change the maintained retrieval, drift, or drifted-retrieval benchmark surface
+- Controlled coding-drift remains the small agent-loop benchmark
+- LiveCodeBench remains baseline model evaluation only
+- SWE-bench Lite remains removed from the maintained result surface after empty-patch pilot failures
 
 ## External Baselines
 
@@ -83,6 +95,7 @@ uv run python -m vtm.benchmarks.run \
 - `benchmarks/manifests/`: checked-in synthetic smoke, controlled coding-drift, and pinned OSS manifests
 - `docs/`: maintained benchmark recipes, scope note, audit, harness notes, ADRs
 - `src/vtm/`: kernel package plus harness, adapters, services, stores, benchmarks
+- `src/vtm_dspy/`: optional DSPy integration layer over the current kernel and workspace tools
 - `src/vtm_rlm/`: thin vendored-RLM bridge
 - `tests/`: regression coverage for kernel, retrieval, verification, harness, and controlled coding paths
 
@@ -108,6 +121,7 @@ vtm-bench-report --help
 - [docs/final-scope.md](docs/final-scope.md): final paper-facing scope and removed branches
 - [docs/final-audit.md](docs/final-audit.md): final maintained surface, rationale, and freeze audit
 - [docs/benchmark-recipes.md](docs/benchmark-recipes.md): maintained commands
+- [docs/dspy-integration.md](docs/dspy-integration.md): optional DSPy ReAct and RLM integration notes
 - [docs/livecodebench-baselines.md](docs/livecodebench-baselines.md): external LiveCodeBench baseline setup and smoke command
 - [docs/current-state-audit.md](docs/current-state-audit.md): guarantees and limits
 - [docs/harness.md](docs/harness.md): task-pack and executor contract

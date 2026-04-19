@@ -29,6 +29,7 @@ SWE-bench Lite was attempted as an external agent pilot, but the OpenRouter-back
 - Retrieval, drift verification, and drifted retrieval remain the primary evaluation layers.
 - The maintained coding benchmark is `controlled_coding_drift`, not SWE-bench Lite.
 - OpenRouter-backed vendored RLM is the maintained execution path.
+- DSPy is an optional forward-facing agent interface, not part of the frozen quantitative benchmark surface.
 
 ## Final run commands
 
@@ -83,4 +84,4 @@ uv run python -m vtm.benchmarks.report \
 
 - SWE-bench can be revisited later as an external benchmark, but it is not part of the final paper result.
 - LongCoT can be revisited later as a reasoning-side pilot, but it is not maintained in this final benchmark surface.
-- DSPy remains outside scope for the final artifact.
+- DSPy can sit on top of VTM as an optional agent scaffold without changing the frozen benchmark evidence.

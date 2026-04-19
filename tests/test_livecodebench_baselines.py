@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,8 +22,10 @@ def _load_baseline_module():
 def test_livecodebench_script_paths_exist() -> None:
     expected = [
         REPO_ROOT / "scripts" / "livecodebench" / "baseline.py",
+        REPO_ROOT / "scripts" / "livecodebench" / "export_results.py",
         REPO_ROOT / "scripts" / "livecodebench" / "setup_livecodebench.sh",
         REPO_ROOT / "scripts" / "shared" / "run_livecodebench.sh",
+        REPO_ROOT / "scripts" / "local" / "run_livecodebench.sh",
         REPO_ROOT / "scripts" / "local" / "run_livecodebench_baseline.sh",
         REPO_ROOT / "scripts" / "local" / "preflight_checks.sh",
         REPO_ROOT / "scripts" / "run_livecodebench_baseline.sh",
@@ -43,6 +46,7 @@ def test_livecodebench_command_uses_openrouter_defaults() -> None:
             api_key="openrouter-test-key",
             run_id="lcb_baseline_smoke",
             output_root=Path(".benchmarks/livecodebench"),
+            summary_root=Path(".benchmarks/paper-tables/livecodebench-baselines"),
             benchmark_root=Path("benchmarks/LiveCodeBench"),
             scenario="codegeneration",
             release_version="release_v1",
@@ -52,7 +56,7 @@ def test_livecodebench_command_uses_openrouter_defaults() -> None:
             start_date=None,
             end_date=None,
             smoke=True,
-            dry_run=True,
+            execute=False,
         )
     )
 
@@ -74,6 +78,12 @@ def test_livecodebench_command_uses_openrouter_defaults() -> None:
     assert env["OPENAI_API_KEY"] == "openrouter-test-key"
     assert env["OPENAI_BASE_URL"] == "https://openrouter.example/api/v1"
     assert env["OPENAI_API_BASE"] == "https://openrouter.example/api/v1"
+    assert module.normalized_run_dir(config) == Path(
+        ".benchmarks/livecodebench/google-gemma-test/lcb_baseline_smoke"
+    )
+    assert module.normalized_summary_path(config) == Path(
+        ".benchmarks/paper-tables/livecodebench-baselines/lcb_baseline_smoke__google-gemma-test.json"
+    )
 
 
 def test_smoke_mode_defaults_to_small_window() -> None:
@@ -85,6 +95,7 @@ def test_smoke_mode_defaults_to_small_window() -> None:
             api_key=None,
             run_id="run",
             output_root=Path(".benchmarks/livecodebench"),
+            summary_root=Path(".benchmarks/paper-tables/livecodebench-baselines"),
             benchmark_root=Path("benchmarks/LiveCodeBench"),
             scenario="codegeneration",
             release_version="release_v1",
@@ -94,7 +105,7 @@ def test_smoke_mode_defaults_to_small_window() -> None:
             start_date=None,
             end_date=None,
             smoke=True,
-            dry_run=True,
+            execute=False,
         )
     )
 
@@ -102,6 +113,52 @@ def test_smoke_mode_defaults_to_small_window() -> None:
     assert config.evaluate is False
     assert config.start_date == module.SMOKE_START_DATE
     assert config.end_date == module.SMOKE_END_DATE
+
+
+def test_resolve_models_supports_openrouter_matrix() -> None:
+    module = _load_baseline_module()
+
+    matrix = module.resolve_models(explicit_model="", model_matrix="openrouter-baselines")
+
+    assert matrix == (
+        "nvidia/nemotron-3-nano-30b-a3b:free",
+        "nvidia/nemotron-3-super-120b-a12b:free",
+        "google/gemma-4-31b-it:free",
+    )
+
+
+def test_dry_run_does_not_execute_model_call(tmp_path: Path) -> None:
+    module = _load_baseline_module()
+    calls: list[object] = []
+
+    def fake_runner(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("dry-run should not invoke subprocess.run")
+
+    config = module.BaselineConfig(
+        model="google/gemma-test",
+        base_url="https://openrouter.example/api/v1",
+        api_key=None,
+        run_id="dry_run_case",
+        output_root=tmp_path / ".benchmarks" / "livecodebench",
+        summary_root=tmp_path / ".benchmarks" / "paper-tables" / "livecodebench-baselines",
+        benchmark_root=tmp_path / "benchmarks" / "LiveCodeBench",
+        scenario="codegeneration",
+        release_version="release_v1",
+        n=1,
+        temperature=0.2,
+        evaluate=False,
+        start_date=module.SMOKE_START_DATE,
+        end_date=module.SMOKE_END_DATE,
+        smoke=True,
+        execute=False,
+    )
+
+    exit_code = module.run(config, command_runner=fake_runner)
+
+    assert exit_code == 0
+    assert calls == []
+    assert module.normalized_summary_path(config).exists()
 
 
 def test_livecodebench_docs_mark_baseline_only_scope() -> None:
@@ -114,6 +171,23 @@ def test_livecodebench_docs_mark_baseline_only_scope() -> None:
     assert "LiveCodeBench is available here as an external baseline model benchmark only" in recipes
     assert "It is not the main VTM memory benchmark" in baselines
     assert "SWE-bench Lite remains demoted after empty-patch pilot failures" in baselines
+    assert "VTM_OPENROUTER_BASE_URL" in baselines
+    assert "OPENROUTER_API_KEY" in baselines
+    assert "VTM_EXECUTION_MODEL" in baselines
+
+
+def test_shell_wrapper_defaults_to_dry_run() -> None:
+    completed = subprocess.run(
+        ["bash", "scripts/local/run_livecodebench.sh", "--smoke"],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0
+    assert "[livecodebench] mode=dry-run" in completed.stdout
+    assert "command=" in completed.stdout
 
 
 def test_new_baseline_surface_has_no_swebench_cli_references() -> None:
@@ -121,6 +195,8 @@ def test_new_baseline_surface_has_no_swebench_cli_references() -> None:
         REPO_ROOT / "docs" / "livecodebench-baselines.md",
         REPO_ROOT / "results" / "README.md",
         REPO_ROOT / "scripts" / "livecodebench" / "setup_livecodebench.sh",
+        REPO_ROOT / "scripts" / "livecodebench" / "export_results.py",
+        REPO_ROOT / "scripts" / "local" / "run_livecodebench.sh",
         REPO_ROOT / "scripts" / "local" / "run_livecodebench_baseline.sh",
         REPO_ROOT / "scripts" / "shared" / "run_livecodebench.sh",
     ]

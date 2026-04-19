@@ -2,6 +2,8 @@
 
 VTM is now scoped as a clean study of verified lexical repository memory for coding agents, with OpenRouter as the only maintained inference path.
 
+DSPy is the recommended forward-facing agent interface for VTM memory, but it does not replace the kernel or the maintained benchmark layers.
+
 ## Main claim
 
 Verified lexical memory should outperform a no-memory baseline without relying on oracle localization hints in model-visible inputs.
@@ -44,6 +46,10 @@ These three layers isolate memory quality and memory freshness cleanly enough fo
 ## Coding benchmark status
 
 - The final maintained coding benchmark is `controlled_coding_drift`.
+- controlled_coding_drift remains the small maintained agent-loop benchmark.
+- DSPy ReAct and DSPy tools are the preferred future-facing workflow surface for using VTM memory.
+- DSPy RLM is optional long-context reasoning glue, not the maintained repo-editing executor.
+- LiveCodeBench remains a baseline model coding benchmark only.
 - SWE-bench Lite was attempted as an external agent pilot, but it produced empty patches and no resolved tasks.
 - The final paper should not claim SWE-bench improvement.
 - The main paper claim is memory correctness under repository drift, not external-task benchmark success.
@@ -53,6 +59,7 @@ Synthetic smoke tasks remain only as a maintained local/dev validation path for 
 ## Future work
 
 External agent benchmarks such as SWE-bench or LongCoT can be revisited later, but they are not part of the final maintained evaluation.
+DSPy can grow as the main agent scaffold on top of VTM, while the final quantitative evidence remains retrieval, drift, and drifted retrieval.
 
 ## OpenRouter defaults
 

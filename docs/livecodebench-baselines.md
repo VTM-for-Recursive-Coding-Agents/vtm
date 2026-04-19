@@ -10,6 +10,12 @@ LiveCodeBench is available in this repository as an external baseline model benc
 - Controlled coding-drift remains the maintained coding benchmark inside the paper story
 - SWE-bench Lite remains demoted after empty-patch pilot failures and is not part of the maintained result surface
 
+## What It Measures
+
+LiveCodeBench is useful for baseline model coding ability because it covers tasks such as code generation, self-repair, code execution, and test-output prediction.
+
+That makes it a good external baseline for model capability, but not a direct evaluation of VTM's verified repository memory under drift. It does not replace the main VTM evidence from retrieval, drift verification, and drifted retrieval.
+
 ## Environment
 
 The baseline wrappers use the same maintained OpenRouter environment variables as the rest of `josh-testing`:
@@ -20,6 +26,14 @@ export VTM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 export VTM_EXECUTION_MODEL=google/gemma-4-31b-it:free
 export VTM_RERANK_MODEL=nvidia/nemotron-3-nano-30b-a3b:free
 ```
+
+Single-model runs default to `VTM_EXECUTION_MODEL`.
+
+The maintained OpenRouter baseline matrix is:
+
+- `nvidia/nemotron-3-nano-30b-a3b:free`
+- `nvidia/nemotron-3-super-120b-a12b:free`
+- `google/gemma-4-31b-it:free`
 
 ## Setup
 
@@ -43,9 +57,62 @@ Default behavior:
 
 - model defaults to `VTM_EXECUTION_MODEL`
 - outputs land under `.benchmarks/livecodebench/`
+- per-model summaries land under `.benchmarks/paper-tables/livecodebench-baselines/`
 - smoke mode uses `n=1`
 - smoke mode disables evaluation
 - smoke mode narrows the run to a small fixed date window unless you override it
+- dry-run is the default and prints the command without calling the model
+
+To actually execute the external benchmark, opt in explicitly:
+
+```bash
+bash scripts/run_livecodebench_baseline.sh --smoke --execute
+```
+
+## OpenRouter Matrix
+
+Preview the maintained OpenRouter model trio without calling the API:
+
+```bash
+bash scripts/run_livecodebench_baseline.sh \
+  --model-matrix openrouter-baselines \
+  --smoke
+```
+
+Run the full matrix only when you are ready to execute it:
+
+```bash
+bash scripts/run_livecodebench_baseline.sh \
+  --model-matrix openrouter-baselines \
+  --execute
+```
+
+## Export Results
+
+Raw run metadata stays under `.benchmarks/livecodebench/`. To aggregate those runs into paper-table summaries:
+
+```bash
+uv run python scripts/livecodebench/export_results.py \
+  --input-root .benchmarks/livecodebench \
+  --output-root .benchmarks/paper-tables/livecodebench-baselines
+```
+
+That export writes:
+
+- `.benchmarks/paper-tables/livecodebench-baselines/summary.json`
+- `.benchmarks/paper-tables/livecodebench-baselines/summary.md`
+
+The repository ignores `.benchmarks/` by default, so raw outputs are not committed unless you override that policy.
+
+## Paper Citation
+
+Use LiveCodeBench in the paper as a baseline model-evaluation reference, not as the main VTM memory result.
+
+Recommended framing:
+
+- LiveCodeBench reports external baseline coding ability for the underlying model.
+- VTM's main quantitative evidence remains retrieval, drift, and drifted retrieval.
+- Controlled coding-drift is the small maintained agent-loop benchmark inside the VTM paper story.
 
 ## Notes
 
