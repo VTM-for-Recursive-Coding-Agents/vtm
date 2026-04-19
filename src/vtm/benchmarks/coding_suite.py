@@ -39,7 +39,16 @@ from vtm.harness.workspace import (
     WorkspaceBackend,
 )
 from vtm.harness.workspace_docker import DockerWorkspaceBackend
-from vtm.memory_items import ClaimPayload, MemoryItem, ValidityState, VisibilityScope
+from vtm.memory_items import (
+    ClaimPayload,
+    CommandValidatorConfig,
+    MemoryItem,
+    ProcedurePayload,
+    ProcedureStep,
+    ValidatorSpec,
+    ValidityState,
+    VisibilityScope,
+)
 from vtm.retrieval import RetrieveRequest
 from vtm.services import TransactionalMemoryKernel
 from vtm.stores import (
@@ -182,6 +191,7 @@ def prepare_coding_task(
     repo_manager.git_checkout(repo_root, pair.base_ref)
     memory_context: tuple[TaskMemoryContextItem, ...] = ()
     expected_changed_paths = task.expected_changed_paths or task.touched_paths
+    memory_seed_ref = task.memory_seed_ref or pair.base_ref
     visible_task_context = build_visible_task_context(
         repo_root=repo_root,
         task=task,
@@ -197,7 +207,8 @@ def prepare_coding_task(
     cache: SqliteCacheStore | None = None
     durable_scope: VisibilityScope | None = None
     if config.mode != "no_memory":
-        base_symbols = symbol_indexer.extract_symbols(repo_root)
+        repo_manager.git_checkout(repo_root, memory_seed_ref)
+        seed_symbols = symbol_indexer.extract_symbols(repo_root)
         kernel, metadata, artifacts, cache, durable_scope = kernel_factory.open_kernel(
             repo_root=repo_root,
             repo_name=repo_spec.repo_name,
@@ -209,9 +220,11 @@ def prepare_coding_task(
             repo_root,
             repo_spec.repo_name,
             pair,
-            base_symbols,
+            seed_symbols,
             durable_scope,
+            dependency_ref=memory_seed_ref,
         )
+        repo_manager.git_checkout(repo_root, pair.base_ref)
         current_dependency = benchmark_dependency_fingerprint(
             kernel_factory=kernel_factory,
             repo_root=repo_root,
@@ -579,6 +592,45 @@ def seed_task_conditioned_memories(
                     dependency_fingerprint=current_dependency,
                 ),
                 metadata={"generated_by": "benchmark_task_card"},
+            ),
+        )
+    if task.seed_validation_procedure_memory and task.test_command:
+        instruction = f"Run {' '.join(task.test_command)} from the repository root."
+        kernel.stage_memory_item(
+            tx.tx_id,
+            MemoryItem(
+                memory_id=task_memory_id(task.case_id, "validation_procedure"),
+                kind=MemoryKind.PROCEDURE,
+                title=f"Validation procedure for {task.case_id}",
+                summary="Current maintained validation command for this coding task.",
+                payload=ProcedurePayload(
+                    goal="Validate the repository change with the maintained benchmark command.",
+                    steps=(
+                        ProcedureStep(
+                            order=0,
+                            instruction=instruction,
+                            expected_outcome="The task test command exits with status 0.",
+                        ),
+                    ),
+                    validator=ValidatorSpec(
+                        name="benchmark-task-validation",
+                        kind="command",
+                        config=CommandValidatorConfig(
+                            command=task.test_command,
+                            cwd=".",
+                            expected_exit_code=0,
+                            restrict_cwd_to_repo=True,
+                        ),
+                    ),
+                ),
+                evidence=(),
+                tags=("benchmark_task", task.case_id, "validation_procedure"),
+                visibility=scope,
+                validity=ValidityState(
+                    status=ValidityStatus.VERIFIED,
+                    dependency_fingerprint=current_dependency,
+                ),
+                metadata={"generated_by": "benchmark_task_validation_procedure"},
             ),
         )
     kernel.commit_transaction(tx.tx_id)

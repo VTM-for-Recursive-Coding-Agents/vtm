@@ -218,6 +218,56 @@ def test_export_paper_tables_writes_suite_csvs_and_combined_markdown(
     assert "git_commit_sha" in metadata
 
 
+def test_export_paper_tables_supports_controlled_coding_drift_runs(
+    tmp_path: Path,
+    install_fake_vendored_rlm,
+) -> None:
+    install_fake_vendored_rlm()
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/controlled-coding-drift.json")
+
+    run_paths: list[str] = []
+    for mode in ("no_memory", "naive_lexical", "verified_lexical"):
+        run_result = BenchmarkRunner(
+            manifest,
+            BenchmarkRunConfig(
+                manifest_path="benchmarks/manifests/controlled-coding-drift.json",
+                suite="coding",
+                mode=mode,
+                output_dir=str(tmp_path / "controlled-coding-drift-super" / "runs" / mode),
+                pair_filters=("stale_api_name",),
+                max_cases=1,
+                top_k=5,
+                rlm_model_id="fake-model",
+            ),
+        ).run()
+        run_paths.append(str(Path(run_result.artifacts["summary_json"])))
+
+    artifacts = benchmark_report.export_paper_tables(
+        retrieval_locations=[],
+        drift_locations=[],
+        coding_locations=run_paths,
+        output_dir=tmp_path / "paper-tables-controlled",
+    )
+
+    coding_rows = list(
+        csv.DictReader(Path(artifacts["coding_csv"]).read_text(encoding="utf-8").splitlines())
+    )
+    metadata = json.loads(Path(artifacts["metadata_json"]).read_text(encoding="utf-8"))
+
+    assert [row["mode"] for row in coding_rows] == [
+        "no_memory",
+        "naive_lexical",
+        "verified_lexical",
+    ]
+    assert [row["method"] for row in coding_rows] == [
+        "No Memory",
+        "Naive Lexical",
+        "Verified Lexical",
+    ]
+    assert all(row["corpus"] == "Synthetic" for row in coding_rows)
+    assert metadata["input_summary_json_paths"]["coding"] == run_paths
+
+
 def test_export_paper_tables_derives_run_label_and_corpus_from_matrix_layout(
     tmp_path: Path,
 ) -> None:
@@ -381,7 +431,10 @@ def test_export_paper_tables_labels_swebench_pilot_coding_rows_from_path(
     ]
     assert [row["method"] for row in coding_rows] == ["No Memory", "Naive Lexical"]
     assert coding_rows[1]["corpus"] != coding_rows[1]["mode"]
-    assert "| SWE-bench Lite Pilot | Naive Lexical | 1 | 1.000 | 1.000 | 1.000 | 1.000 | 0.000 | 0.000 |" in markdown
+    assert (
+        "| SWE-bench Lite Pilot | Naive Lexical | 1 | 1.000 | 1.000 | "
+        "1.000 | 1.000 | 0.000 | 0.000 |"
+    ) in markdown
     assert metadata["input_summary_json_paths"]["coding"] == [
         str(no_memory_summary),
         str(naive_summary),

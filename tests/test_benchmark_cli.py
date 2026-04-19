@@ -149,6 +149,15 @@ def test_matrix_cli_parser_accepts_seed_on_base_query_on_head() -> None:
     assert args.seed_on_base_query_on_head is True
 
 
+def test_controlled_coding_drift_preset_includes_three_maintained_modes() -> None:
+    preset = matrix.PRESETS["controlled_coding_drift"]
+
+    assert preset.suite == "coding"
+    assert preset.manifest_path == "benchmarks/manifests/controlled-coding-drift.json"
+    assert preset.modes == ("no_memory", "naive_lexical", "verified_lexical")
+    assert preset.baseline_mode == "no_memory"
+
+
 def test_report_cli_requires_at_least_one_run_location(tmp_path: Path) -> None:
     try:
         report.export_paper_tables(

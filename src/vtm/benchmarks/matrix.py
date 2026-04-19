@@ -73,6 +73,16 @@ PRESETS: dict[str, MatrixPreset] = {
         modes=("no_memory", "naive_lexical", "verified_lexical"),
         baseline_mode="no_memory",
     ),
+    "controlled_coding_drift": MatrixPreset(
+        manifest_path="benchmarks/manifests/controlled-coding-drift.json",
+        suite="coding",
+        description=(
+            "Controlled coding-drift matrix for no_memory, naive_lexical, "
+            "and verified_lexical."
+        ),
+        modes=("no_memory", "naive_lexical", "verified_lexical"),
+        baseline_mode="no_memory",
+    ),
 }
 
 

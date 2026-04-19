@@ -7,7 +7,10 @@ import subprocess
 from pathlib import Path
 
 from vtm.benchmarks.models import RepoSpec
-from vtm.benchmarks.synthetic import SyntheticPythonSmokeCorpus
+from vtm.benchmarks.synthetic import (
+    SyntheticControlledCodingDriftCorpus,
+    SyntheticPythonSmokeCorpus,
+)
 
 
 class RepoWorkspaceCommandError(RuntimeError):
@@ -56,6 +59,9 @@ class RepoWorkspaceManager:
         repo_root = corpus_root / repo_spec.repo_name
         if repo_spec.source_kind == "synthetic_python_smoke":
             SyntheticPythonSmokeCorpus().materialize(repo_root)
+            return repo_root
+        if repo_spec.source_kind == "synthetic_python_controlled_coding_drift":
+            SyntheticControlledCodingDriftCorpus().materialize(repo_root)
             return repo_root
 
         if not repo_root.exists():
