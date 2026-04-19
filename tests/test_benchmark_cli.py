@@ -757,3 +757,34 @@ def test_benchmark_matrix_preset_runs_maintained_coding_modes(
     assert result.modes == ("no_memory", "naive_lexical", "verified_lexical")
     assert set(result.comparison_results) == {"naive_lexical", "verified_lexical"}
     assert (output_dir / "runs" / "naive_lexical" / "summary.json").exists()
+
+
+def test_benchmark_matrix_preset_runs_controlled_coding_drift_modes(
+    tmp_path: Path,
+    install_fake_vendored_rlm,
+) -> None:
+    install_fake_vendored_rlm()
+    output_dir = tmp_path / "controlled-coding-matrix"
+    args = matrix.build_parser().parse_args(
+        [
+            "--preset",
+            "controlled_coding_drift",
+            "--output",
+            str(output_dir),
+            "--pair",
+            "validation_procedure",
+            "--max-cases",
+            "1",
+            "--rlm-model-id",
+            "fake-model",
+            "--comparison-bootstrap-samples",
+            "100",
+        ]
+    )
+
+    result = matrix.run_matrix_from_args(args)
+
+    assert result.suite == "coding"
+    assert result.modes == ("no_memory", "naive_lexical", "verified_lexical")
+    assert set(result.comparison_results) == {"naive_lexical", "verified_lexical"}
+    assert (output_dir / "runs" / "verified_lexical" / "summary.json").exists()

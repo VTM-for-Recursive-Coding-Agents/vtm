@@ -581,6 +581,16 @@ def seed_task_conditioned_memories(
         )
     if task.seed_validation_procedure_memory and task.test_command:
         instruction = f"Run {' '.join(task.test_command)} from the repository root."
+        validation_procedure_text = _build_validation_procedure_evidence_text(
+            task=task,
+            instruction=instruction,
+        )
+        validation_artifact = kernel.capture_artifact(
+            validation_procedure_text.encode("utf-8"),
+            content_type="text/plain",
+            tool_name="benchmark-task-validation-procedure",
+            metadata={"case_id": task.case_id, "card_kind": "validation_procedure"},
+        )
         kernel.stage_memory_item(
             tx.tx_id,
             MemoryItem(
@@ -608,7 +618,13 @@ def seed_task_conditioned_memories(
                         ),
                     ),
                 ),
-                evidence=(),
+                evidence=(
+                    kernel.artifact_evidence(
+                        validation_artifact,
+                        label="task-validation-procedure",
+                        summary="Benchmark-visible validation command and failing tests",
+                    ),
+                ),
                 tags=("benchmark_task", task.case_id, "validation_procedure"),
                 visibility=scope,
                 validity=ValidityState(
@@ -625,6 +641,24 @@ def task_memory_id(case_id: str, card_kind: str) -> str:
     """Return a deterministic id for a task-conditioned memory card."""
     digest = hashlib.sha256(f"{case_id}:{card_kind}".encode()).hexdigest()
     return f"task_{digest[:24]}"
+
+
+def _build_validation_procedure_evidence_text(
+    *,
+    task: CodingTaskCase,
+    instruction: str,
+) -> str:
+    failing_tests = task.fail_to_pass_tests or task.failing_tests
+    lines = [
+        f"Task statement: {task.task_statement}",
+        f"Instruction: {instruction}",
+        f"Validation command: {' '.join(task.test_command)}",
+    ]
+    if failing_tests:
+        lines.append(f"Failing tests: {', '.join(failing_tests)}")
+    if task.pass_to_pass_tests:
+        lines.append(f"Pass-to-pass tests: {', '.join(task.pass_to_pass_tests)}")
+    return "\n".join(lines)
 
 
 def _compact_visible_text(text: str | None) -> str:

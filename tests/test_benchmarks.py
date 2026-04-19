@@ -7,14 +7,21 @@ from pathlib import Path
 
 from vtm.adapters.rlm import RLMRankRequest, RLMRankResponse
 from vtm.benchmarks import BenchmarkManifest, BenchmarkRunConfig, BenchmarkRunner
+from vtm.benchmarks.coding_suite import (
+    benchmark_dependency_fingerprint,
+    build_visible_task_context,
+    seed_task_conditioned_memories,
+    task_memory_id,
+)
 from vtm.benchmarks.compare import compare_completed_runs
+from vtm.benchmarks.kernel_factory import BenchmarkKernelFactory
 from vtm.benchmarks.models import CommitPair, RepoSpec
 from vtm.benchmarks.symbol_index import SymbolIndexer
 from vtm.benchmarks.synthetic import (
     SyntheticControlledCodingDriftCorpus,
     SyntheticPythonSmokeCorpus,
 )
-from vtm.enums import ValidityStatus
+from vtm.enums import MemoryKind, ValidityStatus
 from vtm.harness.models import HarnessTaskPack
 from vtm_rlm.prompting import build_phase1_task_prompt
 
@@ -88,6 +95,75 @@ def _build_duplicate_symbol_repo(repo: Path) -> tuple[str, str]:
     _run(repo, "git", "commit", "-m", "head")
     head = _run(repo, "git", "rev-parse", "HEAD")
     return base, head
+
+
+def _seed_controlled_task_memories(
+    *,
+    tmp_path: Path,
+    repo_root: Path,
+    task,
+    pair: CommitPair,
+):
+    config = BenchmarkRunConfig(
+        manifest_path="benchmarks/manifests/controlled-coding-drift.json",
+        suite="coding",
+        mode="verified_lexical",
+        output_dir=str(tmp_path / "controlled-coding-seeded"),
+    )
+    symbol_indexer = SymbolIndexer()
+    kernel_factory = BenchmarkKernelFactory(config=config, symbol_indexer=symbol_indexer)
+    memory_seed_ref = task.memory_seed_ref or pair.base_ref
+
+    _run(repo_root, "git", "checkout", "--quiet", memory_seed_ref)
+    seed_symbols = symbol_indexer.extract_symbols(repo_root)
+
+    (
+        kernel,
+        metadata,
+        artifacts,
+        cache,
+        scope,
+    ) = kernel_factory.open_kernel(
+        repo_root=repo_root,
+        repo_name=task.repo_name,
+        pair=pair,
+        output_dir=tmp_path / "controlled-coding-seeded",
+    )
+    try:
+        kernel_factory.seed_memories(
+            kernel,
+            repo_root,
+            task.repo_name,
+            pair,
+            seed_symbols,
+            scope,
+            dependency_ref=memory_seed_ref,
+        )
+        _run(repo_root, "git", "checkout", "--quiet", pair.base_ref)
+        visible_task_context = build_visible_task_context(
+            repo_root=repo_root,
+            task=task,
+            timeout_seconds=config.workspace_command_timeout_seconds,
+        )
+        current_dependency = benchmark_dependency_fingerprint(
+            kernel_factory=kernel_factory,
+            repo_root=repo_root,
+            pair=pair,
+        )
+        seed_task_conditioned_memories(
+            kernel=kernel,
+            scope=scope,
+            task=task,
+            current_dependency=current_dependency,
+            visible_task_context=visible_task_context,
+        )
+        artifact_bytes_by_id = {
+            record.artifact_id: artifacts.read_bytes_by_id(record.artifact_id) or b""
+            for record in artifacts.list_artifact_records()
+        }
+        return metadata.list_memory_items(), artifact_bytes_by_id
+    finally:
+        kernel_factory.close_kernel_stores(metadata, artifacts, cache)
 
 
 class FakeBenchmarkRLMAdapter:
@@ -435,6 +511,64 @@ def test_controlled_coding_drift_tasks_fail_on_base_and_pass_on_head(tmp_path: P
         assert head_result.returncode == 0, task.case_id
 
 
+def test_controlled_coding_drift_seeded_verified_memories_are_evidence_backed(
+    tmp_path: Path,
+) -> None:
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/controlled-coding-drift.json")
+    repo_root = tmp_path / "controlled-coding-drift-corpus"
+    SyntheticControlledCodingDriftCorpus().materialize(repo_root)
+    pair_map = {
+        pair.pair_id: pair
+        for repo in manifest.repos
+        if repo.repo_name == "synthetic_controlled_coding_drift"
+        for pair in repo.commit_pairs
+    }
+    retrievable_kinds = {
+        MemoryKind.CLAIM,
+        MemoryKind.PROCEDURE,
+        MemoryKind.CONSTRAINT,
+        MemoryKind.DECISION,
+    }
+
+    for task in manifest.coding_tasks:
+        memories, artifact_bytes_by_id = _seed_controlled_task_memories(
+            tmp_path=tmp_path / task.case_id,
+            repo_root=repo_root,
+            task=task,
+            pair=pair_map[task.commit_pair_id],
+        )
+        seeded_verified = [
+            memory
+            for memory in memories
+            if memory.kind in retrievable_kinds
+            and memory.validity.status in {ValidityStatus.VERIFIED, ValidityStatus.RELOCATED}
+        ]
+
+        assert seeded_verified, task.case_id
+        assert all(memory.evidence for memory in seeded_verified), task.case_id
+
+        if not task.seed_validation_procedure_memory:
+            continue
+        validation_memory = next(
+            memory
+            for memory in memories
+            if memory.memory_id == task_memory_id(task.case_id, "validation_procedure")
+        )
+        artifact_ids = [
+            evidence.artifact_ref.artifact_id
+            for evidence in validation_memory.evidence
+            if evidence.artifact_ref is not None
+        ]
+
+        assert validation_memory.kind is MemoryKind.PROCEDURE
+        assert validation_memory.validity.status is ValidityStatus.VERIFIED
+        assert artifact_ids
+        validation_evidence_text = artifact_bytes_by_id[artifact_ids[0]].decode("utf-8")
+        assert f"Task statement: {task.task_statement}" in validation_evidence_text
+        assert f"Validation command: {' '.join(task.test_command)}" in validation_evidence_text
+        assert task.failing_tests[0] in validation_evidence_text
+
+
 def test_controlled_coding_drift_task_pack_hides_expected_changed_paths_from_prompt(
     tmp_path: Path,
     install_fake_vendored_rlm,
@@ -494,6 +628,50 @@ def test_controlled_coding_drift_verified_mode_records_stale_filtering(
 
     assert result.metrics["mean_stale_filtered_count"] > 0.0
     assert any(item["metrics"]["stale_filtered_count"] > 0 for item in results)
+
+
+def test_controlled_coding_drift_verified_mode_records_retrieval_metadata_with_seeded_memories(
+    tmp_path: Path,
+    install_fake_vendored_rlm,
+) -> None:
+    install_fake_vendored_rlm()
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/controlled-coding-drift.json")
+    result = BenchmarkRunner(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/controlled-coding-drift.json",
+            suite="coding",
+            mode="verified_lexical",
+            output_dir=str(tmp_path / "controlled-coding-validation"),
+            pair_filters=("validation_procedure",),
+            max_cases=1,
+            top_k=5,
+            rlm_model_id="fake-model",
+        ),
+    ).run()
+
+    rows = [
+        json.loads(line)
+        for line in Path(result.artifacts["results_jsonl"]).read_text(encoding="utf-8").splitlines()
+    ]
+    row = rows[0]
+    task_pack = HarnessTaskPack.from_json(
+        (
+            tmp_path
+            / "controlled-coding-validation"
+            / "task-packs"
+            / "controlled_validation_procedure.json"
+        ).read_text(encoding="utf-8")
+    )
+
+    assert row["metrics"]["retrieval_usage_rate"] == 1.0
+    assert row["metrics"]["verified_count"] >= 1
+    assert row["metadata"]["memory_context_count"] == len(task_pack.memory_context)
+    assert row["metadata"]["memory_context_count"] > 0
+    assert any(
+        item.title == "Validation procedure for controlled_validation_procedure"
+        for item in task_pack.memory_context
+    )
 
 
 def test_coding_suite_reports_multiple_tasks_and_filtering(
