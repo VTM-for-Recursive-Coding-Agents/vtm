@@ -14,7 +14,7 @@ HarnessMemoryMode = Literal[
     "verified_lexical",
     "lexical_rlm_rerank",
 ]
-HarnessEvaluationBackend = Literal["local_subprocess", "swebench_harness"]
+HarnessEvaluationBackend = Literal["local_subprocess"]
 HarnessExecutionStyle = Literal["mixed_patch", "shell_command"]
 HarnessWorkspaceBackend = Literal["local_workspace", "docker_workspace"]
 
@@ -40,8 +40,6 @@ class HarnessTaskPack(VTMModel):
     repo_name: str
     commit_pair_id: str
     evaluation_backend: HarnessEvaluationBackend
-    instance_id: str | None = None
-    dataset_name: str | None = None
     base_ref: str
     head_ref: str
     commit_pair_label: str | None = None

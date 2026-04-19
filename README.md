@@ -9,19 +9,22 @@ The maintained package boundaries are:
 - `vtm`: kernel records, stores, verification, lexical retrieval, procedures, consolidation
 - `vtm.harness`: task packs, workspaces, executors, scoring
 - `vtm_rlm`: thin vendored-RLM bridge and writeback helpers
-- `vtm.benchmarks`: manifests, runners, SWE-bench prep/eval helpers
+- `vtm.benchmarks`: manifests, runners, reports, and maintained benchmark orchestration
 
 ## Maintained Study Surface
 
 - Maintained inference/execution: OpenRouter only
-- Retrieval evaluation: `no_memory`, `naive_lexical`, `verified_lexical`
-- Drift evaluation: `verified_lexical`
-- Coding evaluation: targeted SWE-bench Lite with `no_memory`, `naive_lexical`, or `verified_lexical`
-- Synthetic coding smoke: maintained for local/dev validation only
+- Static retrieval: `no_memory`, `naive_lexical`, `verified_lexical`
+- Drift verification: `verified_lexical`
+- Drifted retrieval: `no_memory`, `naive_lexical`, `verified_lexical`
+- Controlled coding-drift: `no_memory`, `naive_lexical`, `verified_lexical`
 - Optional secondary ablation: `lexical_rlm_rerank`
-- Removed from the maintained surface: Codex execution, embeddings, terminal-only tracks
+- Synthetic smoke tasks: local/dev validation only
+- Removed from the maintained surface: SWE-bench Lite, Codex execution, embeddings, terminal-only tracks
 
 External coding prompts no longer expose oracle `expected_changed_paths` or `touched_paths` by default. Those fields remain available for scoring only.
+
+SWE-bench Lite was attempted as an external agent pilot, but the OpenRouter-backed vendored RLM produced empty patches and zero resolved tasks. It is not part of the final maintained benchmark surface or paper claim.
 
 ## OpenRouter Defaults
 
@@ -47,7 +50,7 @@ uv sync --dev
 Full eval environment:
 
 ```bash
-uv sync --dev --extra rlm --extra bench
+uv sync --dev --extra rlm
 export OPENROUTER_API_KEY=...
 export VTM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 export VTM_EXECUTION_MODEL=google/gemma-4-31b-it:free
@@ -68,11 +71,11 @@ uv run python -m vtm.benchmarks.run \
 
 ## Layout
 
-- `benchmarks/manifests/`: checked-in synthetic smoke and pinned OSS manifests
+- `benchmarks/manifests/`: checked-in synthetic smoke, controlled coding-drift, and pinned OSS manifests
 - `docs/`: maintained benchmark recipes, scope note, audit, harness notes, ADRs
 - `src/vtm/`: kernel package plus harness, adapters, services, stores, benchmarks
 - `src/vtm_rlm/`: thin vendored-RLM bridge
-- `tests/`: regression coverage for kernel, retrieval, verification, harness, and SWE-bench paths
+- `tests/`: regression coverage for kernel, retrieval, verification, harness, and controlled coding paths
 
 ## Development
 
@@ -89,12 +92,12 @@ vtm-bench --help
 vtm-bench-compare --help
 vtm-bench-matrix --help
 vtm-bench-report --help
-vtm-prepare-swebench-lite --help
 ```
 
 ## Docs
 
 - [docs/final-scope.md](docs/final-scope.md): final paper-facing scope and removed branches
+- [docs/final-audit.md](docs/final-audit.md): final maintained surface, rationale, and freeze audit
 - [docs/benchmark-recipes.md](docs/benchmark-recipes.md): maintained commands
 - [docs/current-state-audit.md](docs/current-state-audit.md): guarantees and limits
 - [docs/harness.md](docs/harness.md): task-pack and executor contract

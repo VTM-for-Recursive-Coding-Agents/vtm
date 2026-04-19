@@ -21,7 +21,7 @@ This is the maintained snapshot of what still matters for the narrowed paper art
 - `CommandProcedureValidator` is local-process only; Docker is the only built-in sandbox backend.
 - Repeated attempts and `pass@k` reporting exist only for coding suites.
 - The maintained benchmark modes are `no_memory`, `naive_lexical`, `verified_lexical`, and optional `lexical_rlm_rerank`.
-- The maintained benchmark layers are retrieval, drift, and targeted coding only.
+- The maintained benchmark layers are static retrieval, drift verification, drifted retrieval, and controlled coding-drift.
 - Embeddings, terminal-only tracks, and Codex execution are outside the maintained surface.
 
 ## Documentation policy

@@ -82,12 +82,6 @@ class BenchmarkRunner:
             manifest_lock["repo_filters"] = list(self._config.repo_filters)
         if self._config.pair_filters:
             manifest_lock["pair_filters"] = list(self._config.pair_filters)
-        if self._config.swebench_dataset_name:
-            manifest_lock["swebench_dataset_name"] = self._config.swebench_dataset_name
-        manifest_lock["swebench_harness_workers"] = self._config.swebench_harness_workers
-        manifest_lock["swebench_harness_cache_level"] = self._config.swebench_harness_cache_level
-        if self._config.swebench_harness_run_id:
-            manifest_lock["swebench_harness_run_id"] = self._config.swebench_harness_run_id
         manifest_digest = hashlib.sha256(
             json.dumps(manifest_lock, separators=(",", ":"), sort_keys=True).encode("utf-8")
         ).hexdigest()
@@ -152,18 +146,6 @@ class BenchmarkRunner:
         )
         if attempt_results:
             run_result.artifacts["attempts_jsonl"] = str(attempts_path)
-        for name in ("predictions.jsonl", "swebench_harness_results.json"):
-            candidate = output_dir / name
-            if candidate.exists():
-                artifact_key = (
-                    "predictions_jsonl"
-                    if name.endswith(".jsonl")
-                    else "swebench_harness_results_json"
-                )
-                run_result.artifacts[artifact_key] = str(candidate)
-        logs_dir = output_dir / "logs"
-        if logs_dir.exists():
-            run_result.artifacts["swebench_harness_logs_dir"] = str(logs_dir)
         summary_json_path.write_text(run_result.to_json(), encoding="utf-8")
         summary_md_path.write_text(self._reporter.render_summary(run_result), encoding="utf-8")
         return run_result

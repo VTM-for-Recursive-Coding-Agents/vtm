@@ -22,12 +22,11 @@ RepoSourceKind = Literal[
     "synthetic_python_smoke",
     "synthetic_python_controlled_coding_drift",
 ]
-CodingEvaluationBackend = Literal["local_subprocess", "swebench_harness"]
+CodingEvaluationBackend = Literal["local_subprocess"]
 CodingExecutionStyle = Literal["mixed_patch", "shell_command"]
 CodingExecutionEngine = Literal["vendored_rlm"]
 WorkspaceBackendName = Literal["local_workspace", "docker_workspace"]
 DockerNetworkMode = Literal["none", "bridge"]
-SWEbenchHarnessCacheLevel = Literal["none", "base", "env", "instance"]
 
 
 class CommitPair(VTMModel):
@@ -99,8 +98,6 @@ class CodingTaskCase(VTMModel):
     repo_name: str
     commit_pair_id: str
     evaluation_backend: CodingEvaluationBackend = "local_subprocess"
-    instance_id: str | None = None
-    dataset_name: str | None = None
     task_statement: str
     problem_statement: str | None = None
     hints_text: str | None = None
@@ -185,10 +182,6 @@ class BenchmarkRunConfig(VTMModel):
     rlm_max_runtime_seconds: int = Field(default=600, ge=1, le=7200)
     workspace_command_timeout_seconds: int = Field(default=120, ge=1, le=3600)
     workspace_max_output_chars: int = Field(default=20000, ge=256, le=200000)
-    swebench_dataset_name: str | None = None
-    swebench_harness_workers: int = Field(default=4, ge=0)
-    swebench_harness_cache_level: SWEbenchHarnessCacheLevel = "env"
-    swebench_harness_run_id: str | None = None
 
     @model_validator(mode="after")
     def validate_attempt_controls(self) -> BenchmarkRunConfig:

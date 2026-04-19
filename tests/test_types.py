@@ -86,10 +86,8 @@ def test_project_scripts_expose_supported_cli_entrypoints() -> None:
     project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     scripts = project["project"]["scripts"]
     assert scripts["vtm-bench"] == "vtm.benchmarks.run:main"
-    assert (
-        scripts["vtm-prepare-swebench-lite"]
-        == "vtm.benchmarks.prepare_swebench_lite:main"
-    )
+    assert scripts["vtm-bench-matrix"] == "vtm.benchmarks.matrix:main"
+    assert scripts["vtm-bench-report"] == "vtm.benchmarks.report:main"
 
 
 def test_core_models_round_trip(

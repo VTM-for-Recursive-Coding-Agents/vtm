@@ -25,7 +25,6 @@ from vtm.benchmarks.models import (
 )
 from vtm.benchmarks.openrouter import execution_model, openrouter_api_key, openrouter_base_url
 from vtm.benchmarks.repo_materialization import RepoWorkspaceManager
-from vtm.benchmarks.swebench_harness import SWEbenchHarnessRunner
 from vtm.benchmarks.symbol_index import SymbolIndexer
 from vtm.enums import EvidenceBudget, EvidenceKind, MemoryKind, ScopeKind, ValidityStatus
 from vtm.harness.executors import (
@@ -96,7 +95,6 @@ def run_coding_suite(
     symbol_indexer: SymbolIndexer,
     kernel_factory: BenchmarkKernelFactory,
     require_pair: Callable[[RepoSpec, str], CommitPair],
-    swebench_harness_runner: Any | None = None,
 ) -> tuple[list[CodingTaskCase], list[BenchmarkCaseResult], list[BenchmarkAttemptResult]]:
     """Run all selected coding-task cases and emit per-attempt plus aggregate rows."""
     allowed_pairs = {
@@ -148,17 +146,6 @@ def run_coding_suite(
             )
             for attempt_index in range(1, config.attempt_count + 1)
         ]
-
-    harness_cases = [task for task in cases if task.evaluation_backend == "swebench_harness"]
-    if harness_cases:
-        harness_runner = swebench_harness_runner or SWEbenchHarnessRunner()
-        attempt_results_by_case = merge_swebench_attempt_results(
-            cases=harness_cases,
-            attempt_results_by_case=attempt_results_by_case,
-            config=config,
-            output_dir=output_dir,
-            harness_runner=harness_runner,
-        )
 
     results = [
         aggregate_attempt_results(
@@ -281,8 +268,6 @@ def prepare_coding_task(
         repo_name=task.repo_name,
         commit_pair_id=task.commit_pair_id,
         evaluation_backend=task.evaluation_backend,
-        instance_id=task.instance_id,
-        dataset_name=task.dataset_name,
         base_ref=pair.base_ref,
         head_ref=pair.head_ref,
         commit_pair_label=pair.label,
@@ -692,7 +677,7 @@ def evaluate_coding_attempt(
     changed_path_f1: float | None = None
     produced_changed_paths: tuple[str, ...] = ()
     produced_patch_text = ""
-    testable = task.evaluation_backend == "swebench_harness" or bool(task.test_command)
+    testable = bool(task.test_command)
     incomplete = not testable
     executor_metadata: dict[str, Any] = {}
     outcome = None
@@ -759,19 +744,14 @@ def evaluate_coding_attempt(
 
         if outcome is not None:
             assert prepared_workspace is not None
-            incomplete = (
-                task.evaluation_backend == "local_subprocess"
-                and not bool(task.test_command)
-            )
+            incomplete = not bool(task.test_command)
             runtime_ms = outcome.runtime_ms
             executor_succeeded = outcome.command_exit_code == 0 and not outcome.command_timed_out
             produced_patch_nonempty = bool(outcome.produced_patch_text.strip())
             final_verification_runtime_ms = outcome.final_verification_runtime_ms
             if task.test_command:
                 passed = outcome.test_exit_code == 0 and not outcome.final_verification_timed_out
-                resolved = (
-                    passed if task.evaluation_backend == "local_subprocess" else False
-                )
+                resolved = passed
                 evaluated = True
                 patch_applied = produced_patch_nonempty
                 final_verification_passed = passed
@@ -901,8 +881,6 @@ def evaluate_coding_attempt(
             "difficulty": task.difficulty,
             "execution_style": task.execution_style,
             "evaluation_backend": task.evaluation_backend,
-            "instance_id": task.instance_id,
-            "dataset_name": task.dataset_name,
             "problem_statement": task.problem_statement,
             "hints_text": task.hints_text,
             "fail_to_pass_tests": list(task.fail_to_pass_tests),
@@ -920,78 +898,6 @@ def evaluate_coding_attempt(
             **executor_metadata,
         },
     )
-
-
-def merge_swebench_attempt_results(
-    *,
-    cases: list[CodingTaskCase],
-    attempt_results_by_case: dict[str, list[BenchmarkAttemptResult]],
-    config: BenchmarkRunConfig,
-    output_dir: Path,
-    harness_runner: SWEbenchHarnessRunner,
-) -> dict[str, list[BenchmarkAttemptResult]]:
-    """Overlay official SWE-bench harness outcomes onto attempt rows."""
-    case_map = {case.case_id: case for case in cases}
-    for attempt_index in range(1, config.attempt_count + 1):
-        attempt_results = [
-            next(
-                attempt
-                for attempt in attempt_results_by_case[case.case_id]
-                if attempt.attempt_index == attempt_index
-            )
-            for case in cases
-        ]
-        normalized_results, _ = harness_runner.evaluate_predictions(
-            cases=cases,
-            results=[
-                BenchmarkCaseResult(
-                    suite=attempt.suite,
-                    mode=attempt.mode,
-                    case_id=attempt.case_id,
-                    repo_name=attempt.repo_name,
-                    commit_pair_id=attempt.commit_pair_id,
-                    metrics=dict(attempt.metrics),
-                    metadata=dict(attempt.metadata),
-                )
-                for attempt in attempt_results
-            ],
-            config=config,
-            output_dir=harness_attempt_output_dir(
-                output_dir=output_dir,
-                attempt_index=attempt_index,
-                attempt_count=config.attempt_count,
-            ),
-        )
-        updated_attempts: list[BenchmarkAttemptResult] = []
-        for attempt in attempt_results:
-            case = case_map[attempt.case_id]
-            harness = normalized_results[case.instance_id or case.case_id]
-            updated_attempts.append(
-                attempt.model_copy(
-                    update={
-                        "metrics": {
-                            **attempt.metrics,
-                            "evaluated": True,
-                            "passed": harness.resolved,
-                            "resolved": harness.resolved,
-                            "incomplete": False,
-                            "patch_applied": harness.patch_applied,
-                        },
-                        "metadata": {
-                            **attempt.metadata,
-                            "harness_status": harness.harness_status,
-                            "evaluation_log_path": harness.evaluation_log_path,
-                        },
-                    }
-                )
-            )
-        for attempt in updated_attempts:
-            case_attempts = attempt_results_by_case[attempt.case_id]
-            attempt_results_by_case[attempt.case_id] = [
-                attempt if item.attempt_index == attempt_index else item
-                for item in case_attempts
-            ]
-    return attempt_results_by_case
 
 
 def aggregate_attempt_results(
@@ -1052,6 +958,8 @@ def aggregate_attempt_results(
         metrics=aggregate_metrics,
         metadata=aggregate_metadata,
     )
+
+
 def build_workspace_backend(config: BenchmarkRunConfig) -> WorkspaceBackend:
     """Construct the configured workspace backend for coding execution."""
     if config.workspace_backend == "docker_workspace":
@@ -1061,18 +969,6 @@ def build_workspace_backend(config: BenchmarkRunConfig) -> WorkspaceBackend:
             docker_network=config.docker_network,
         )
     return LocalWorkspaceBackend()
-
-
-def harness_attempt_output_dir(
-    *,
-    output_dir: Path,
-    attempt_index: int,
-    attempt_count: int,
-) -> Path:
-    """Keep single-attempt harness output stable while isolating repeated attempts."""
-    if attempt_count == 1:
-        return output_dir
-    return output_dir / "swebench-harness" / f"attempt-{attempt_index:02d}"
 
 
 def select_best_attempt(attempts: list[BenchmarkAttemptResult]) -> BenchmarkAttemptResult:

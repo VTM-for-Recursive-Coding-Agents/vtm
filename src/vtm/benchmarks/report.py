@@ -460,8 +460,8 @@ def _infer_corpus_label(run: LoadedBenchmarkRun) -> str:
             return "Rich"
         if candidate.startswith("oss-attrs-"):
             return "attrs"
-        if candidate == "swebench-lite-pilot" or candidate.startswith("swebench-lite-pilot-"):
-            return "SWE-bench Lite Pilot"
+        if "controlled-coding-drift" in candidate:
+            return "Controlled Coding Drift"
         if "synthetic" in candidate:
             return "Synthetic"
     return run.run_label

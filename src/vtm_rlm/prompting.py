@@ -152,11 +152,7 @@ def build_phase1_task_prompt(task_pack: HarnessTaskPack, workspace_root: Path) -
 
 
 def _should_compact_external_prompt(task_pack: HarnessTaskPack) -> bool:
-    return (
-        task_pack.evaluation_backend == "swebench_harness"
-        or task_pack.task_kind == "swebench_lite"
-        or task_pack.difficulty == "external"
-    )
+    return task_pack.difficulty == "external"
 
 
 def _should_hide_oracle_changed_paths(task_pack: HarnessTaskPack) -> bool:

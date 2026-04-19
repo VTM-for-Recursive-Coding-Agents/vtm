@@ -8,8 +8,8 @@ from vtm.benchmarks.subset_manifest import create_subset_manifest
 
 def _build_manifest() -> BenchmarkManifest:
     return BenchmarkManifest(
-        manifest_id="swebench_lite_generated",
-        description="Generated SWE-bench Lite coding benchmark manifest.",
+        manifest_id="external_coding_manifest",
+        description="Generated external coding benchmark manifest.",
         repos=(
             RepoSpec(
                 repo_name="astropy__astropy",
@@ -48,22 +48,22 @@ def _build_manifest() -> BenchmarkManifest:
                 case_id="astropy__astropy-14365",
                 repo_name="astropy__astropy",
                 commit_pair_id="astropy__astropy-14365",
-                evaluation_backend="swebench_harness",
                 task_statement="Fix astropy case 14365.",
+                difficulty="external",
             ),
             CodingTaskCase(
                 case_id="astropy__astropy-14995",
                 repo_name="astropy__astropy",
                 commit_pair_id="astropy__astropy-14995",
-                evaluation_backend="swebench_harness",
                 task_statement="Fix astropy case 14995.",
+                difficulty="external",
             ),
             CodingTaskCase(
                 case_id="django__django-11848",
                 repo_name="django__django",
                 commit_pair_id="django__django-11848",
-                evaluation_backend="swebench_harness",
                 task_statement="Fix django case 11848.",
+                difficulty="external",
             ),
         ),
         seed=17,
@@ -76,11 +76,8 @@ def test_subset_manifest_keeps_exactly_requested_tasks() -> None:
         case_ids=("astropy__astropy-14995",),
     )
 
-    assert subset.manifest_id == "swebench_lite_generated_subset_1"
-    assert (
-        subset.description
-        == "Generated SWE-bench Lite coding benchmark manifest. [subset: 1 case]"
-    )
+    assert subset.manifest_id == "external_coding_manifest_subset_1"
+    assert subset.description == "Generated external coding benchmark manifest. [subset: 1 case]"
     assert subset.seed == 17
     assert tuple(task.case_id for task in subset.coding_tasks) == ("astropy__astropy-14995",)
 

@@ -198,7 +198,7 @@ def test_build_phase1_task_prompt_compacts_external_tasks() -> None:
         case_id="task-ext-1",
         repo_name="repo",
         commit_pair_id="pair",
-        evaluation_backend="swebench_harness",
+        evaluation_backend="local_subprocess",
         base_ref="base",
         head_ref="head",
         task_statement=long_problem,
@@ -215,7 +215,6 @@ def test_build_phase1_task_prompt_compacts_external_tasks() -> None:
         target_patch_digest="deadbeef",
         memory_mode="verified_lexical",
         top_k=5,
-        task_kind="swebench_lite",
         difficulty="external",
     )
 
@@ -241,7 +240,7 @@ def test_external_prompt_can_opt_into_expected_changed_paths_for_debug() -> None
         case_id="task-debug-1",
         repo_name="repo",
         commit_pair_id="pair",
-        evaluation_backend="swebench_harness",
+        evaluation_backend="local_subprocess",
         base_ref="base",
         head_ref="head",
         task_statement="Fix the parser bug.",
@@ -251,7 +250,6 @@ def test_external_prompt_can_opt_into_expected_changed_paths_for_debug() -> None
         target_patch_digest="deadbeef",
         memory_mode="verified_lexical",
         top_k=5,
-        task_kind="swebench_lite",
         difficulty="external",
     )
 
@@ -1010,14 +1008,14 @@ def test_rlm_executor_records_empty_patch_diagnostics(
         case_id="synthetic_bugfix_empty_patch",
         repo_name="synthetic_python_smoke",
         commit_pair_id="bugfix",
-        evaluation_backend="swebench_harness",
+        evaluation_backend="local_subprocess",
         base_ref="HEAD",
         head_ref="HEAD",
         task_statement="Fix buggy_increment so the synthetic unit test passes again.",
         target_patch_digest="deadbeef",
         memory_mode="no_memory",
         top_k=5,
-        task_kind="swebench_lite",
+        difficulty="external",
     )
     task_file = output_root / "task.json"
     task_file.write_text(task_pack.model_dump_json(indent=2), encoding="utf-8")
@@ -1129,7 +1127,7 @@ def test_rlm_corrective_retry_hides_expected_changed_paths_for_external_tasks(
         case_id="synthetic_bugfix_external_retry",
         repo_name="synthetic_python_smoke",
         commit_pair_id="bugfix",
-        evaluation_backend="swebench_harness",
+        evaluation_backend="local_subprocess",
         base_ref="HEAD",
         head_ref="HEAD",
         task_statement="Fix buggy_increment so the synthetic unit test passes again.",
@@ -1151,7 +1149,6 @@ def test_rlm_corrective_retry_hides_expected_changed_paths_for_external_tasks(
         target_patch_digest="deadbeef",
         memory_mode="no_memory",
         top_k=5,
-        task_kind="swebench_lite",
         difficulty="external",
     )
     task_file = output_root / "task.json"

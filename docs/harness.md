@@ -81,14 +81,14 @@ Important fields:
 - repo state: `base_ref`, `head_ref`, optional `commit_pair_label`
 - task statement: `task_statement`, optional `problem_statement`, optional `hints_text`
 - visible task signals: optional `verifier_output`, optional `localization_notes`
-- evaluation metadata: `evaluation_backend`, `dataset_name`, `instance_id`
+- evaluation metadata: `evaluation_backend`, optional `task_kind`, optional `difficulty`
 - scoring inputs: `expected_changed_paths`, `target_patch_digest`, optional `gold_test_patch_digest`
 - execution settings: `memory_mode`, `top_k`
 - execution style: `execution_style`
 - retrieval override: optional `retrieval_query`
 - retrieval context: `memory_context`
 
-For external coding tasks, `expected_changed_paths` stays in the canonical task pack for scoring, but prompt builders and the vendored-RLM `TASK` tool hide those oracle hints by default unless `debug_expected_changed_paths=True`.
+For controlled coding-drift and generic external-like coding tasks, `expected_changed_paths` stays in the canonical task pack for scoring, but prompt builders and the vendored-RLM `TASK` tool hide those oracle hints by default unless `debug_expected_changed_paths=True`.
 
 `HarnessTaskPack` stays canonical across attempts. Attempt-local data belongs in
 `ExecutorRequest`, `ExecutorResult`, and the benchmark runner outputs, not in

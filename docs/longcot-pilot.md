@@ -43,4 +43,4 @@ uv run python scripts/run_longcot_pilot.py \
 
 - Treat this as optional external reasoning evidence only.
 - Do not mix it into the main VTM retrieval, drift, or drifted-retrieval claims.
-- Use it to replace the weak SWE-bench Lite paper table when you want a deterministic long-horizon reasoning pilot without a patch-generation harness.
+- Use it as a deterministic long-horizon reasoning pilot when you want a small non-patch benchmark alongside the main retrieval and controlled coding results.

@@ -264,7 +264,7 @@ def test_export_paper_tables_supports_controlled_coding_drift_runs(
         "Naive Lexical",
         "Verified Lexical",
     ]
-    assert all(row["corpus"] == "Synthetic" for row in coding_rows)
+    assert all(row["corpus"] == "Controlled Coding Drift" for row in coding_rows)
     assert metadata["input_summary_json_paths"]["coding"] == run_paths
 
 
@@ -356,8 +356,8 @@ def test_infer_corpus_label_maps_paper_run_names() -> None:
         "oss-click-flag-default": "Click",
         "oss-rich-cells-default": "Rich",
         "oss-attrs-frozen-default": "attrs",
-        "swebench-lite-pilot": "SWE-bench Lite Pilot",
-        "swebench-lite-pilot-3": "SWE-bench Lite Pilot",
+        "controlled-coding-drift-super": "Controlled Coding Drift",
+        "synthetic_controlled_coding_drift": "Controlled Coding Drift",
     }
 
     for run_label, expected in cases.items():
@@ -380,11 +380,11 @@ def test_infer_corpus_label_maps_paper_run_names() -> None:
         assert benchmark_report._infer_corpus_label(run) == expected
 
 
-def test_export_paper_tables_labels_swebench_pilot_coding_rows_from_path(
+def test_export_paper_tables_labels_controlled_coding_rows_from_path(
     tmp_path: Path,
 ) -> None:
     no_memory_summary = _write_summary(
-        tmp_path / "swebench-lite-pilot-3" / "no_memory" / "summary.json",
+        tmp_path / "controlled-coding-drift-super" / "no_memory" / "summary.json",
         suite="coding",
         mode="no_memory",
         manifest_id="paper_manifest",
@@ -398,7 +398,7 @@ def test_export_paper_tables_labels_swebench_pilot_coding_rows_from_path(
         },
     )
     naive_summary = _write_summary(
-        tmp_path / "swebench-lite-pilot-3" / "naive_lexical" / "summary.json",
+        tmp_path / "controlled-coding-drift-super" / "naive_lexical" / "summary.json",
         suite="coding",
         mode="naive_lexical",
         manifest_id="paper_manifest",
@@ -426,13 +426,13 @@ def test_export_paper_tables_labels_swebench_pilot_coding_rows_from_path(
     metadata = json.loads(Path(artifacts["metadata_json"]).read_text(encoding="utf-8"))
 
     assert [row["corpus"] for row in coding_rows] == [
-        "SWE-bench Lite Pilot",
-        "SWE-bench Lite Pilot",
+        "Controlled Coding Drift",
+        "Controlled Coding Drift",
     ]
     assert [row["method"] for row in coding_rows] == ["No Memory", "Naive Lexical"]
     assert coding_rows[1]["corpus"] != coding_rows[1]["mode"]
     assert (
-        "| SWE-bench Lite Pilot | Naive Lexical | 1 | 1.000 | 1.000 | "
+        "| Controlled Coding Drift | Naive Lexical | 1 | 1.000 | 1.000 | "
         "1.000 | 1.000 | 0.000 | 0.000 |"
     ) in markdown
     assert metadata["input_summary_json_paths"]["coding"] == [
@@ -480,10 +480,10 @@ def test_export_paper_tables_resolves_runs_prefix_to_flat_coding_layout(
     tmp_path: Path,
 ) -> None:
     summary_path = _write_summary(
-        tmp_path / "swebench-lite-pilot" / "no_memory" / "summary.json",
+        tmp_path / "controlled-coding-drift-pilot" / "no_memory" / "summary.json",
         suite="coding",
         mode="no_memory",
-        manifest_id="swebench-lite-pilot",
+        manifest_id="controlled_coding_drift",
         metrics={
             "pass_rate": 0.0,
             "resolved_rate": 0.0,
@@ -497,7 +497,7 @@ def test_export_paper_tables_resolves_runs_prefix_to_flat_coding_layout(
     artifacts = benchmark_report.export_paper_tables(
         retrieval_locations=[],
         drift_locations=[],
-        coding_locations=[str(tmp_path / "swebench-lite-pilot" / "runs" / "no_memory")],
+        coding_locations=[str(tmp_path / "controlled-coding-drift-pilot" / "runs" / "no_memory")],
         output_dir=tmp_path / "paper-tables",
     )
 
@@ -507,5 +507,5 @@ def test_export_paper_tables_resolves_runs_prefix_to_flat_coding_layout(
     metadata = json.loads(Path(artifacts["metadata_json"]).read_text(encoding="utf-8"))
 
     assert coding_rows[0]["summary_json"] == str(summary_path)
-    assert coding_rows[0]["corpus"] == "SWE-bench Lite Pilot"
+    assert coding_rows[0]["corpus"] == "Controlled Coding Drift"
     assert metadata["input_summary_json_paths"]["coding"] == [str(summary_path)]

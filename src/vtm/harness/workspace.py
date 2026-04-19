@@ -528,8 +528,8 @@ class LocalWorkspaceBackend:
         try:
             self._run(("git", "checkout", "--quiet", base_ref), cwd=workspace_root)
         except subprocess.CalledProcessError:
-            # Prepared SWE-bench refs are custom local refs, so a fresh clone may
-            # need an explicit fetch before they become visible in the workspace.
+            # Prepared benchmark refs can live outside normal branch heads, so a
+            # fresh clone may need an explicit fetch before the ref becomes visible.
             self._run(
                 ("git", "fetch", "--quiet", "origin", f"{base_ref}:{base_ref}"),
                 cwd=workspace_root,

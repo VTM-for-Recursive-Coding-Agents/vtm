@@ -22,7 +22,6 @@ from vtm.benchmarks.models import (
 )
 from vtm.benchmarks.repo_materialization import RepoWorkspaceManager
 from vtm.benchmarks.retrieval_suite import run_retrieval_suite
-from vtm.benchmarks.swebench_harness import SWEbenchHarnessRunner
 from vtm.benchmarks.symbol_index import SymbolIndexer
 
 CaseT = TypeVar("CaseT", RetrievalCase, DriftCase)
@@ -97,7 +96,6 @@ class BenchmarkSuiteExecutor:
             symbol_indexer=self._symbol_indexer,
             kernel_factory=self._kernel_factory,
             require_pair=self._require_pair,
-            swebench_harness_runner=self._swebench_harness_runner(output_dir),
         )
 
     def _limit_cases(
@@ -141,10 +139,6 @@ class BenchmarkSuiteExecutor:
             if pair.pair_id == pair_id:
                 return pair
         raise KeyError(f"unknown commit pair: {repo_spec.repo_name}:{pair_id}")
-
-    def _swebench_harness_runner(self, output_dir: Path) -> SWEbenchHarnessRunner:
-        del output_dir
-        return SWEbenchHarnessRunner()
 
 
 __all__ = ["BenchmarkSuiteExecutor"]

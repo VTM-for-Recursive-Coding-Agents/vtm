@@ -88,7 +88,7 @@ class RepoWorkspaceManager:
         try:
             self.run(["git", "checkout", "--quiet", ref], cwd=repo_root)
         except RepoWorkspaceCommandError:
-            # Prepared SWE-bench refs live outside normal branch heads, so a
+            # Prepared benchmark refs can live outside normal branch heads, so a
             # local clone may need an explicit fetch before the ref is visible.
             self.run(["git", "fetch", "--quiet", "origin", f"{ref}:{ref}"], cwd=repo_root)
             self.run(["git", "checkout", "--quiet", ref], cwd=repo_root)

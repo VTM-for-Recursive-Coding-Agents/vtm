@@ -13,8 +13,20 @@ Verified lexical memory should outperform a no-memory baseline without relying o
 - `verified_lexical`
 - optional `lexical_rlm_rerank` as a thin secondary ablation
 
+## Final maintained benchmark surface
+
+1. static retrieval
+   `no_memory`, `naive_lexical`, `verified_lexical`
+2. drift verification
+   `verified_lexical`
+3. drifted retrieval
+   `no_memory`, `naive_lexical`, `verified_lexical`
+4. controlled coding-drift
+   `no_memory`, `naive_lexical`, `verified_lexical`
+
 ## Removed from scope
 
+- SWE-bench Lite as a maintained benchmark or paper result
 - Embedding retrieval
 - Terminal-only benchmark tracks
 - Broad provider experimentation and local ad hoc model routing
@@ -29,14 +41,18 @@ Verified lexical memory should outperform a no-memory baseline without relying o
 
 These three layers isolate memory quality and memory freshness cleanly enough for the paper.
 
-## External pilot status
+## Coding benchmark status
 
-- SWE-bench Lite is no longer a main paper result.
-- The maintained SWE-bench Lite code stays in the repository as optional harness infrastructure and local reference material.
-- LongCoT-Mini CS may be used as a small optional long-horizon reasoning pilot because it has deterministic answer verification and does not require a patch-generation harness.
-- Main VTM evidence remains retrieval, drift, and drifted retrieval.
+- The final maintained coding benchmark is `controlled_coding_drift`.
+- SWE-bench Lite was attempted as an external agent pilot, but it produced empty patches and no resolved tasks.
+- The final paper should not claim SWE-bench improvement.
+- The main paper claim is memory correctness under repository drift, not external-task benchmark success.
 
 Synthetic smoke tasks remain only as a maintained local/dev validation path for the OpenRouter-backed executor and table-export workflow.
+
+## Future work
+
+External agent benchmarks such as SWE-bench or LongCoT can be revisited later, but they are not part of the final maintained evaluation.
 
 ## OpenRouter defaults
 

@@ -201,7 +201,7 @@ def test_docker_workspace_backend_prepares_isolated_workspace(
 def test_local_workspace_backend_fetches_missing_prepared_ref(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     base, _ = _build_repo_with_second_commit(repo_root)
-    prepared_ref = "refs/vtm-swebench/example__repo-1/base"
+    prepared_ref = "refs/vtm-benchmark/example__repo-1/base"
     _run(repo_root, "git", "update-ref", prepared_ref, base)
 
     backend = LocalWorkspaceBackend()

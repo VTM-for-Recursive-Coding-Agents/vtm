@@ -154,28 +154,6 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Model id for lexical_rlm_rerank mode. Falls back to VTM_RERANK_MODEL.",
     )
-    parser.add_argument(
-        "--swebench-dataset-name",
-        default="",
-        help="Optional SWE-bench dataset identifier for harness-backed coding tasks.",
-    )
-    parser.add_argument(
-        "--swebench-harness-workers",
-        type=int,
-        default=4,
-        help="Worker count for official SWE-bench harness evaluation.",
-    )
-    parser.add_argument(
-        "--swebench-cache-level",
-        choices=("none", "base", "env", "instance"),
-        default="env",
-        help="Cache level for official SWE-bench harness evaluation.",
-    )
-    parser.add_argument(
-        "--swebench-run-id",
-        default="",
-        help="Optional explicit run identifier for official SWE-bench harness evaluation.",
-    )
     return parser
 
 
@@ -235,10 +213,6 @@ def main() -> int:
         rlm_max_runtime_seconds=args.rlm_max_runtime_seconds,
         workspace_command_timeout_seconds=args.workspace_command_timeout_seconds,
         workspace_max_output_chars=args.workspace_max_output_chars,
-        swebench_dataset_name=args.swebench_dataset_name or None,
-        swebench_harness_workers=args.swebench_harness_workers,
-        swebench_harness_cache_level=args.swebench_cache_level,
-        swebench_harness_run_id=args.swebench_run_id or None,
     )
     try:
         result = execute_benchmark_run(

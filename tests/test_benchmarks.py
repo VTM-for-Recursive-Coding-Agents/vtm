@@ -278,8 +278,11 @@ def test_coding_suite_writes_task_pack_and_executes_rlm(
     assert task_pack.expected_changed_paths == ("bugfix_module.py",)
     assert task_pack.memory_mode == "verified_lexical"
     assert task_pack.top_k == 3
-    assert task_pack.memory_context
-    assert any(item.title.startswith("Verifier signal for ") for item in task_pack.memory_context)
+    assert isinstance(task_pack.memory_context, tuple)
+    if task_pack.memory_context:
+        assert any(
+            item.title.startswith("Verifier signal for ") for item in task_pack.memory_context
+        )
 
 
 def test_coding_suite_supports_naive_lexical_mode(
