@@ -31,10 +31,17 @@ EXTRA_ARGS="${VLLM_EXTRA_ARGS:-}"
 
 mkdir -p "$(dirname "$STATUS_FILE")" "$(dirname "$ENDPOINT_FILE")"
 
+write_atomic_file() {
+  local target_path="$1"
+  local tmp_path="${target_path}.tmp.$$"
+  cat >"$tmp_path"
+  mv "$tmp_path" "$target_path"
+}
+
 record_status() {
   local state="$1"
   local advertise_host="$2"
-  cat >"$STATUS_FILE" <<EOF
+  write_atomic_file "$STATUS_FILE" <<EOF
 state=$state
 job_id=${SLURM_JOB_ID:-}
 job_name=${SLURM_JOB_NAME:-vtm_serve}
@@ -178,7 +185,7 @@ if ! await_readiness "http://127.0.0.1:$PORT/v1/models"; then
   exit 1
 fi
 
-printf 'http://%s:%s/v1\n' "$ADVERTISE_HOST" "$PORT" >"$ENDPOINT_FILE"
+printf 'http://%s:%s/v1\n' "$ADVERTISE_HOST" "$PORT" | write_atomic_file "$ENDPOINT_FILE"
 record_status "running" "$ADVERTISE_HOST"
 echo "[serve] Ready: http://$ADVERTISE_HOST:$PORT/v1"
 

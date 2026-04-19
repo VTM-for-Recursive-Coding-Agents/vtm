@@ -6,13 +6,31 @@ set -euo pipefail
 
 PROJECT_ROOT="/uufs/chpc.utah.edu/common/home/u1406806/Multimodal-Class/vtm"
 PYTHON="/scratch/general/vast/u1406806/vtm/venvs/livecodebench/bin/python"
+SERVE_STATUS_FILE="${PROJECT_ROOT}/logs/slurm/serve_status.txt"
+SERVE_ENDPOINT_FILE="${PROJECT_ROOT}/logs/slurm/serve_node.txt"
 SERVE_LAUNCHER="${PROJECT_ROOT}/launchers/chpc/livecodebench_qwen_qwen2_5_coder_32b_instruct_20260413_rlmfix_serve"
-SERVE_STATUS_FILE="${SERVE_LAUNCHER}/serve_status.txt"
-SERVE_ENDPOINT_FILE="${SERVE_LAUNCHER}/serve_endpoint.txt"
+SERVE_STATUS_FALLBACK_FILE="${SERVE_LAUNCHER}/serve_status.txt"
+SERVE_ENDPOINT_FALLBACK_FILE="${SERVE_LAUNCHER}/serve_endpoint.txt"
 LOG_DIR="${PROJECT_ROOT}/logs/slurm"
+RESUBMIT_LOCK_FILE="${LOG_DIR}/resubmit_rlm_chunks.lock"
+RESUBMIT_PID_FILE="${LOG_DIR}/resubmit_rlm_chunks.pid"
 LAUNCHER_BASE="${PROJECT_ROOT}/launchers/chpc/livecodebench_qwen_qwen2_5_coder_32b_instruct_20260413_rlmfix_c"
 
 CHUNKS=(0 106 212 318 424 530 636 742 848 954)
+
+mkdir -p "$LOG_DIR"
+exec 9>"$RESUBMIT_LOCK_FILE"
+if ! flock -n 9; then
+  echo "[resubmit] Another resubmit process is already running. Exiting."
+  exit 0
+fi
+echo "$$" > "$RESUBMIT_PID_FILE"
+
+cleanup_resubmit_state() {
+  rm -f "$RESUBMIT_PID_FILE"
+}
+
+trap cleanup_resubmit_state EXIT
 
 # ---------------------------------------------------------------------------
 # Wait for serve to be running
@@ -22,10 +40,40 @@ echo "           $SERVE_STATUS_FILE"
 
 deadline=$((SECONDS + 7200))  # wait up to 2 hours
 while (( SECONDS <= deadline )); do
-  if [[ -f "$SERVE_STATUS_FILE" ]]; then
-    state=$(sed -n 's/^state=//p' "$SERVE_STATUS_FILE" | head -1 | tr -d '\r')
+  status_source="$SERVE_STATUS_FILE"
+  if [[ ! -f "$status_source" && -f "$SERVE_STATUS_FALLBACK_FILE" ]]; then
+    status_source="$SERVE_STATUS_FALLBACK_FILE"
+  elif [[ -f "$status_source" ]]; then
+    state_hint=$(sed -n 's/^state=//p' "$status_source" | head -1 | tr -d '\r')
+    if [[ "$state_hint" == "pending" && -f "$SERVE_STATUS_FALLBACK_FILE" ]]; then
+      fb_state_hint=$(sed -n 's/^state=//p' "$SERVE_STATUS_FALLBACK_FILE" | head -1 | tr -d '\r')
+      if [[ "$fb_state_hint" == "running" ]]; then
+        status_source="$SERVE_STATUS_FALLBACK_FILE"
+      fi
+    fi
+  fi
+
+  if [[ -f "$status_source" ]]; then
+    state=$(sed -n 's/^state=//p' "$status_source" | head -1 | tr -d '\r')
     if [[ "$state" == "running" ]]; then
-      endpoint=$(sed -n 's/^endpoint=//p' "$SERVE_STATUS_FILE" | head -1 | tr -d '\r')
+      endpoint_file=$(sed -n 's/^endpoint_file=//p' "$status_source" | head -1 | tr -d '\r')
+      if [[ -z "${endpoint_file:-}" ]]; then
+        if [[ "$status_source" == "$SERVE_STATUS_FALLBACK_FILE" ]]; then
+          endpoint_file="$SERVE_ENDPOINT_FALLBACK_FILE"
+        else
+          endpoint_file="$SERVE_ENDPOINT_FILE"
+        fi
+      fi
+
+      endpoint=""
+      if [[ -f "$endpoint_file" ]]; then
+        endpoint=$(sed -n '1p' "$endpoint_file" | tr -d '\r')
+      fi
+
+      if [[ -z "$endpoint" ]]; then
+        endpoint=$(sed -n 's/^endpoint=//p' "$status_source" | head -1 | tr -d '\r')
+      fi
+
       echo "[resubmit] Serve is running at: $endpoint"
       break
     elif [[ "$state" == "failed" || "$state" == "error" || "$state" == "exited" || "$state" == "cancelled" ]]; then

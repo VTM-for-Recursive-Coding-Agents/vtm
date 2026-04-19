@@ -76,6 +76,25 @@ Outputs:
 - visualizations/summary.md
 - visualizations/*.png (when matplotlib is available)
 
+## Pass/Fail Dashboard
+
+To graph method-level pass/fail results and current rlmfix checkpoint health:
+
+```bash
+cd results
+python3 plot_passfail_graphs.py
+```
+
+This reads:
+
+- `results/runs/*passfail.tsv`
+- `results/raw/livecodebench/*/rlm_progress.jsonl`
+
+And writes:
+
+- `results/visualizations/passfail_dashboard.png`
+- `results/visualizations/passfail_dashboard_summary.md`
+
 ## Notes
 
 - If raw run folders are empty, normalization still writes empty metrics files.

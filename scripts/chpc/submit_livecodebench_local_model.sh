@@ -1424,7 +1424,15 @@ mapfile -t QUEUE_ARGS < <(build_queue_args)
 "$QUEUE_SCRIPT" "${QUEUE_ARGS[@]}"
 
 if should_auto_submit_rlm_serve; then
-  rm -f "$SERVE_STATUS_FILE" "$SERVE_ENDPOINT_FILE"
+  retired_ts="$(date +%s)"
+  if [[ -f "$SERVE_STATUS_FILE" ]]; then
+    mv "$SERVE_STATUS_FILE" "${SERVE_STATUS_FILE}.retired.${retired_ts}"
+  fi
+  if [[ -f "$SERVE_ENDPOINT_FILE" ]]; then
+    mv "$SERVE_ENDPOINT_FILE" "${SERVE_ENDPOINT_FILE}.retired.${retired_ts}"
+  fi
+  find "$(dirname "$SERVE_STATUS_FILE")" -maxdepth 1 -type f -name "$(basename "$SERVE_STATUS_FILE").retired.*" -mmin +60 -delete 2>/dev/null || true
+  find "$(dirname "$SERVE_ENDPOINT_FILE")" -maxdepth 1 -type f -name "$(basename "$SERVE_ENDPOINT_FILE").retired.*" -mmin +60 -delete 2>/dev/null || true
 fi
 
 BASELINE_COMMAND="$(build_method_command baseline)"

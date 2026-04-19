@@ -7,12 +7,18 @@ set -euo pipefail
 PROJECT_ROOT="/uufs/chpc.utah.edu/common/home/u1406806/Multimodal-Class/vtm"
 PYTHON="/scratch/general/vast/u1406806/vtm/venvs/livecodebench/bin/python"
 SERVE_LAUNCHER="${PROJECT_ROOT}/launchers/chpc/livecodebench_qwen_qwen2_5_coder_32b_instruct_20260413_rlmfix_serve"
-SERVE_STATUS_FILE="${SERVE_LAUNCHER}/serve_status.txt"
-SERVE_ENDPOINT_FILE="${SERVE_LAUNCHER}/serve_endpoint.txt"
+# Canonical serve state is written under logs/slurm for serve/watcher/worker consistency.
+SERVE_STATUS_FILE="${PROJECT_ROOT}/logs/slurm/serve_status.txt"
+SERVE_ENDPOINT_FILE="${PROJECT_ROOT}/logs/slurm/serve_node.txt"
+SERVE_STATUS_FALLBACK_FILE="${SERVE_LAUNCHER}/serve_status.txt"
+SERVE_ENDPOINT_FALLBACK_FILE="${SERVE_LAUNCHER}/serve_endpoint.txt"
 SERVE_SBATCH="${SERVE_LAUNCHER}/99_serve.sbatch"
 LOG_DIR="${PROJECT_ROOT}/logs/slurm"
 RAW_DIR="${PROJECT_ROOT}/results/raw/livecodebench"
 LAUNCHER_BASE="${PROJECT_ROOT}/launchers/chpc/livecodebench_qwen_qwen2_5_coder_32b_instruct_20260413_rlmfix_c"
+WATCH_LOCK_FILE="${LOG_DIR}/watch_and_cycle_serve.lock"
+WATCH_PID_FILE="${LOG_DIR}/watch_and_cycle_serve.pid"
+ACTIVE_WORKER_JOBS_FILE="${LOG_DIR}/serve_cycle_active_worker_jobs.txt"
 
 CHUNKS=(0 106 212 318 424 530 636 742 848 954)
 SERVE_SBATCH_ARGS=(-A soc-gpu-np -p soc-gpu-np --time 720 --nodes 1 --cpus-per-task 8 --mem 64G --gres gpu:2)
@@ -21,6 +27,111 @@ WORKER_SBATCH_ARGS=(-A soc-gpu-np -p soc-gpu-np --time 360 --nodes 1 --cpus-per-
 EXPORT_SPEC="ALL,VTM_RLM_SERVE_STATUS_FILE=${SERVE_STATUS_FILE},VTM_RLM_SERVE_ENDPOINT_FILE=${SERVE_ENDPOINT_FILE},VTM_SERVE_STATUS_FILE=${SERVE_STATUS_FILE},VTM_SERVE_ENDPOINT_FILE=${SERVE_ENDPOINT_FILE}"
 
 log() { echo "[cycle $(date '+%H:%M:%S')] $*" >&2; }
+
+mkdir -p "$LOG_DIR"
+exec 9>"$WATCH_LOCK_FILE"
+if ! flock -n 9; then
+  log "Another watcher is already running. Exiting."
+  exit 0
+fi
+echo "$$" > "$WATCH_PID_FILE"
+
+cleanup_watcher_state() {
+  rm -f "$WATCH_PID_FILE"
+}
+
+trap cleanup_watcher_state EXIT
+
+write_serve_status() {
+  local state="$1"
+  local job_id="${2:-}"
+  local endpoint="${3:-}"
+  local tmp="${SERVE_STATUS_FILE}.tmp.$$"
+
+  {
+    printf 'state=%s\n' "$state"
+    if [[ -n "$job_id" ]]; then
+      printf 'job_id=%s\n' "$job_id"
+    fi
+    printf 'endpoint_file=%s\n' "$SERVE_ENDPOINT_FILE"
+    printf 'updated_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    if [[ -n "$endpoint" ]]; then
+      printf 'endpoint=%s\n' "$endpoint"
+    fi
+  } > "$tmp"
+
+  mv "$tmp" "$SERVE_STATUS_FILE"
+
+  if [[ -n "$endpoint" ]]; then
+    printf '%s\n' "$endpoint" > "${SERVE_ENDPOINT_FILE}.tmp.$$"
+    mv "${SERVE_ENDPOINT_FILE}.tmp.$$" "$SERVE_ENDPOINT_FILE"
+  fi
+}
+
+endpoint_is_healthy() {
+  local endpoint="$1"
+  python3 - "$endpoint" <<'PYEOF'
+import sys
+import urllib.request
+
+endpoint = sys.argv[1].rstrip('/')
+url = f"{endpoint}/models"
+try:
+    with urllib.request.urlopen(url, timeout=10) as response:
+        sys.exit(0 if response.status == 200 else 1)
+except Exception:
+    sys.exit(1)
+PYEOF
+}
+
+sync_status_from_fallback() {
+  if [[ ! -f "$SERVE_STATUS_FALLBACK_FILE" ]]; then
+    return
+  fi
+
+  local fb_state fb_job fb_endpoint_file fb_endpoint
+  fb_state=$(sed -n 's/^state=//p' "$SERVE_STATUS_FALLBACK_FILE" | head -1 | tr -d '\r')
+  fb_job=$(sed -n 's/^job_id=//p' "$SERVE_STATUS_FALLBACK_FILE" | head -1 | tr -d '\r')
+  fb_endpoint_file=$(sed -n 's/^endpoint_file=//p' "$SERVE_STATUS_FALLBACK_FILE" | head -1 | tr -d '\r')
+
+  if [[ -z "$fb_endpoint_file" ]]; then
+    fb_endpoint_file="$SERVE_ENDPOINT_FALLBACK_FILE"
+  fi
+
+  fb_endpoint=""
+  if [[ -f "$fb_endpoint_file" ]]; then
+    fb_endpoint=$(sed -n '1p' "$fb_endpoint_file" | tr -d '\r')
+  fi
+  if [[ -z "$fb_endpoint" ]]; then
+    fb_endpoint=$(sed -n 's/^endpoint=//p' "$SERVE_STATUS_FALLBACK_FILE" | head -1 | tr -d '\r')
+  fi
+
+  if [[ "$fb_state" == "running" && -n "$fb_endpoint" && -n "$fb_job" ]]; then
+    write_serve_status "running" "$fb_job" "$fb_endpoint"
+    return
+  fi
+
+  if [[ "$fb_state" == "failed" || "$fb_state" == "error" || "$fb_state" == "cancelled" || "$fb_state" == "exited" ]]; then
+    write_serve_status "$fb_state" "$fb_job" ""
+  fi
+}
+
+cancel_active_workers() {
+  if [[ ! -f "$ACTIVE_WORKER_JOBS_FILE" ]]; then
+    log "No tracked worker jobs to cancel."
+    return
+  fi
+
+  mapfile -t tracked_ids < <(grep -E '^[0-9]+$' "$ACTIVE_WORKER_JOBS_FILE" || true)
+  if [[ "${#tracked_ids[@]}" -eq 0 ]]; then
+    log "Tracked worker job list is empty."
+    return
+  fi
+
+  log "Cancelling ${#tracked_ids[@]} tracked worker job(s)."
+  scancel "${tracked_ids[@]}" 2>/dev/null || true
+  : > "$ACTIVE_WORKER_JOBS_FILE"
+}
 
 chunk_is_complete() {
   local start="$1" prov="$2"
@@ -87,15 +198,26 @@ all_complete() {
 wait_for_serve() {
   local deadline=$((SECONDS + 7200))
   while (( SECONDS <= deadline )); do
+    sync_status_from_fallback
+
     if [[ -f "$SERVE_STATUS_FILE" ]]; then
-      local state endpoint
+      local state endpoint_file endpoint
       state=$(sed -n 's/^state=//p' "$SERVE_STATUS_FILE" | head -1 | tr -d '\r')
-      if [[ "$state" == "running" && -f "$SERVE_ENDPOINT_FILE" ]]; then
-        endpoint=$(cat "$SERVE_ENDPOINT_FILE" | tr -d '\r')
+
+      endpoint_file=$(sed -n 's/^endpoint_file=//p' "$SERVE_STATUS_FILE" | head -1 | tr -d '\r')
+      if [[ -z "$endpoint_file" ]]; then
+        endpoint_file="$SERVE_ENDPOINT_FILE"
+      fi
+
+      if [[ "$state" == "running" && -f "$endpoint_file" ]]; then
+        endpoint=$(cat "$endpoint_file" | tr -d '\r')
         if [[ -n "$endpoint" ]]; then
-          log "Serve ready at: $endpoint"
-          echo "$endpoint"
-          return 0
+          if endpoint_is_healthy "$endpoint"; then
+            log "Serve ready at: $endpoint"
+            echo "$endpoint"
+            return 0
+          fi
+          log "Serve endpoint present but unhealthy: $endpoint"
         fi
       elif [[ "$state" == "failed" || "$state" == "error" || "$state" == "cancelled" || "$state" == "exited" ]]; then
         log "ERROR: serve_status.txt shows state=$state"
@@ -110,14 +232,18 @@ wait_for_serve() {
 
 submit_serve() {
   log "Submitting new serve job..."
-  # Reset status file so the new serve can write cleanly
-  printf 'state=pending\njob_id=pending\n' > "$SERVE_STATUS_FILE"
-  > "$SERVE_ENDPOINT_FILE"
+  # Mark pending but keep the previous endpoint file until the new serve is healthy.
+  # This avoids a race where workers observe a truncated endpoint file.
+  write_serve_status "pending" "pending" ""
   local jid
+  local serve_export_spec
+  serve_export_spec="ALL,VTM_SERVE_STATUS_FILE=${SERVE_STATUS_FILE},VTM_SERVE_ENDPOINT_FILE=${SERVE_ENDPOINT_FILE},VTM_RLM_SERVE_STATUS_FILE=${SERVE_STATUS_FILE},VTM_RLM_SERVE_ENDPOINT_FILE=${SERVE_ENDPOINT_FILE}"
   jid=$(sbatch "${SERVE_SBATCH_ARGS[@]}" \
     --output="${LOG_DIR}/%x-%j.out" \
     --error="${LOG_DIR}/%x-%j.err" \
+    --export="${serve_export_spec}" \
     "$SERVE_SBATCH" 2>/dev/null | grep -oP '\d+')
+  write_serve_status "pending" "$jid" ""
   log "New serve job: $jid"
   echo "$jid"
 }
@@ -126,6 +252,7 @@ submit_incomplete_workers() {
   local endpoint="$1"
   local COMMON_ARGS="--model Qwen/Qwen2.5-Coder-32B-Instruct --scenario codegeneration --n 1 --temperature 0.2 --evaluate false --tensor-parallel-size 2 --rlm-backend vllm --rlm-backend-url ${endpoint} --rlm-max-iterations 12 --rlm-max-timeout 21300"
   local submitted=0 skipped=0
+  local submitted_ids=()
   for start in "${CHUNKS[@]}"; do
     local end=$((start + 106))
     local launcher_dir="${LAUNCHER_BASE}${start}_d"
@@ -152,9 +279,17 @@ submit_incomplete_workers() {
         --export="${EXPORT_SPEC}" \
         "$script" 2>/dev/null | grep -oP '\d+')
       log "Submitted ${prov} c${start}: ${run_id} → job ${jid}"
+      submitted_ids+=("$jid")
       submitted=$((submitted + 1))
     done
   done
+
+  if [[ "${#submitted_ids[@]}" -gt 0 ]]; then
+    printf '%s\n' "${submitted_ids[@]}" > "$ACTIVE_WORKER_JOBS_FILE"
+  else
+    : > "$ACTIVE_WORKER_JOBS_FILE"
+  fi
+
   log "Workers: ${submitted} submitted, ${skipped} skipped (complete)"
 }
 
@@ -165,6 +300,8 @@ CYCLE=0
 while true; do
   CYCLE=$((CYCLE + 1))
   log "=== Cycle ${CYCLE} ==="
+
+  sync_status_from_fallback
 
   if all_complete; then
     log "All chunks complete! Done."
@@ -188,10 +325,8 @@ while true; do
     break
   fi
 
-  # Cancel any stale workers (they will have failed when serve died)
-  log "Cancelling any remaining rlm/rlm_rag jobs..."
-  scancel --user u1406806 --name qwen_qwen2_5_coder_32b_instruct_rlm 2>/dev/null || true
-  scancel --user u1406806 --name qwen_qwen2_5_coder_32b_instruct_rlm_rag 2>/dev/null || true
+  # Cancel only workers tracked by this watcher to avoid killing unrelated runs.
+  cancel_active_workers
   sleep 5
 
   # Start new serve (retry up to 3 times on failure)
