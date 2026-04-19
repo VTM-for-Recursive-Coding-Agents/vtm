@@ -15,6 +15,7 @@ from vtm.benchmarks import (
     matrix,
     prepare_swebench_lite,
     run,
+    subset_manifest,
 )
 
 
@@ -189,6 +190,23 @@ def test_prepare_swebench_lite_cli_parser_accepts_skip_failed_instances() -> Non
     )
 
     assert args.skip_failed_instances is True
+
+
+def test_subset_manifest_cli_parser_accepts_repeated_case_ids() -> None:
+    args = subset_manifest.build_parser().parse_args(
+        [
+            "--input",
+            "in.json",
+            "--output",
+            "out.json",
+            "--case-id",
+            "astropy__astropy-14365",
+            "--case-id",
+            "astropy__astropy-14995",
+        ]
+    )
+
+    assert args.case_id == ["astropy__astropy-14365", "astropy__astropy-14995"]
 
 
 def test_execute_benchmark_run_resolves_openrouter_defaults(
