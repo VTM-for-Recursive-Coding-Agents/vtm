@@ -1,0 +1,16 @@
+state=exited
+job_id=12178888
+job_name=qwen_qwen2_5_coder_32b_instruct_serve
+endpoint_file=/uufs/chpc.utah.edu/common/home/u1406806/Multimodal-Class/vtm/launchers/chpc/livecodebench_qwen_qwen2_5_coder_32b_instruct_rlmrag_stabletest_20260418a/serve_endpoint.txt
+model=Qwen/Qwen2.5-Coder-32B-Instruct
+served_model_alias=Qwen/Qwen2.5-Coder-32B-Instruct
+python_bin=/scratch/general/vast/u1406806/vtm/venvs/livecodebench/bin/python
+tensor_parallel_size=2
+gpu_memory_utilization=0.85
+max_model_len=28672
+started_at=2026-04-18T14:53:19Z
+updated_at=2026-04-18T17:53:32Z
+slurm_nodelist=notch501
+host=notch501.ipoib.int.chpc.utah.edu
+port=8000
+endpoint=http://notch501.ipoib.int.chpc.utah.edu:8000/v1

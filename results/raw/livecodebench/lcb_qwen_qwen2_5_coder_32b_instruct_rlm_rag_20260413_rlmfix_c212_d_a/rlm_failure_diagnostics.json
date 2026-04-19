@@ -1,0 +1,42 @@
+{
+  "failure_type": "all_empty_samples",
+  "prompt_index": 105,
+  "prompt_preview": "Use the retrieved context below when useful. Do not copy test outputs or fabricate hidden constraints.\n\nRelevant local benchmark context:\n\n[question]\nYou are given a 2D integer array intervals, where intervals[i] = [l_i, r_i, weight_i]. Interval i starts at position l_i and ends at r_i, and has a weight of weight_i. You can choose up to 4 non-overlapping intervals. The score of the chosen intervals is defined as the total sum of their weights.\nReturn the lexicographically smallest array of at most 4 indices from intervals with maximum score, representing your choice of non-overlapping intervals.\nTwo intervals are said to be non-overlapping if they do not share any points. In particular, intervals sharing a left or right boundary are considered overlapping.\nAn array a is lexicographically s...",
+  "backend": {
+    "backend": "vllm",
+    "model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "timeout": 1800.0,
+    "max_retries": 2,
+    "base_url": "http://notch501.ipoib.int.chpc.utah.edu:8000/v1",
+    "healthcheck": {
+      "models_url": "http://notch501.ipoib.int.chpc.utah.edu:8000/v1/models",
+      "available_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct"
+      ]
+    }
+  },
+  "response_metadata": {
+    "provider": "rlm_rag",
+    "rlm_max_depth": 1,
+    "rlm_max_iterations": 12,
+    "rlm_max_prompt_tokens": 30720,
+    "rlm_backend": "vllm",
+    "rlm_backend_url": "http://notch501.ipoib.int.chpc.utah.edu:8000/v1",
+    "rlm_backend_timeout": 1800.0,
+    "rlm_backend_max_retries": 2,
+    "tokenizer_model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "context_limit_tokens": 32768,
+    "prompt_budget_tokens": 30720,
+    "completion_token_reserve": 2048,
+    "prompt_tokens": 1272,
+    "samples": [
+      {
+        "error": "APIConnectionError('Connection error.')",
+        "exception_type": "APIConnectionError"
+      }
+    ],
+    "failed_samples_count": 1,
+    "total_n_requested": 1
+  },
+  "written_at": "2026-04-14T17:36:06.858930+00:00"
+}

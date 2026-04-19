@@ -1,0 +1,42 @@
+{
+  "failure_type": "all_empty_samples",
+  "prompt_index": 2,
+  "prompt_preview": "Use the retrieved context below when useful. Do not copy test outputs or fabricate hidden constraints.\n\nRelevant local benchmark context:\n\n[question]\nThere is a race through checkpoints 1,2,\\dots,N in this order on a coordinate plane.\nThe coordinates of checkpoint i are (X_i,Y_i), and all checkpoints have different coordinates.\nCheckpoints other than checkpoints 1 and N can be skipped.\nHowever, let C be the number of checkpoints skipped, and the following penalty will be imposed:\n\n- \\displaystyle 2^{C\u22121} if C>0, and\n- 0 if C=0.\n\nLet s be the total distance traveled (Euclidean distance) from checkpoint 1 to checkpoint N plus the penalty.\nFind the minimum achievable value as s.\n\nInput\n\nThe input is given from Standard Input in the following format:\nN\nX_1 Y_1\nX_2 Y_2\n\\vdots\nX_N Y_N\n\nOutput\n\nP...",
+  "backend": {
+    "backend": "vllm",
+    "model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "timeout": 1800.0,
+    "max_retries": 2,
+    "base_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1",
+    "healthcheck": {
+      "models_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1/models",
+      "available_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct"
+      ]
+    }
+  },
+  "response_metadata": {
+    "provider": "rlm_rag",
+    "rlm_max_depth": 1,
+    "rlm_max_iterations": 12,
+    "rlm_max_prompt_tokens": 26624,
+    "rlm_backend": "vllm",
+    "rlm_backend_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1",
+    "rlm_backend_timeout": 1800.0,
+    "rlm_backend_max_retries": 2,
+    "tokenizer_model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "context_limit_tokens": 28672,
+    "prompt_budget_tokens": 26624,
+    "completion_token_reserve": 2048,
+    "prompt_tokens": 1700,
+    "samples": [
+      {
+        "error": "APIConnectionError('Connection error.')",
+        "exception_type": "APIConnectionError"
+      }
+    ],
+    "failed_samples_count": 1,
+    "total_n_requested": 1
+  },
+  "written_at": "2026-04-15T18:30:37.727245+00:00"
+}

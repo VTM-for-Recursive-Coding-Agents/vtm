@@ -1,0 +1,42 @@
+{
+  "failure_type": "all_empty_samples",
+  "prompt_index": 5,
+  "prompt_preview": "Use the retrieved context below when useful. Do not copy test outputs or fabricate hidden constraints.\n\nRelevant local benchmark context:\n\n[question]\nYou are given a 2D array of integers coordinates of length n and an integer k, where 0 <= k < n.\ncoordinates[i] = [x_i, y_i] indicates the point (x_i, y_i) in a 2D plane.\nAn increasing path of length m is defined as a list of points (x_1, y_1), (x_2, y_2), (x_3, y_3), ..., (x_m, y_m) such that:\n\nx_i < x_i + 1 and y_i < y_i + 1 for all i where 1 <= i < m.\n(x_i, y_i) is in the given coordinates for all i where 1 <= i <= m.\n\nReturn the maximum length of an increasing path that contains coordinates[k].\n \nExample 1:\n\nInput: coordinates = [[3,1],[2,2],[4,1],[0,0],[5,3]], k = 1\nOutput: 3\nExplanation:\n(0, 0), (2, 2), (5, 3) is the longest increasing ...",
+  "backend": {
+    "backend": "vllm",
+    "model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "timeout": 1800.0,
+    "max_retries": 2,
+    "base_url": "http://notch367.ipoib.int.chpc.utah.edu:8000/v1",
+    "healthcheck": {
+      "models_url": "http://notch367.ipoib.int.chpc.utah.edu:8000/v1/models",
+      "available_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct"
+      ]
+    }
+  },
+  "response_metadata": {
+    "provider": "rlm_rag",
+    "rlm_max_depth": 1,
+    "rlm_max_iterations": 12,
+    "rlm_max_prompt_tokens": 26624,
+    "rlm_backend": "vllm",
+    "rlm_backend_url": "http://notch367.ipoib.int.chpc.utah.edu:8000/v1",
+    "rlm_backend_timeout": 1800.0,
+    "rlm_backend_max_retries": 2,
+    "tokenizer_model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "context_limit_tokens": 28672,
+    "prompt_budget_tokens": 26624,
+    "completion_token_reserve": 2048,
+    "prompt_tokens": 1018,
+    "samples": [
+      {
+        "error": "APIConnectionError('Connection error.')",
+        "exception_type": "APIConnectionError"
+      }
+    ],
+    "failed_samples_count": 1,
+    "total_n_requested": 1
+  },
+  "written_at": "2026-04-15T05:58:01.858082+00:00"
+}

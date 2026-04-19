@@ -85,6 +85,25 @@ cd results
 python3 plot_passfail_graphs.py
 ```
 
+To compare baseline, rag, rlm, and rlm_rag on only the questions all four methods answered:
+
+```bash
+cd results
+python3 plot_passfail_graphs.py \
+  --intersection-only \
+  --intersection-model-prefix Qwen2.5-Coder-Ins-32B-
+```
+
+If both partial and non-partial TSVs exist for a method, you can choose source preference:
+
+```bash
+cd results
+python3 plot_passfail_graphs.py \
+  --intersection-only \
+  --intersection-model-prefix Qwen2.5-Coder-Ins-32B- \
+  --intersection-partial-policy prefer_partial
+```
+
 This reads:
 
 - `results/runs/*passfail.tsv`
@@ -94,6 +113,12 @@ And writes:
 
 - `results/visualizations/passfail_dashboard.png`
 - `results/visualizations/passfail_dashboard_summary.md`
+
+In intersection mode, the summary includes:
+
+- shared-question count across `baseline/rag/rlm/rlm_rag`
+- pass@1 rate per method on that shared subset
+- raw pass/fail counts per method on that shared subset
 
 ## Notes
 

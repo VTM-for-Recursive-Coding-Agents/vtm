@@ -1,0 +1,42 @@
+{
+  "failure_type": "all_empty_samples",
+  "prompt_index": 105,
+  "prompt_preview": "Use the retrieved context below when useful. Do not copy test outputs or fabricate hidden constraints.\n\nRelevant local benchmark context:\n\n[question]\nThe AtCoder Archipelago consists of N islands connected by N bridges.\nThe islands are numbered from 1 to N, and the i-th bridge (1\\leq i\\leq N-1) connects islands i and i+1 bidirectionally, while the N-th bridge connects islands N and 1 bidirectionally.\nThere is no way to travel between islands other than crossing the bridges.\nOn the islands, a tour that starts from island X_1 and visits islands X_2, X_3, \\dots, X_M in order is regularly conducted.\nThe tour may pass through islands other than those being visited, and the total number of times bridges are crossed during the tour is defined as the length of the tour.\nMore precisely, a tour is a...",
+  "backend": {
+    "backend": "vllm",
+    "model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "timeout": 1800.0,
+    "max_retries": 2,
+    "base_url": "http://notch501.ipoib.int.chpc.utah.edu:8000/v1",
+    "healthcheck": {
+      "models_url": "http://notch501.ipoib.int.chpc.utah.edu:8000/v1/models",
+      "available_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct"
+      ]
+    }
+  },
+  "response_metadata": {
+    "provider": "rlm_rag",
+    "rlm_max_depth": 1,
+    "rlm_max_iterations": 12,
+    "rlm_max_prompt_tokens": 30720,
+    "rlm_backend": "vllm",
+    "rlm_backend_url": "http://notch501.ipoib.int.chpc.utah.edu:8000/v1",
+    "rlm_backend_timeout": 1800.0,
+    "rlm_backend_max_retries": 2,
+    "tokenizer_model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "context_limit_tokens": 32768,
+    "prompt_budget_tokens": 30720,
+    "completion_token_reserve": 2048,
+    "prompt_tokens": 1797,
+    "samples": [
+      {
+        "error": "APIConnectionError('Connection error.')",
+        "exception_type": "APIConnectionError"
+      }
+    ],
+    "failed_samples_count": 1,
+    "total_n_requested": 1
+  },
+  "written_at": "2026-04-14T17:36:54.479117+00:00"
+}

@@ -1,0 +1,43 @@
+{
+  "failure_type": "rlm_backend_timeout",
+  "prompt_index": 7,
+  "prompt_preview": "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n\nYou will be given a question (problem specification) and will generate a correct Python program that matches the specification and passes all tests. You will NOT return anything except for the program.\n\nQuestion: You are given a binary string s and a positive integer k.\nA substring of s is beautiful if the number of 1's in it is exactly k.\nLet len be the length of the shortest beautiful substring.\nReturn the lexicographically smallest beautiful substring of string s with length equal to len. If s doesn't contain a beautiful substring, return an empty string.\nA string a is lexicographically larger than a string b (of the same length) if in the first position where a and b differ, a has a character strictly larger th...",
+  "backend": {
+    "backend": "vllm",
+    "model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "timeout": 900.0,
+    "max_retries": 2,
+    "base_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1",
+    "healthcheck": {
+      "models_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1/models",
+      "available_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct"
+      ]
+    }
+  },
+  "response_metadata": {
+    "provider": "rlm",
+    "rlm_max_depth": 1,
+    "rlm_max_iterations": 12,
+    "rlm_max_prompt_tokens": 26624,
+    "rlm_backend": "vllm",
+    "rlm_backend_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1",
+    "rlm_backend_timeout": 900.0,
+    "rlm_backend_max_retries": 2,
+    "tokenizer_model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "context_limit_tokens": 28672,
+    "prompt_budget_tokens": 26624,
+    "completion_token_reserve": 2048,
+    "prompt_tokens": 621,
+    "samples": [
+      {
+        "error": "APITimeoutError('Request timed out.')",
+        "exception_type": "APITimeoutError",
+        "failure_type": "rlm_backend_timeout"
+      }
+    ],
+    "failed_samples_count": 1,
+    "total_n_requested": 1
+  },
+  "written_at": "2026-04-15T09:17:53.560414+00:00"
+}

@@ -1,0 +1,13 @@
+/usr/bin/lua: /uufs/chpc.utah.edu/sys/installdir/lmod/8.7.55-r9/libexec/addto:65: module 'posix' not found:
+	no field package.preload['posix']
+	no file '/usr/share/lua/5.4/posix.lua'
+	no file '/usr/share/lua/5.4/posix/init.lua'
+	no file '/usr/lib64/lua/5.4/posix.lua'
+	no file '/usr/lib64/lua/5.4/posix/init.lua'
+	no file '/usr/lib64/lua/5.4/posix.so'
+	no file '/usr/lib64/lua/5.4/loadall.so'
+stack traceback:
+	[C]: in function 'require'
+	/uufs/chpc.utah.edu/sys/installdir/lmod/8.7.55-r9/libexec/addto:65: in main chunk
+	[C]: in ?
+test

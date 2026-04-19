@@ -1,0 +1,43 @@
+{
+  "failure_type": "rlm_backend_response_error",
+  "prompt_index": 10,
+  "prompt_preview": "Use the retrieved context below when useful. Do not copy test outputs or fabricate hidden constraints.\n\nRelevant local benchmark context:\n\n[question]\nThere is a stack of 100 cards, each labeled with the integer 0.\nProcess Q queries. Each query is of one of the following:\n\n- Type 1: Place a card labeled with an integer x on top of the stack.\n- Type 2: Remove the top card of the stack and output the integer written on that removed card. Under the constraints of this problem, the stack always has at least one card.\n\nInput\n\nThe input is given from Standard Input in the following format:\nQ\r\n\\text{query}_1\r\n\\text{query}_2\r\n\\vdots\r\n\\text{query}_Q\r\n\nThe i-th query \\text{query}_i starts with the query type c_i (1 or 2), followed by the integer x if c_i=1.\nThat is, each query is in one of the follow...",
+  "backend": {
+    "backend": "vllm",
+    "model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "timeout": 1800.0,
+    "max_retries": 2,
+    "base_url": "http://notch367.ipoib.int.chpc.utah.edu:8000/v1",
+    "healthcheck": {
+      "models_url": "http://notch367.ipoib.int.chpc.utah.edu:8000/v1/models",
+      "available_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct"
+      ]
+    }
+  },
+  "response_metadata": {
+    "provider": "rlm_rag",
+    "rlm_max_depth": 1,
+    "rlm_max_iterations": 12,
+    "rlm_max_prompt_tokens": 26624,
+    "rlm_backend": "vllm",
+    "rlm_backend_url": "http://notch367.ipoib.int.chpc.utah.edu:8000/v1",
+    "rlm_backend_timeout": 1800.0,
+    "rlm_backend_max_retries": 2,
+    "tokenizer_model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "context_limit_tokens": 28672,
+    "prompt_budget_tokens": 26624,
+    "completion_token_reserve": 2048,
+    "prompt_tokens": 1395,
+    "samples": [
+      {
+        "error": "RuntimeError('OpenAI-compatible backend returned no response object.')",
+        "exception_type": "RuntimeError",
+        "failure_type": "rlm_backend_response_error"
+      }
+    ],
+    "failed_samples_count": 1,
+    "total_n_requested": 1
+  },
+  "written_at": "2026-04-15T05:35:42.495251+00:00"
+}

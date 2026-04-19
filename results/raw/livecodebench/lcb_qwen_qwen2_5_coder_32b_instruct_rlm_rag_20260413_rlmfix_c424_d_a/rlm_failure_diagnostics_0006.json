@@ -1,0 +1,43 @@
+{
+  "failure_type": "rlm_backend_timeout",
+  "prompt_index": 6,
+  "prompt_preview": "Use the retrieved context below when useful. Do not copy test outputs or fabricate hidden constraints.\n\nRelevant local benchmark context:\n\n[question]\nGiven an array nums, you can perform the following operation any number of times:\n\nSelect the adjacent pair with the minimum sum in nums. If multiple such pairs exist, choose the leftmost one.\nReplace the pair with their sum.\n\nReturn the minimum number of operations needed to make the array non-decreasing.\nAn array is said to be non-decreasing if each element is greater than or equal to its previous element (if it exists).\n \nExample 1:\n\nInput: nums = [5,2,3,1]\nOutput: 2\nExplanation:\n\nThe pair (3,1) has the minimum sum of 4. After replacement, nums = [5,2,4].\nThe pair (2,4) has the minimum sum of 6. After replacement, nums = [5,6].\n\nThe array ...",
+  "backend": {
+    "backend": "vllm",
+    "model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "timeout": 1800.0,
+    "max_retries": 2,
+    "base_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1",
+    "healthcheck": {
+      "models_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1/models",
+      "available_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct"
+      ]
+    }
+  },
+  "response_metadata": {
+    "provider": "rlm_rag",
+    "rlm_max_depth": 1,
+    "rlm_max_iterations": 12,
+    "rlm_max_prompt_tokens": 26624,
+    "rlm_backend": "vllm",
+    "rlm_backend_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1",
+    "rlm_backend_timeout": 1800.0,
+    "rlm_backend_max_retries": 2,
+    "tokenizer_model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "context_limit_tokens": 28672,
+    "prompt_budget_tokens": 26624,
+    "completion_token_reserve": 2048,
+    "prompt_tokens": 725,
+    "samples": [
+      {
+        "error": "APITimeoutError('Request timed out.')",
+        "exception_type": "APITimeoutError",
+        "failure_type": "rlm_backend_timeout"
+      }
+    ],
+    "failed_samples_count": 1,
+    "total_n_requested": 1
+  },
+  "written_at": "2026-04-15T16:20:50.304408+00:00"
+}

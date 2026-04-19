@@ -1,0 +1,43 @@
+{
+  "failure_type": "rlm_backend_response_error",
+  "prompt_index": 10,
+  "prompt_preview": "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n\nYou will be given a question (problem specification) and will generate a correct Python program that matches the specification and passes all tests. You will NOT return anything except for the program.\n\nQuestion: There are N boxes numbered 0 to N-1. Initially, box i contains A_i balls.\nTakahashi will perform the following operations for i=1,2,\\ldots,M in order:\n\n- Set a variable C to 0.\n- Take out all the balls from box B_i and hold them in hand.\n- While holding at least one ball in hand, repeat the following process:\n- Increase the value of C by 1.\n- Put one ball from hand into box (B_i+C) \\bmod N.\n\n\n\nDetermine the number of balls in each box after completing all operations.\n\nInput\n\nThe input is given from Standar...",
+  "backend": {
+    "backend": "vllm",
+    "model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "timeout": 900.0,
+    "max_retries": 2,
+    "base_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1",
+    "healthcheck": {
+      "models_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1/models",
+      "available_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct"
+      ]
+    }
+  },
+  "response_metadata": {
+    "provider": "rlm",
+    "rlm_max_depth": 1,
+    "rlm_max_iterations": 12,
+    "rlm_max_prompt_tokens": 26624,
+    "rlm_backend": "vllm",
+    "rlm_backend_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1",
+    "rlm_backend_timeout": 900.0,
+    "rlm_backend_max_retries": 2,
+    "tokenizer_model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "context_limit_tokens": 28672,
+    "prompt_budget_tokens": 26624,
+    "completion_token_reserve": 2048,
+    "prompt_tokens": 609,
+    "samples": [
+      {
+        "error": "RuntimeError('OpenAI-compatible backend returned no response object.')",
+        "exception_type": "RuntimeError",
+        "failure_type": "rlm_backend_response_error"
+      }
+    ],
+    "failed_samples_count": 1,
+    "total_n_requested": 1
+  },
+  "written_at": "2026-04-15T18:30:35.278056+00:00"
+}

@@ -1,0 +1,42 @@
+{
+  "failure_type": "all_empty_samples",
+  "prompt_index": 105,
+  "prompt_preview": "Use the retrieved context below when useful. Do not copy test outputs or fabricate hidden constraints.\n\nRelevant local benchmark context:\n\n[question]\nYou are given two strings S and T consisting of lowercase English letters.\nDetermine if there exists a pair of integers c and w such that 1 \\leq c \\leq w < |S| and the following condition is satisfied. Here, |S| denotes the length of the string S. Note that w must be less than |S|.\n\n- If S is split at every w characters from the beginning, the concatenation of the c-th characters of the substrings of length at least c in order equals T.\n\nInput\n\nThe input is given from Standard Input in the following format:\nS T\n\nOutput\n\nPrint Yes if there exists a pair of integers c and w such that 1 \\leq c \\leq w < |S| and the condition is satisfied, and No ...",
+  "backend": {
+    "backend": "vllm",
+    "model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "timeout": 1800.0,
+    "max_retries": 2,
+    "base_url": "http://notch501.ipoib.int.chpc.utah.edu:8000/v1",
+    "healthcheck": {
+      "models_url": "http://notch501.ipoib.int.chpc.utah.edu:8000/v1/models",
+      "available_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct"
+      ]
+    }
+  },
+  "response_metadata": {
+    "provider": "rlm_rag",
+    "rlm_max_depth": 1,
+    "rlm_max_iterations": 12,
+    "rlm_max_prompt_tokens": 30720,
+    "rlm_backend": "vllm",
+    "rlm_backend_url": "http://notch501.ipoib.int.chpc.utah.edu:8000/v1",
+    "rlm_backend_timeout": 1800.0,
+    "rlm_backend_max_retries": 2,
+    "tokenizer_model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "context_limit_tokens": 32768,
+    "prompt_budget_tokens": 30720,
+    "completion_token_reserve": 2048,
+    "prompt_tokens": 953,
+    "samples": [
+      {
+        "error": "APIConnectionError('Connection error.')",
+        "exception_type": "APIConnectionError"
+      }
+    ],
+    "failed_samples_count": 1,
+    "total_n_requested": 1
+  },
+  "written_at": "2026-04-14T17:36:59.987934+00:00"
+}

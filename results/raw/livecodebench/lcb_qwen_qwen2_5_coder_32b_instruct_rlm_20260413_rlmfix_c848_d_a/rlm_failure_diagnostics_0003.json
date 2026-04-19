@@ -1,0 +1,43 @@
+{
+  "failure_type": "rlm_backend_timeout",
+  "prompt_index": 3,
+  "prompt_preview": "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n\nYou will be given a question (problem specification) and will generate a correct Python program that matches the specification and passes all tests. You will NOT return anything except for the program.\n\nQuestion: You are given a permutation P=(P_1,P_2,\\ldots,P_N) of (1,2,\\ldots,N).\nThe following operation will be performed K times:\n\n- For i=1,2,\\ldots,N, simultaneously update P_i to P_{P_i}.\n\nPrint P after all operations.\n\nInput\n\nThe input is given from Standard Input in the following format:\nN K\r\nP_1 P_2 \\ldots P_N\n\nOutput\n\nFor the P after all operations, print P_1,P_2,\\ldots,P_N in this order, separated by spaces.\n\nConstraints\n\n\n- 1\\leq N\\leq2\\times10^5\n- 1\\leq K\\leq10^{18}\n- 1\\leq P_i\\leq N\\ (1\\leq i\\leq N)\n- P_...",
+  "backend": {
+    "backend": "vllm",
+    "model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "timeout": 900.0,
+    "max_retries": 2,
+    "base_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1",
+    "healthcheck": {
+      "models_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1/models",
+      "available_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct"
+      ]
+    }
+  },
+  "response_metadata": {
+    "provider": "rlm",
+    "rlm_max_depth": 1,
+    "rlm_max_iterations": 12,
+    "rlm_max_prompt_tokens": 26624,
+    "rlm_backend": "vllm",
+    "rlm_backend_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1",
+    "rlm_backend_timeout": 900.0,
+    "rlm_backend_max_retries": 2,
+    "tokenizer_model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "context_limit_tokens": 28672,
+    "prompt_budget_tokens": 26624,
+    "completion_token_reserve": 2048,
+    "prompt_tokens": 740,
+    "samples": [
+      {
+        "error": "APITimeoutError('Request timed out.')",
+        "exception_type": "APITimeoutError",
+        "failure_type": "rlm_backend_timeout"
+      }
+    ],
+    "failed_samples_count": 1,
+    "total_n_requested": 1
+  },
+  "written_at": "2026-04-15T16:22:56.769103+00:00"
+}

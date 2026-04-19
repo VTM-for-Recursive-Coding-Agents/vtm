@@ -1,0 +1,43 @@
+{
+  "failure_type": "rlm_backend_response_error",
+  "prompt_index": 4,
+  "prompt_preview": "Use the retrieved context below when useful. Do not copy test outputs or fabricate hidden constraints.\n\nRelevant local benchmark context:\n\n[question]\nYou are given an integer array nums.\nReturn an integer that is the maximum distance between the indices of two (not necessarily different) prime numbers in nums.\n \nExample 1:\n\nInput: nums = [4,2,9,5,3]\nOutput: 3\nExplanation: nums[1], nums[3], and nums[4] are prime. So the answer is |4 - 1| = 3.\n\nExample 2:\n\nInput: nums = [4,8,2,8]\nOutput: 0\nExplanation: nums[2] is prime. Because there is just one prime number, the answer is |2 - 2| = 0.\n\n \nConstraints:\n\n1 <= nums.length <= 3 * 10^5\n1 <= nums[i] <= 100\nThe input is generated such that the number of prime numbers in the nums is at least one.\n\n[starter_code]\nclass Solution:\n    def maximumPrimeD...",
+  "backend": {
+    "backend": "vllm",
+    "model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "timeout": 1800.0,
+    "max_retries": 2,
+    "base_url": "http://notch367.ipoib.int.chpc.utah.edu:8000/v1",
+    "healthcheck": {
+      "models_url": "http://notch367.ipoib.int.chpc.utah.edu:8000/v1/models",
+      "available_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct"
+      ]
+    }
+  },
+  "response_metadata": {
+    "provider": "rlm_rag",
+    "rlm_max_depth": 1,
+    "rlm_max_iterations": 12,
+    "rlm_max_prompt_tokens": 26624,
+    "rlm_backend": "vllm",
+    "rlm_backend_url": "http://notch367.ipoib.int.chpc.utah.edu:8000/v1",
+    "rlm_backend_timeout": 1800.0,
+    "rlm_backend_max_retries": 2,
+    "tokenizer_model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "context_limit_tokens": 28672,
+    "prompt_budget_tokens": 26624,
+    "completion_token_reserve": 2048,
+    "prompt_tokens": 634,
+    "samples": [
+      {
+        "error": "RuntimeError('OpenAI-compatible backend returned no response object.')",
+        "exception_type": "RuntimeError",
+        "failure_type": "rlm_backend_response_error"
+      }
+    ],
+    "failed_samples_count": 1,
+    "total_n_requested": 1
+  },
+  "written_at": "2026-04-15T05:57:58.813253+00:00"
+}

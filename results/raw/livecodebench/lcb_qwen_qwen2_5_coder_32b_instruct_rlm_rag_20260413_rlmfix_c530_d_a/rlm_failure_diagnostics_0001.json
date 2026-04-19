@@ -1,0 +1,43 @@
+{
+  "failure_type": "rlm_backend_response_error",
+  "prompt_index": 1,
+  "prompt_preview": "Use the retrieved context below when useful. Do not copy test outputs or fabricate hidden constraints.\n\nRelevant local benchmark context:\n\n[question]\nWe have N books numbered 1 to N.\r\nBook i assumes that you have read C_i books, the j-th of which is book P_{i,j}: you must read all these C_i books before reading book i.\r\nHere, you can read all the books in some order.\nYou are trying to read the minimum number of books required to read book 1.\r\nPrint the numbers of the books you must read excluding book 1 in the order they should be read. Under this condition, the set of books to read is uniquely determined.\r\nIf there are multiple reading orders that satisfy the condition, you may print any of them.\n\nInput\n\nThe input is given from Standard Input in the following format:\nN\r\nC_1 P_{1,1} \\ldots...",
+  "backend": {
+    "backend": "vllm",
+    "model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "timeout": 1800.0,
+    "max_retries": 2,
+    "base_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1",
+    "healthcheck": {
+      "models_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1/models",
+      "available_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct"
+      ]
+    }
+  },
+  "response_metadata": {
+    "provider": "rlm_rag",
+    "rlm_max_depth": 1,
+    "rlm_max_iterations": 12,
+    "rlm_max_prompt_tokens": 26624,
+    "rlm_backend": "vllm",
+    "rlm_backend_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1",
+    "rlm_backend_timeout": 1800.0,
+    "rlm_backend_max_retries": 2,
+    "tokenizer_model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "context_limit_tokens": 28672,
+    "prompt_budget_tokens": 26624,
+    "completion_token_reserve": 2048,
+    "prompt_tokens": 1596,
+    "samples": [
+      {
+        "error": "RuntimeError('OpenAI-compatible backend returned no response object.')",
+        "exception_type": "RuntimeError",
+        "failure_type": "rlm_backend_response_error"
+      }
+    ],
+    "failed_samples_count": 1,
+    "total_n_requested": 1
+  },
+  "written_at": "2026-04-15T18:30:35.185444+00:00"
+}

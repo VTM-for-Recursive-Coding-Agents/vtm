@@ -1,0 +1,43 @@
+{
+  "failure_type": "rlm_backend_timeout",
+  "prompt_index": 6,
+  "prompt_preview": "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n\nYou will be given a question (problem specification) and will generate a correct Python program that matches the specification and passes all tests. You will NOT return anything except for the program.\n\nQuestion: You are given an integer array coins representing coins of different denominations and an integer k.\nYou have an infinite number of coins of each denomination. However, you are not allowed to combine coins of different denominations.\nReturn the k^th smallest amount that can be made using these coins.\n \nExample 1:\n\nInput: coins = [3,6,9], k = 3\nOutput:  9\nExplanation: The given coins can make the following amounts:\nCoin 3 produces multiples of 3: 3, 6, 9, 12, 15, etc.\nCoin 6 produces multiples of 6: 6, 12, ...",
+  "backend": {
+    "backend": "vllm",
+    "model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "timeout": 900.0,
+    "max_retries": 2,
+    "base_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1",
+    "healthcheck": {
+      "models_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1/models",
+      "available_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct"
+      ]
+    }
+  },
+  "response_metadata": {
+    "provider": "rlm",
+    "rlm_max_depth": 1,
+    "rlm_max_iterations": 12,
+    "rlm_max_prompt_tokens": 30720,
+    "rlm_backend": "vllm",
+    "rlm_backend_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1",
+    "rlm_backend_timeout": 900.0,
+    "rlm_backend_max_retries": 2,
+    "tokenizer_model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "context_limit_tokens": 32768,
+    "prompt_budget_tokens": 30720,
+    "completion_token_reserve": 2048,
+    "prompt_tokens": 514,
+    "samples": [
+      {
+        "error": "APITimeoutError('Request timed out.')",
+        "exception_type": "APITimeoutError",
+        "failure_type": "rlm_backend_timeout"
+      }
+    ],
+    "failed_samples_count": 1,
+    "total_n_requested": 1
+  },
+  "written_at": "2026-04-14T01:04:37.150302+00:00"
+}

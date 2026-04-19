@@ -1,0 +1,43 @@
+{
+  "failure_type": "rlm_backend_timeout",
+  "prompt_index": 1,
+  "prompt_preview": "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n\nYou will be given a question (problem specification) and will generate a correct Python program that matches the specification and passes all tests. You will NOT return anything except for the program.\n\nQuestion: We have a directed graph with N vertices, numbered 1, 2, \\ldots, N.\nInformation about the edges is given by N^2 characters C_{1, 1}, C_{1, 2}, \\ldots, C_{1, N}, C_{2, 1}, \\ldots, C_{N, N}. Here, each C_{i, j} is either a lowercase English letter or -.\nIf C_{i, j} is a lowercase English letter, then there is exactly one directed edge from vertex i to vertex j labeled C_{i, j}. If C_{i, j} is -, there is no edge from vertex i to vertex j.\nFor each integer pair (i, j) with 1 \\leq i, j \\leq N, answer the follo...",
+  "backend": {
+    "backend": "vllm",
+    "model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "timeout": 900.0,
+    "max_retries": 2,
+    "base_url": "http://notch428.ipoib.int.chpc.utah.edu:8000/v1",
+    "healthcheck": {
+      "models_url": "http://notch428.ipoib.int.chpc.utah.edu:8000/v1/models",
+      "available_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct"
+      ]
+    }
+  },
+  "response_metadata": {
+    "provider": "rlm",
+    "rlm_max_depth": 1,
+    "rlm_max_iterations": 12,
+    "rlm_max_prompt_tokens": 30720,
+    "rlm_backend": "vllm",
+    "rlm_backend_url": "http://notch428.ipoib.int.chpc.utah.edu:8000/v1",
+    "rlm_backend_timeout": 900.0,
+    "rlm_backend_max_retries": 2,
+    "tokenizer_model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "context_limit_tokens": 32768,
+    "prompt_budget_tokens": 30720,
+    "completion_token_reserve": 2048,
+    "prompt_tokens": 854,
+    "samples": [
+      {
+        "error": "APITimeoutError('Request timed out.')",
+        "exception_type": "APITimeoutError",
+        "failure_type": "rlm_backend_timeout"
+      }
+    ],
+    "failed_samples_count": 1,
+    "total_n_requested": 1
+  },
+  "written_at": "2026-04-14T10:20:42.168224+00:00"
+}

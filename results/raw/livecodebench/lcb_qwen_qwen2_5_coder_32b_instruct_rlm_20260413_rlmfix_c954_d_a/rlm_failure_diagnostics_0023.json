@@ -1,0 +1,43 @@
+{
+  "failure_type": "rlm_backend_response_error",
+  "prompt_index": 23,
+  "prompt_preview": "<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n<|im_start|>user\n\nYou will be given a question (problem specification) and will generate a correct Python program that matches the specification and passes all tests. You will NOT return anything except for the program.\n\nQuestion: Find a length-N string that satisfies all of the following conditions:\n\n- Each character is - or =.\n- It is a palindrome.\n- It contains exactly one or exactly two =s. If it contains two =s, they are adjacent.\n\nSuch a string is unique.\n\nInput\n\nThe input is given from Standard Input in the following format:\nN\n\nOutput\n\nPrint the answer.\n\nConstraints\n\n\n- 1 \\leq N \\leq 100\n- N is an integer.\n\nSample Input 1\n\n4\n\nSample Output 1\n\n-==-\n\nSample Input 2\n\n7\n\nSample Output 2\n\n---=---\n\nRead the inputs from stdin solve ...",
+  "backend": {
+    "backend": "vllm",
+    "model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "timeout": 900.0,
+    "max_retries": 2,
+    "base_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1",
+    "healthcheck": {
+      "models_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1/models",
+      "available_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct"
+      ]
+    }
+  },
+  "response_metadata": {
+    "provider": "rlm",
+    "rlm_max_depth": 1,
+    "rlm_max_iterations": 12,
+    "rlm_max_prompt_tokens": 26624,
+    "rlm_backend": "vllm",
+    "rlm_backend_url": "http://notch368.ipoib.int.chpc.utah.edu:8000/v1",
+    "rlm_backend_timeout": 900.0,
+    "rlm_backend_max_retries": 2,
+    "tokenizer_model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "context_limit_tokens": 28672,
+    "prompt_budget_tokens": 26624,
+    "completion_token_reserve": 2048,
+    "prompt_tokens": 282,
+    "samples": [
+      {
+        "error": "RuntimeError('OpenAI-compatible backend returned no response object.')",
+        "exception_type": "RuntimeError",
+        "failure_type": "rlm_backend_response_error"
+      }
+    ],
+    "failed_samples_count": 1,
+    "total_n_requested": 1
+  },
+  "written_at": "2026-04-15T18:30:35.856723+00:00"
+}

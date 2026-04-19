@@ -1,0 +1,42 @@
+{
+  "failure_type": "all_empty_samples",
+  "prompt_index": 5,
+  "prompt_preview": "Use the retrieved context below when useful. Do not copy test outputs or fabricate hidden constraints.\n\nRelevant local benchmark context:\n\n[question]\nYou are given a binary array nums.\nWe call a subarray alternating if no two adjacent elements in the subarray have the same value.\nReturn the number of alternating subarrays in nums.\n \nExample 1:\n\nInput: nums = [0,1,1,1]\nOutput: 5\nExplanation:\nThe following subarrays are alternating: [0], [1], [1], [1], and [0,1].\n\nExample 2:\n\nInput: nums = [1,0,1,0]\nOutput: 10\nExplanation:\nEvery subarray of the array is alternating. There are 10 possible subarrays that we can choose.\n\n \nConstraints:\n\n1 <= nums.length <= 10^5\nnums[i] is either 0 or 1.\n\n[starter_code]\nclass Solution:\n    def countAlternatingSubarrays(self, nums: List[int]) -> int:\n\n[public_tes...",
+  "backend": {
+    "backend": "vllm",
+    "model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "timeout": 1800.0,
+    "max_retries": 2,
+    "base_url": "http://notch367.ipoib.int.chpc.utah.edu:8000/v1",
+    "healthcheck": {
+      "models_url": "http://notch367.ipoib.int.chpc.utah.edu:8000/v1/models",
+      "available_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct"
+      ]
+    }
+  },
+  "response_metadata": {
+    "provider": "rlm_rag",
+    "rlm_max_depth": 1,
+    "rlm_max_iterations": 12,
+    "rlm_max_prompt_tokens": 26624,
+    "rlm_backend": "vllm",
+    "rlm_backend_url": "http://notch367.ipoib.int.chpc.utah.edu:8000/v1",
+    "rlm_backend_timeout": 1800.0,
+    "rlm_backend_max_retries": 2,
+    "tokenizer_model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "context_limit_tokens": 28672,
+    "prompt_budget_tokens": 26624,
+    "completion_token_reserve": 2048,
+    "prompt_tokens": 583,
+    "samples": [
+      {
+        "error": "APIConnectionError('Connection error.')",
+        "exception_type": "APIConnectionError"
+      }
+    ],
+    "failed_samples_count": 1,
+    "total_n_requested": 1
+  },
+  "written_at": "2026-04-15T05:58:00.379336+00:00"
+}

@@ -1,0 +1,43 @@
+{
+  "failure_type": "rlm_context_limit_exceeded",
+  "prompt_index": 20,
+  "prompt_preview": "Use the retrieved context below when useful. Do not copy test outputs or fabricate hidden constraints.\n\nRelevant local benchmark context:\n\n[question]\nYou are given a 0-indexed string s that consists of digits from 0 to 9.\nA string t is called a semi-repetitive if there is at most one consecutive pair of the same digits inside t. For example, 0010, 002020, 0123, 2002, and 54944 are semi-repetitive while 00101022, and 1101234883 are not.\nReturn the length of the longest semi-repetitive substring inside s.\nA substring is a contiguous non-empty sequence of characters within a string.\n \nExample 1:\n\nInput: s = \"52233\"\nOutput: 4\nExplanation: The longest semi-repetitive substring is \"5223\", which starts at i = 0 and ends at j = 3. \n\nExample 2:\n\nInput: s = \"5494\"\nOutput: 4\nExplanation: s is a semi-...",
+  "backend": {
+    "backend": "vllm",
+    "model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "timeout": 1800.0,
+    "max_retries": 2,
+    "base_url": "http://notch367.ipoib.int.chpc.utah.edu:8000/v1",
+    "healthcheck": {
+      "models_url": "http://notch367.ipoib.int.chpc.utah.edu:8000/v1/models",
+      "available_models": [
+        "Qwen/Qwen2.5-Coder-32B-Instruct"
+      ]
+    }
+  },
+  "response_metadata": {
+    "provider": "rlm_rag",
+    "rlm_max_depth": 1,
+    "rlm_max_iterations": 4,
+    "rlm_max_prompt_tokens": 26624,
+    "rlm_backend": "vllm",
+    "rlm_backend_url": "http://notch367.ipoib.int.chpc.utah.edu:8000/v1",
+    "rlm_backend_timeout": 1800.0,
+    "rlm_backend_max_retries": 2,
+    "tokenizer_model_name": "Qwen/Qwen2.5-Coder-32B-Instruct",
+    "context_limit_tokens": 28672,
+    "prompt_budget_tokens": 26624,
+    "completion_token_reserve": 2048,
+    "prompt_tokens": 877,
+    "samples": [
+      {
+        "error": "BadRequestError('Error code: 400 - {\\'error\\': {\\'message\\': \"This model\\'s maximum context length is 28672 tokens. However, your request has 117078 input tokens. Please reduce the length of the input messages. None\", \\'type\\': \\'BadRequestError\\', \\'param\\': None, \\'code\\': 400}}')",
+        "exception_type": "BadRequestError",
+        "failure_type": "rlm_context_limit_exceeded"
+      }
+    ],
+    "failed_samples_count": 1,
+    "total_n_requested": 1
+  },
+  "written_at": "2026-04-19T00:39:13.590213+00:00"
+}
