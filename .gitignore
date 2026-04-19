@@ -29,6 +29,7 @@ dist/
 # Generated launcher bundles and external benchmark artifacts
 launchers/*
 !launchers/README.md
+benchmarks/LiveCodeBench/
 results/*
 !results/README.md
 

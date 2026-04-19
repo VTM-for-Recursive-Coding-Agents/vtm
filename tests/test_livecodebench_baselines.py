@@ -9,14 +9,21 @@ from pathlib import Path
 import pytest
 
 import vtm.benchmarks.livecodebench_dspy_pilot as livecodebench_dspy_pilot
+import vtm.benchmarks.livecodebench_sources as livecodebench_sources
 from vtm.benchmarks.livecodebench_dspy_pilot import (
-    FilesystemProblemSource,
+    RepairContext,
     aggregate_summary,
     build_attempt_prompt,
     method_run_dir,
 )
 from vtm.benchmarks.livecodebench_dspy_pilot import (
     main as livecodebench_dspy_pilot_main,
+)
+from vtm.benchmarks.livecodebench_sources import (
+    LiveCodeBenchCheckoutSource,
+    LiveCodeBenchProblem,
+    ProblemFileSource,
+    discover_problem_source,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +43,7 @@ def _load_baseline_module():
 def test_livecodebench_script_paths_exist() -> None:
     expected = [
         REPO_ROOT / "scripts" / "livecodebench" / "baseline.py",
+        REPO_ROOT / "scripts" / "livecodebench" / "checkout_problem_loader.py",
         REPO_ROOT / "scripts" / "livecodebench" / "export_dspy_pilot_results.py",
         REPO_ROOT / "scripts" / "livecodebench" / "export_results.py",
         REPO_ROOT / "scripts" / "livecodebench" / "setup_livecodebench.sh",
@@ -313,11 +321,88 @@ def test_livecodebench_dspy_summary_aggregation_handles_missing_retrieval_metric
     )
 
     assert summary["pass_count"] == 1
+    assert summary["evaluation_available_count"] == 2
     assert summary["pass_rate"] == 0.5
     assert summary["retrieval_usage_rate"] == 0.0
     assert summary["mean_verified_count"] == 0.0
     assert summary["mean_stale_filtered_count"] == 0.0
     assert summary["mean_tool_calls"] == 0.0
+
+
+def test_livecodebench_dspy_discovers_explicit_source_backends(tmp_path: Path) -> None:
+    problem_file = tmp_path / "problems.jsonl"
+    problem_file.write_text("", encoding="utf-8")
+
+    assert isinstance(
+        discover_problem_source(
+            benchmark_root=tmp_path / "benchmarks" / "LiveCodeBench",
+            problem_file=problem_file,
+        ),
+        ProblemFileSource,
+    )
+    assert isinstance(
+        discover_problem_source(
+            benchmark_root=tmp_path / "benchmarks" / "LiveCodeBench",
+            problem_file=None,
+        ),
+        LiveCodeBenchCheckoutSource,
+    )
+
+
+def test_livecodebench_dspy_evaluate_public_stdin_tests() -> None:
+    source = ProblemFileSource(Path("/tmp/public-problems.jsonl"))
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-stdin",
+        scenario="code_generation",
+        prompt="Read a number and print it back.",
+        evaluator_payload={
+            "public_tests": [
+                {"input": "5\n", "output": "5\n", "testtype": "stdin"},
+                {"input": "9\n", "output": "9\n", "testtype": "stdin"},
+            ]
+        },
+    )
+
+    evaluation = source.evaluate(
+        problem,
+        response_text="print('wrong')",
+        extracted_code="value = input().strip()\nprint(value)\n",
+    )
+
+    assert evaluation is not None
+    assert evaluation["available"] is True
+    assert evaluation["scope"] == "public_tests"
+    assert evaluation["passed"] is True
+    assert evaluation["pass_rate"] == 1.0
+    assert evaluation["passed_test_count"] == 2
+    assert evaluation["public_test_count"] == 2
+
+
+def test_livecodebench_dspy_evaluate_functional_public_tests() -> None:
+    source = ProblemFileSource(Path("/tmp/public-problems.jsonl"))
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-functional",
+        scenario="code_generation",
+        prompt="Implement add(a, b).",
+        evaluator_payload={
+            "public_tests": [
+                {"input": "[2, 3]", "output": "5", "testtype": "functional"},
+            ],
+            "problem_metadata": {"func_name": "add"},
+        },
+    )
+
+    evaluation = source.evaluate(
+        problem,
+        response_text="def add(a, b):\n    return a + b\n",
+        extracted_code="def add(a, b):\n    return a + b\n",
+    )
+
+    assert evaluation is not None
+    assert evaluation["available"] is True
+    assert evaluation["passed"] is True
+    assert evaluation["pass_rate"] == 1.0
+    assert evaluation["passed_test_count"] == 1
 
 
 def test_livecodebench_dspy_prompt_omits_gold_and_hidden_fields(tmp_path: Path) -> None:
@@ -339,10 +424,7 @@ def test_livecodebench_dspy_prompt_omits_gold_and_hidden_fields(tmp_path: Path) 
         + "\n",
         encoding="utf-8",
     )
-    source = FilesystemProblemSource(
-        benchmark_root=tmp_path / "benchmarks" / "LiveCodeBench",
-        problem_file=problem_file,
-    )
+    source = ProblemFileSource(problem_file)
     problem = source.load_problems("code_generation", max_problems=1)[0]
 
     prompt = build_attempt_prompt(problem, attempt_index=1)
@@ -352,6 +434,31 @@ def test_livecodebench_dspy_prompt_omits_gold_and_hidden_fields(tmp_path: Path) 
     assert "do not leak" not in prompt
     assert "Write solve() that returns 42." in prompt
     assert "Sample case expects 42." in prompt
+
+
+def test_livecodebench_dspy_self_repair_prompt_includes_previous_code_and_feedback() -> None:
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-repair",
+        scenario="self_repair",
+        prompt="Implement add(a, b).",
+        public_feedback=("Public sample: input='[2, 3]' output='5'",),
+    )
+
+    prompt = build_attempt_prompt(
+        problem,
+        attempt_index=2,
+        visible_feedback=("Functional public test mismatch: expected=5 actual=4",),
+        repair_context=RepairContext(
+            previous_response="def add(a, b):\n    return a - b\n",
+            previous_code="def add(a, b):\n    return a - b\n",
+            visible_feedback=("Functional public test mismatch: expected=5 actual=4",),
+        ),
+    )
+
+    assert "Previous Attempt:" in prompt
+    assert "return a - b" in prompt
+    assert "Functional public test mismatch: expected=5 actual=4" in prompt
+    assert "This is repair attempt 2. Fix the previous attempt." in prompt
 
 
 def test_livecodebench_dspy_output_paths_stay_under_pilot_root(tmp_path: Path) -> None:
@@ -366,6 +473,30 @@ def test_livecodebench_dspy_output_paths_stay_under_pilot_root(tmp_path: Path) -
     )
 
     assert run_dir.is_relative_to(output_root)
+
+
+def test_livecodebench_dspy_reference_command_uses_selfrepair_token() -> None:
+    config = livecodebench_dspy_pilot.PilotRunConfig(
+        methods=("direct",),
+        requested_scenario="self_repair",
+        resolved_scenario="self_repair",
+        model="qwen/qwen3-coder-next",
+        base_url="https://openrouter.example/api/v1",
+        api_key="openrouter-test-key",
+        temperature=0.0,
+        max_tokens=8192,
+        max_problems=3,
+        execute=False,
+        output_root=Path(".benchmarks/livecodebench-dspy"),
+        benchmark_root=Path("benchmarks/LiveCodeBench"),
+        problem_file=None,
+        run_id="pilot_run",
+    )
+
+    command = livecodebench_dspy_pilot._reference_command(config)
+
+    assert "--scenario selfrepair" in command
+    assert "--scenario self_repair" not in command
 
 
 def test_livecodebench_dspy_source_loads_checkout_problems_via_benchmark_venv(
@@ -399,8 +530,8 @@ def test_livecodebench_dspy_source_loads_checkout_problems_via_benchmark_venv(
             stderr="",
         )
 
-    monkeypatch.setattr(livecodebench_dspy_pilot.subprocess, "run", fake_run)
-    source = FilesystemProblemSource(benchmark_root=benchmark_root)
+    monkeypatch.setattr(livecodebench_sources.subprocess, "run", fake_run)
+    source = LiveCodeBenchCheckoutSource(benchmark_root=benchmark_root)
 
     problems = source.load_problems("code_generation", max_problems=1)
 
@@ -424,3 +555,42 @@ def test_livecodebench_dspy_execute_missing_checkout_exits_cleanly(tmp_path: Pat
                 "--execute",
             ]
         )
+
+
+def test_livecodebench_dspy_dry_run_reports_self_repair_semantics(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    problem_file = tmp_path / "problems.jsonl"
+    problem_file.write_text(
+        json.dumps(
+            {
+                "question_id": "lcb-1",
+                "prompt": "Write solve() that returns 42.",
+                "starter_code": "def solve():\n    pass\n",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = livecodebench_dspy_pilot_main(
+        [
+            "--method",
+            "all",
+            "--scenario",
+            "self_repair",
+            "--max-problems",
+            "1",
+            "--benchmark-root",
+            str(tmp_path / "benchmarks" / "LiveCodeBench"),
+            "--problem-file",
+            str(problem_file),
+            "--dry-run",
+        ]
+    )
+
+    assert exit_code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["resolved_scenario"] == "self_repair"
+    assert "previous candidate code" in payload["scenario_semantics"].lower()

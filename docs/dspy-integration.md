@@ -116,6 +116,8 @@ It is deliberately separate from the maintained VTM evidence:
 - The DSPy plus VTM LiveCodeBench path is a scaffolded pilot only.
 - The main VTM evidence remains retrieval, drift verification, drifted retrieval, and controlled coding-drift.
 
+When the pilot runs in `self_repair` mode, the second attempt is a public-feedback repair pass. Each method sees the same previous candidate code and the same visible public-test feedback; only DSPy orchestration and VTM memory access differ.
+
 Dry-run:
 
 ```bash

@@ -52,6 +52,8 @@ Set up the external benchmark checkout:
 bash scripts/livecodebench/setup_livecodebench.sh
 ```
 
+The checkout lives under `benchmarks/LiveCodeBench/` as local external state and is not tracked in git.
+
 OpenRouter-backed smoke command:
 
 ```bash

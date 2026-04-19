@@ -7,18 +7,25 @@ import importlib.util
 import json
 import platform
 import re
-import subprocess
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from statistics import fmean
 from tempfile import TemporaryDirectory
-from typing import Any, Final, Literal, Protocol
+from typing import Any, Final, Literal
 
 from vtm.adapters.openai_chat import OpenAICompatibleChatClient, OpenAICompatibleChatConfig
 from vtm.adapters.python_ast import PythonAstSyntaxAdapter
 from vtm.adapters.tree_sitter import PythonTreeSitterSyntaxAdapter
 from vtm.base import utc_now
+from vtm.benchmarks.livecodebench_sources import (
+    LiveCodeBenchCheckoutSource,
+    LiveCodeBenchProblem,
+    PilotScenario,
+    ProblemFileSource,
+    ProblemSource,
+    discover_problem_source,
+)
 from vtm.benchmarks.openrouter import execution_model, openrouter_api_key, openrouter_base_url
 from vtm.enums import ClaimStrength, EvidenceBudget, MemoryKind, ScopeKind, ValidityStatus
 from vtm.fingerprints import DependencyFingerprint, EnvFingerprint, RepoFingerprint, ToolVersion
@@ -36,7 +43,6 @@ from vtm_dspy.config import DSPyOpenRouterConfig
 from vtm_dspy.react_agent import VTMReActCodingAgent
 
 PilotMethod = Literal["direct", "dspy_baseline", "dspy_vtm"]
-PilotScenario = Literal["code_generation", "self_repair"]
 
 PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[3]
 DEFAULT_OUTPUT_ROOT: Final[Path] = PROJECT_ROOT / ".benchmarks" / "livecodebench-dspy"
@@ -45,97 +51,20 @@ DEFAULT_MAX_PROBLEMS: Final[int] = 3
 DEFAULT_MAX_TOKENS: Final[int] = 8192
 DEFAULT_TEMPERATURE: Final[float] = 0.0
 DEFAULT_SCENARIO: Final[PilotScenario] = "self_repair"
-DEFAULT_DATASET_REPO: Final[str] = "livecodebench/code_generation_lite"
-DEFAULT_DATASET_FILENAME: Final[str] = "test.jsonl"
 METHODS: Final[tuple[PilotMethod, ...]] = ("direct", "dspy_baseline", "dspy_vtm")
 CODE_BLOCK_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"```(?:python)?\s*\n(.*?)```",
     re.DOTALL | re.IGNORECASE,
 )
-SCENARIO_TOKENS: Final[dict[PilotScenario, tuple[str, ...]]] = {
-    "code_generation": ("code_generation", "codegeneration", "code-gen", "codegen"),
-    "self_repair": ("self_repair", "selfrepair", "self-repair"),
-}
-PROMPT_FIELD_CANDIDATES: Final[tuple[str, ...]] = (
-    "question_content",
-    "prompt",
-    "problem",
-    "description",
-    "statement",
-    "question",
-)
-STARTER_FIELD_CANDIDATES: Final[tuple[str, ...]] = (
-    "starter_code",
-    "starter",
-    "code_prompt",
-    "prompt_starter_code",
-)
-ID_FIELD_CANDIDATES: Final[tuple[str, ...]] = ("question_id", "problem_id", "task_id", "id")
-VISIBLE_FEEDBACK_FIELD_CANDIDATES: Final[tuple[str, ...]] = (
-    "visible_feedback",
-    "execution_feedback",
-    "public_feedback",
-    "stderr",
-    "stdout",
-)
-PUBLIC_METADATA_KEYS: Final[tuple[str, ...]] = (
-    "title",
-    "difficulty",
-    "language",
-    "source",
-    "contest_date",
-    "tags",
-)
-HIDDEN_FIELD_FRAGMENTS: Final[tuple[str, ...]] = (
-    "hidden",
-    "private",
-    "solution",
-    "gold",
-    "canonical",
-    "answer",
-    "expected_output",
-)
-
-
-class ProblemSource(Protocol):
-    """Minimal LiveCodeBench source surface used by the pilot."""
-
-    def describe(self) -> dict[str, Any]:
-        """Return dry-run metadata for the underlying source."""
-
-    def supported_scenarios(self) -> set[PilotScenario]:
-        """Return which pilot scenarios this source can load."""
-
-    def load_problems(
-        self,
-        scenario: PilotScenario,
-        *,
-        max_problems: int,
-    ) -> list[LiveCodeBenchProblem]:
-        """Load a bounded set of public problems."""
-
-    def evaluate(
-        self,
-        problem: LiveCodeBenchProblem,
-        *,
-        response_text: str,
-        extracted_code: str | None,
-    ) -> dict[str, Any] | None:
-        """Evaluate one response when the source exposes a safe evaluator."""
 
 
 @dataclass(frozen=True)
-class LiveCodeBenchProblem:
-    """Public, non-oracle problem payload used by every pilot method."""
+class RepairContext:
+    """Public self-repair context carried across attempts."""
 
-    problem_id: str
-    scenario: PilotScenario
-    prompt: str
-    starter_code: str | None = None
-    prompt_metadata: dict[str, Any] = field(default_factory=dict)
-    public_feedback: tuple[str, ...] = field(default_factory=tuple)
-    evaluator_payload: dict[str, Any] = field(default_factory=dict)
-    raw_record_path: str | None = None
+    previous_response: str
+    previous_code: str | None
+    visible_feedback: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -198,178 +127,6 @@ class PilotMemorySession:
         self.cache_store.close()
         self.artifact_store.close()
         self.metadata_store.close()
-
-
-class FilesystemProblemSource:
-    """Public problem loader using either a supplied JSON file or the checkout's own venv."""
-
-    def __init__(
-        self,
-        *,
-        benchmark_root: Path,
-        problem_file: Path | None = None,
-    ) -> None:
-        self._benchmark_root = benchmark_root
-        self._problem_file = problem_file
-
-    def describe(self) -> dict[str, Any]:
-        python_bin = self._checkout_python()
-        return {
-            "kind": "filesystem",
-            "benchmark_root": str(self._benchmark_root),
-            "benchmark_root_exists": self._benchmark_root.exists(),
-            "benchmark_python": str(python_bin) if python_bin is not None else None,
-            "benchmark_python_exists": python_bin.exists() if python_bin is not None else False,
-            "dataset_repo": DEFAULT_DATASET_REPO,
-            "dataset_filename": DEFAULT_DATASET_FILENAME,
-            "problem_file": str(self._problem_file) if self._problem_file is not None else None,
-            "problem_file_exists": self._problem_file.exists() if self._problem_file else False,
-            "supported_scenarios": sorted(self.supported_scenarios()),
-        }
-
-    def supported_scenarios(self) -> set[PilotScenario]:
-        if self._problem_file is not None:
-            return {DEFAULT_SCENARIO, "code_generation"}
-        if self._checkout_python() is not None:
-            return {"code_generation", "self_repair"}
-        supported: set[PilotScenario] = set()
-        for scenario in SCENARIO_TOKENS:
-            if self._resolve_data_path(scenario) is not None:
-                supported.add(scenario)
-        return supported
-
-    def load_problems(
-        self,
-        scenario: PilotScenario,
-        *,
-        max_problems: int,
-    ) -> list[LiveCodeBenchProblem]:
-        if self._problem_file is not None:
-            raw_records = _load_problem_records(self._problem_file)
-            source_path = self._problem_file
-        else:
-            checkout_python = self._checkout_python()
-            if checkout_python is not None:
-                raw_records = self._load_problems_from_checkout(
-                    checkout_python,
-                    scenario=scenario,
-                    max_problems=max_problems,
-                )
-                source_path = self._benchmark_root / ".venv"
-            else:
-                data_path = self._resolve_data_path(scenario)
-                if data_path is None:
-                    raise FileNotFoundError(
-                        f"unable to locate LiveCodeBench data for scenario={scenario!r} under "
-                        f"{self._benchmark_root}"
-                    )
-                raw_records = _load_problem_records(data_path)
-                source_path = data_path
-        problems: list[LiveCodeBenchProblem] = []
-        for index, record in enumerate(raw_records):
-            problem = _problem_from_record(
-                record,
-                scenario=scenario,
-                source_path=source_path,
-                fallback_id=f"{scenario}-{index + 1}",
-            )
-            if problem is not None:
-                problems.append(problem)
-            if len(problems) >= max_problems:
-                break
-        return problems
-
-    def evaluate(
-        self,
-        problem: LiveCodeBenchProblem,
-        *,
-        response_text: str,
-        extracted_code: str | None,
-    ) -> dict[str, Any] | None:
-        public_tests = problem.evaluator_payload.get("public_tests")
-        if not isinstance(public_tests, list | tuple) or not public_tests:
-            return None
-        if any(isinstance(test, Mapping) for test in public_tests):
-            return None
-        code_text = extracted_code or response_text
-        failures = []
-        for raw_test in public_tests:
-            test_text = str(raw_test).strip()
-            if test_text and test_text not in code_text:
-                failures.append(test_text)
-        passed = not failures
-        return {
-            "available": True,
-            "passed": passed,
-            "pass_rate": 1.0 if passed else 0.0,
-            "failure_feedback": failures[:3],
-            "syntax_error": False,
-        }
-
-    def _resolve_data_path(self, scenario: PilotScenario) -> Path | None:
-        if not self._benchmark_root.exists():
-            return None
-        candidates = sorted(
-            path
-            for path in self._benchmark_root.rglob("*")
-            if path.is_file()
-            and path.suffix.lower() in {".json", ".jsonl"}
-            and any(token in path.name.lower() for token in SCENARIO_TOKENS[scenario])
-        )
-        if candidates:
-            return candidates[0]
-        return None
-
-    def _checkout_python(self) -> Path | None:
-        candidate = self._benchmark_root / ".venv" / "bin" / "python"
-        if candidate.exists():
-            return candidate
-        return None
-
-    def _load_problems_from_checkout(
-        self,
-        python_bin: Path,
-        *,
-        scenario: PilotScenario,
-        max_problems: int,
-    ) -> list[dict[str, Any]]:
-        script = f"""
-import json
-from huggingface_hub import hf_hub_download
-
-path = hf_hub_download(
-    repo_id={DEFAULT_DATASET_REPO!r},
-    repo_type='dataset',
-    filename={DEFAULT_DATASET_FILENAME!r},
-)
-rows = []
-with open(path, 'r', encoding='utf-8') as handle:
-    for line in handle:
-        stripped = line.strip()
-        if not stripped:
-            continue
-        rows.append(json.loads(stripped))
-        if len(rows) >= {max_problems}:
-            break
-print(json.dumps(rows))
-"""
-        completed = subprocess.run(
-            [str(python_bin), "-c", script],
-            cwd=self._benchmark_root,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if completed.returncode != 0:
-            stderr = completed.stderr.strip() or completed.stdout.strip()
-            raise RuntimeError(
-                "LiveCodeBench checkout loader failed. "
-                f"benchmark_root={self._benchmark_root} stderr={stderr}"
-            )
-        payload = json.loads(completed.stdout)
-        if not isinstance(payload, list):
-            raise RuntimeError("LiveCodeBench checkout loader did not return a list of problems")
-        return [row for row in payload if isinstance(row, dict)]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -462,14 +219,6 @@ def resolve_scenario(
     if requested == "self_repair" and "code_generation" in supported_scenarios:
         return "code_generation"
     return requested
-
-
-def discover_problem_source(
-    *,
-    benchmark_root: Path,
-    problem_file: Path | None = None,
-) -> ProblemSource:
-    return FilesystemProblemSource(benchmark_root=benchmark_root, problem_file=problem_file)
 
 
 def resolve_config(
@@ -576,6 +325,7 @@ def build_attempt_prompt(
     attempt_index: int,
     memory_cards: Sequence[Mapping[str, Any]] = (),
     visible_feedback: Sequence[str] = (),
+    repair_context: RepairContext | None = None,
 ) -> str:
     sections = [
         "Solve the following LiveCodeBench problem.",
@@ -613,17 +363,28 @@ def build_attempt_prompt(
                     sort_keys=True,
                 )
             )
+    if repair_context is not None:
+        sections.append("")
+        sections.append("Previous Attempt:")
+        if repair_context.previous_code:
+            sections.extend(
+                [
+                    "```python",
+                    repair_context.previous_code.strip(),
+                    "```",
+                ]
+            )
+        else:
+            sections.append(compact_text(repair_context.previous_response, limit=600))
     combined_feedback = tuple(problem.public_feedback) + tuple(visible_feedback)
     if combined_feedback:
         sections.append("")
         sections.append("Visible Feedback:")
         for feedback in combined_feedback:
             sections.append(f"- {feedback}")
-    if attempt_index > 1:
+    if attempt_index > 1 and repair_context is not None:
         sections.append("")
-        sections.append(
-            f"This is repair attempt {attempt_index}. Incorporate the visible feedback."
-        )
+        sections.append(f"This is repair attempt {attempt_index}. Fix the previous attempt.")
     return "\n".join(sections).strip() + "\n"
 
 
@@ -654,7 +415,8 @@ def aggregate_summary(
         and isinstance(row["evaluation"].get("passed"), bool)
     ]
     pass_count = sum(1 for row in evaluation_rows if row.get("passed") is True)
-    pass_rate = (pass_count / total) if total and evaluation_rows else None
+    evaluation_available_count = len(evaluation_rows)
+    pass_rate = (pass_count / evaluation_available_count) if evaluation_rows else None
     syntax_error_count = sum(
         1
         for row in rows
@@ -693,6 +455,7 @@ def aggregate_summary(
         "method": method,
         "model": model,
         "total": total,
+        "evaluation_available_count": evaluation_available_count,
         "pass_count": pass_count if evaluation_rows else None,
         "pass_rate": round(pass_rate, 6) if pass_rate is not None else None,
         "accuracy": round(pass_rate, 6) if pass_rate is not None else None,
@@ -730,6 +493,7 @@ def run_pilot(
         "problem_source": source.describe(),
         "problem_source_error": source_error,
         "problem_count": len(problems),
+        "scenario_semantics": _scenario_semantics(config.resolved_scenario),
         "direct_reference_command": _reference_command(config),
         "runs": [],
     }
@@ -774,6 +538,7 @@ def run_pilot(
         summary["run_id"] = config.run_id
         summary["generated_at"] = utc_now().isoformat()
         summary["problem_source"] = source.describe()
+        summary["scenario_semantics"] = _scenario_semantics(config.resolved_scenario)
         write_problem_rows(paths.problems_jsonl, rows)
         write_summary(paths.summary_json, summary)
         run_payload["summary"] = summary
@@ -787,6 +552,7 @@ def _problem_source_error_message(
 ) -> str:
     description = source.describe()
     benchmark_root_exists = bool(description.get("benchmark_root_exists"))
+    checkout_loader_script_exists = description.get("checkout_loader_script_exists")
     problem_file = description.get("problem_file")
     supported = description.get("supported_scenarios", [])
     if problem_file:
@@ -800,6 +566,12 @@ def _problem_source_error_message(
             "Run `bash scripts/livecodebench/setup_livecodebench.sh` first, or pass "
             "`--problem-file <public-problems.jsonl>`."
         )
+    if checkout_loader_script_exists is False:
+        return (
+            f"{exc}. The repo-local checkout loader script is missing. "
+            "Restore `scripts/livecodebench/checkout_problem_loader.py` or pass "
+            "`--problem-file <public-problems.jsonl>`."
+        )
     if supported:
         return (
             f"{exc}. Supported scenarios discovered under {config.benchmark_root}: "
@@ -807,9 +579,9 @@ def _problem_source_error_message(
             "Pick one of those or pass `--problem-file <public-problems.jsonl>`."
         )
     return (
-        f"{exc}. No problem data was discovered under {config.benchmark_root}. "
-        "Run `bash scripts/livecodebench/setup_livecodebench.sh` first, confirm the "
-        "external checkout contains public problem JSON/JSONL files, or pass "
+        f"{exc}. No usable LiveCodeBench checkout-backed problem source was discovered under "
+        f"{config.benchmark_root}. Run `bash scripts/livecodebench/setup_livecodebench.sh` "
+        "first, confirm the checkout venv is present, or pass "
         "`--problem-file <public-problems.jsonl>`."
     )
 
@@ -866,6 +638,7 @@ def execute_problem(
     evaluation: dict[str, Any] | None = None
     retrieval_payload: dict[str, Any] | None = None
     dspy_tool_calls = 0
+    repair_context: RepairContext | None = None
 
     with TemporaryDirectory(prefix=f"vtm-lcb-{problem.problem_id}-") as temp_dir:
         session = (
@@ -893,6 +666,7 @@ def execute_problem(
                     attempt_index=attempt_index,
                     memory_cards=memory_cards,
                     visible_feedback=visible_feedback,
+                    repair_context=repair_context,
                 )
                 if method == "direct":
                     response_payload = client.create_chat_completion(
@@ -937,6 +711,11 @@ def execute_problem(
                 feedback_items = evaluation.get("failure_feedback")
                 if isinstance(feedback_items, list):
                     visible_feedback = [str(item) for item in feedback_items if str(item).strip()]
+                repair_context = RepairContext(
+                    previous_response=response_text,
+                    previous_code=extracted_code,
+                    visible_feedback=tuple(visible_feedback),
+                )
         finally:
             if session is not None:
                 session.close()
@@ -963,6 +742,8 @@ def execute_problem(
         "usage": usage,
         "retrieval": retrieval_payload,
         "tool_calls": total_tool_calls,
+        "attempt_count": 2 if repair_context is not None else 1,
+        "repair_used": repair_context is not None,
     }
 
 
@@ -1290,118 +1071,8 @@ def _slugify(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-") or "model"
 
 
-def _load_problem_records(path: Path) -> list[dict[str, Any]]:
-    if path.suffix.lower() == ".jsonl":
-        rows: list[dict[str, Any]] = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            payload = json.loads(stripped)
-            if isinstance(payload, dict):
-                rows.append(payload)
-        return rows
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if isinstance(payload, list):
-        return [row for row in payload if isinstance(row, dict)]
-    if isinstance(payload, dict):
-        for key in ("items", "problems", "questions", "tasks"):
-            value = payload.get(key)
-            if isinstance(value, list):
-                return [row for row in value if isinstance(row, dict)]
-    raise ValueError(f"unsupported problem payload layout: {path}")
-
-
-def _problem_from_record(
-    record: Mapping[str, Any],
-    *,
-    scenario: PilotScenario,
-    source_path: Path,
-    fallback_id: str,
-) -> LiveCodeBenchProblem | None:
-    prompt = _first_string(record, PROMPT_FIELD_CANDIDATES)
-    if not prompt:
-        return None
-    problem_id = _first_string(record, ID_FIELD_CANDIDATES) or fallback_id
-    starter_code = _first_string(record, STARTER_FIELD_CANDIDATES)
-    prompt_metadata = {
-        key: value
-        for key, value in record.items()
-        if key in PUBLIC_METADATA_KEYS and value not in (None, "", [], {})
-    }
-    for key in ("question_title", "platform", "contest_id"):
-        value = record.get(key)
-        if value not in (None, "", [], {}):
-            prompt_metadata[key] = value
-    public_feedback = tuple(
-        str(record[key]).strip()
-        for key in VISIBLE_FEEDBACK_FIELD_CANDIDATES
-        if key in record and str(record[key]).strip()
-    )
-    evaluator_payload = {}
-    if "public_tests" in record and not _looks_hidden("public_tests"):
-        evaluator_payload["public_tests"] = record.get("public_tests")
-    if "sample_tests" in record:
-        evaluator_payload["public_tests"] = record.get("sample_tests")
-    public_test_cases = _normalize_public_test_cases(record.get("public_test_cases"))
-    if public_test_cases:
-        evaluator_payload["public_tests"] = public_test_cases
-        if not public_feedback:
-            public_feedback = tuple(
-                _format_public_test_feedback(test_case)
-                for test_case in public_test_cases[:3]
-            )
-    return LiveCodeBenchProblem(
-        problem_id=problem_id,
-        scenario=scenario,
-        prompt=prompt,
-        starter_code=starter_code,
-        prompt_metadata=prompt_metadata,
-        public_feedback=public_feedback,
-        evaluator_payload=evaluator_payload,
-        raw_record_path=str(source_path),
-    )
-
-
-def _first_string(payload: Mapping[str, Any], keys: Iterable[str]) -> str | None:
-    for key in keys:
-        value = payload.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
-
-
-def _normalize_public_test_cases(raw_value: Any) -> list[dict[str, Any]]:
-    if raw_value is None:
-        return []
-    value = raw_value
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            return []
-    if not isinstance(value, list):
-        return []
-    return [dict(item) for item in value if isinstance(item, Mapping)]
-
-
-def _format_public_test_feedback(test_case: Mapping[str, Any]) -> str:
-    input_text = compact_text(str(test_case.get("input", "")), limit=100)
-    output_text = compact_text(str(test_case.get("output", "")), limit=100)
-    return f"Public sample: input={input_text!r} output={output_text!r}"
-
-
-def _looks_hidden(key: str) -> bool:
-    lowered = key.lower()
-    return any(fragment in lowered for fragment in HIDDEN_FIELD_FRAGMENTS)
-
-
 def _reference_command(config: PilotRunConfig) -> str:
-    scenario_token = (
-        "codegeneration"
-        if config.resolved_scenario == "code_generation"
-        else "self_repair"
-    )
+    scenario_token = _external_scenario_token(config.resolved_scenario)
     command = [
         str(config.benchmark_root / ".venv" / "bin" / "python"),
         "-m",
@@ -1416,6 +1087,21 @@ def _reference_command(config: PilotRunConfig) -> str:
         str(config.max_problems),
     ]
     return " ".join(command)
+
+
+def _external_scenario_token(scenario: PilotScenario) -> str:
+    if scenario == "self_repair":
+        return "selfrepair"
+    return "codegeneration"
+
+
+def _scenario_semantics(scenario: PilotScenario) -> str:
+    if scenario == "self_repair":
+        return (
+            "Pilot self-repair over LiveCodeBench public code-generation problems. "
+            "Attempt 2 receives the previous candidate code plus visible public-test feedback."
+        )
+    return "Single-pass code generation over LiveCodeBench public code-generation problems."
 
 
 def _normalize_usage(raw_usage: Any) -> dict[str, Any] | None:
@@ -1511,11 +1197,12 @@ __all__ = [
     "DEFAULT_MAX_PROBLEMS",
     "DEFAULT_OUTPUT_ROOT",
     "DEFAULT_SCENARIO",
+    "LiveCodeBenchCheckoutSource",
     "METHODS",
-    "FilesystemProblemSource",
     "LiveCodeBenchProblem",
     "MethodRuntime",
     "PilotRunConfig",
+    "ProblemFileSource",
     "ProblemSource",
     "aggregate_summary",
     "build_attempt_prompt",

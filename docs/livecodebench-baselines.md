@@ -47,6 +47,7 @@ bash scripts/livecodebench/setup_livecodebench.sh
 ```
 
 That helper uses `uv`, creates `benchmarks/LiveCodeBench/.venv`, and installs the external checkout in place.
+`benchmarks/LiveCodeBench/` is treated as local external state and is ignored by git.
 
 ## Smoke Command
 
@@ -116,6 +117,8 @@ The repository also includes a small scaffolded LiveCodeBench DSPy pilot that co
 - DSPy with VTM verified-memory tools
 
 That pilot is intentionally separate from the maintained retrieval, drift verification, drifted retrieval, and controlled coding-drift evidence. It does not change VTM retrieval scoring, drift scoring, drifted retrieval scoring, or verifier semantics.
+
+In pilot `self_repair` mode, all methods receive the same public problem statement, the same previous candidate code, and the same visible public-test feedback on the repair attempt. The only intended difference is DSPy orchestration and whether VTM verified-memory tools are available.
 
 Preview the pilot without calling the model:
 

@@ -10,3 +10,4 @@ Maintained optional paper-adjacent scripts:
 - `run_dspy_vtm_smoke.py`: dry-run smoke script for the optional DSPy plus VTM integration
 - `livecodebench/export_dspy_pilot_results.py`: export pilot summaries into `.benchmarks/paper-tables/livecodebench-dspy-pilot`
 - `livecodebench/setup_livecodebench.sh`: clone and install the external LiveCodeBench checkout under `benchmarks/LiveCodeBench`
+  The checkout is local external state and should remain untracked.
