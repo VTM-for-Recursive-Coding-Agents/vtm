@@ -25,7 +25,7 @@ from rlm.utils.exceptions import (
     TokenLimitExceededError,
 )
 from rlm.utils.parsing import (
-    find_code_blocks,
+    extract_repl_blocks,
     find_final_answer,
     format_iteration,
 )
@@ -599,7 +599,8 @@ class RLM:
         """
         iter_start = time.perf_counter()
         response = lm_handler.completion(prompt)
-        code_block_strs = find_code_blocks(response)
+        extraction = extract_repl_blocks(response)
+        code_block_strs = extraction.code_blocks
         code_blocks = []
 
         for code_block_str in code_block_strs:
@@ -612,6 +613,11 @@ class RLM:
             response=response,
             code_blocks=code_blocks,
             iteration_time=iteration_time,
+            action_metadata={
+                "fenced_repl_block_count": extraction.fenced_repl_block_count,
+                "json_repl_block_count": extraction.json_repl_block_count,
+                "had_json_repl": extraction.had_json_repl,
+            },
         )
 
     def _default_answer(self, message_history: list[dict[str, Any]], lm_handler: LMHandler) -> str:

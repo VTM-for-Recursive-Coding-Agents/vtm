@@ -21,13 +21,20 @@ Verified lexical memory should outperform a no-memory baseline without relying o
 - Codex execution paths
 - Large generated documentation and compatibility shims that only preserved old surfaces
 
-## Why the final three evaluation layers remain
+## Why the final evaluation layers remain
 
 - Retrieval measures whether the right repository memory can be found.
 - Drift measures whether stored memory stays valid under repository change.
-- Coding measures whether verified memory improves targeted SWE-bench Lite solving under fair prompts.
+- Drifted retrieval measures whether useful repository memory can still be found after repository change.
 
-These three layers isolate memory quality, memory freshness, and coding utility cleanly enough for the paper.
+These three layers isolate memory quality and memory freshness cleanly enough for the paper.
+
+## External pilot status
+
+- SWE-bench Lite is no longer a main paper result.
+- The maintained SWE-bench Lite code stays in the repository as optional harness infrastructure and local reference material.
+- LongCoT-Mini CS may be used as a small optional long-horizon reasoning pilot because it has deterministic answer verification and does not require a patch-generation harness.
+- Main VTM evidence remains retrieval, drift, and drifted retrieval.
 
 Synthetic smoke tasks remain only as a maintained local/dev validation path for the OpenRouter-backed executor and table-export workflow.
 

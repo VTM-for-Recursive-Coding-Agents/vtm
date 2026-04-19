@@ -2,4 +2,6 @@
 
 Purpose: reserved location for developer and maintenance automation that should live with the repository.
 
-This directory currently has no maintained paper-scope scripts.
+Maintained optional paper-adjacent scripts:
+
+- `run_longcot_pilot.py`: isolated external LongCoT pilot runner; not part of the main VTM benchmark matrix

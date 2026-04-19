@@ -66,6 +66,11 @@ class OpenAIClient(BaseLM):
         self.model_output_tokens: dict[str, int] = defaultdict(int)
         self.model_total_tokens: dict[str, int] = defaultdict(int)
         self.model_costs: dict[str, float] = defaultdict(float)  # Cost in USD
+        self.model_usage_missing: dict[str, bool] = defaultdict(bool)
+        self.last_prompt_tokens = 0
+        self.last_completion_tokens = 0
+        self.last_cost: float | None = None
+        self.last_usage_missing = False
 
     def completion(self, prompt: str | list[dict[str, Any]], model: str | None = None) -> str:
         if isinstance(prompt, str):
@@ -115,22 +120,31 @@ class OpenAIClient(BaseLM):
 
     def _track_cost(self, response: openai.ChatCompletion, model: str):
         self.model_call_counts[model] += 1
+        self.last_usage_missing = False
+        self.last_cost = None
 
         usage = getattr(response, "usage", None)
         if usage is None:
-            raise ValueError("No usage data received. Tracking tokens not possible.")
+            self.model_usage_missing[model] = True
+            self.last_usage_missing = True
+            self.last_prompt_tokens = 0
+            self.last_completion_tokens = 0
+            return
 
-        self.model_input_tokens[model] += usage.prompt_tokens
-        self.model_output_tokens[model] += usage.completion_tokens
-        self.model_total_tokens[model] += usage.total_tokens
+        prompt_tokens = usage.prompt_tokens or 0
+        completion_tokens = usage.completion_tokens or 0
+        total_tokens = usage.total_tokens or (prompt_tokens + completion_tokens)
+
+        self.model_input_tokens[model] += prompt_tokens
+        self.model_output_tokens[model] += completion_tokens
+        self.model_total_tokens[model] += total_tokens
 
         # Track last call for handler to read
-        self.last_prompt_tokens = usage.prompt_tokens
-        self.last_completion_tokens = usage.completion_tokens
+        self.last_prompt_tokens = prompt_tokens
+        self.last_completion_tokens = completion_tokens
 
         # Extract cost from OpenRouter responses (cost is in USD)
         # OpenRouter returns cost in usage.model_extra for pydantic models
-        self.last_cost: float | None = None
         cost = None
 
         # Try direct attribute first
@@ -159,6 +173,7 @@ class OpenAIClient(BaseLM):
                 total_input_tokens=self.model_input_tokens[model],
                 total_output_tokens=self.model_output_tokens[model],
                 total_cost=cost if cost else None,
+                usage_missing=self.model_usage_missing.get(model, False),
             )
         return UsageSummary(model_usage_summaries=model_summaries)
 
@@ -168,4 +183,5 @@ class OpenAIClient(BaseLM):
             total_input_tokens=self.last_prompt_tokens,
             total_output_tokens=self.last_completion_tokens,
             total_cost=getattr(self, "last_cost", None),
+            usage_missing=self.last_usage_missing,
         )

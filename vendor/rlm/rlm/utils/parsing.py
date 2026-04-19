@@ -2,7 +2,9 @@
 Parsing utilities for RLM trjaectories.
 """
 
+import json
 import re
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from rlm.core.types import REPLResult, RLMIteration
@@ -11,19 +13,116 @@ if TYPE_CHECKING:
     from rlm.environments.base_env import BaseEnv
 
 
+_REPL_FENCE_PATTERN = re.compile(r"```repl\s*\n(.*?)\n```", re.DOTALL)
+_JSON_FENCE_PATTERN = re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL)
+_REPL_FENCE_ONLY_PATTERN = re.compile(r"\A```repl\s*\n(.*?)\n```\s*\Z", re.DOTALL)
+_JSON_FENCE_ONLY_PATTERN = re.compile(r"\A```json\s*\n(.*?)\n```\s*\Z", re.DOTALL)
+
+
+@dataclass(frozen=True)
+class ReplExtraction:
+    code_blocks: list[str]
+    fenced_repl_block_count: int
+    json_repl_block_count: int
+
+    @property
+    def had_json_repl(self) -> bool:
+        return self.json_repl_block_count > 0
+
+
 def find_code_blocks(text: str) -> list[str]:
     """
     Find REPL code blocks in text wrapped in triple backticks and return List of content(s).
     Returns None if no code blocks are found.
     """
-    pattern = r"```repl\s*\n(.*?)\n```"
-    results = []
+    return extract_repl_blocks(text).code_blocks
 
-    for match in re.finditer(pattern, text, re.DOTALL):
-        code_content = match.group(1).strip()
-        results.append(code_content)
 
-    return results
+def extract_repl_blocks(text: str) -> ReplExtraction:
+    """Extract executable REPL code from fenced repl blocks and supported JSON tool calls."""
+    results: list[str] = []
+
+    for match in _REPL_FENCE_PATTERN.finditer(text):
+        results.append(match.group(1).strip())
+
+    json_repl_count = 0
+    for candidate in _iter_json_candidates(text):
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        extracted = _extract_json_repl_code(payload)
+        if extracted is None:
+            continue
+        json_repl_count += 1
+        results.append(extracted)
+
+    return ReplExtraction(
+        code_blocks=results,
+        fenced_repl_block_count=len(results) - json_repl_count,
+        json_repl_block_count=json_repl_count,
+    )
+
+
+def _iter_json_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    stripped = text.strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        candidates.append(stripped)
+    candidates.extend(match.group(1).strip() for match in _JSON_FENCE_PATTERN.finditer(text))
+    return candidates
+
+
+def _extract_json_repl_code(payload: object) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+
+    repl_payload = payload.get("repl")
+    if isinstance(repl_payload, str):
+        return repl_payload
+    if isinstance(repl_payload, dict):
+        code = repl_payload.get("code")
+        if isinstance(code, str):
+            return code
+
+    command = payload.get("command")
+    tool = payload.get("tool")
+    if command != "repl" and tool != "repl":
+        return None
+
+    arguments = payload.get("args")
+    if not isinstance(arguments, dict):
+        arguments = payload.get("arguments")
+    if not isinstance(arguments, dict):
+        return None
+    code = arguments.get("code")
+    return code if isinstance(code, str) else None
+
+
+def is_pure_repl_tool_call(text: str) -> bool:
+    """Return True when the full response is only a supported REPL tool call."""
+    stripped = text.strip()
+    if not stripped:
+        return False
+
+    repl_match = _REPL_FENCE_ONLY_PATTERN.fullmatch(stripped)
+    if repl_match is not None:
+        return bool(repl_match.group(1).strip())
+
+    json_payload: object | None = None
+    json_match = _JSON_FENCE_ONLY_PATTERN.fullmatch(stripped)
+    if json_match is not None:
+        try:
+            json_payload = json.loads(json_match.group(1).strip())
+        except json.JSONDecodeError:
+            return False
+    elif stripped.startswith("{") and stripped.endswith("}"):
+        try:
+            json_payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            return False
+
+    return _extract_json_repl_code(json_payload) is not None
 
 
 def find_final_answer(text: str, environment: "BaseEnv | None" = None) -> str | None:

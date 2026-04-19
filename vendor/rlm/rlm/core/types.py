@@ -45,6 +45,7 @@ class ModelUsageSummary:
     total_input_tokens: int
     total_output_tokens: int
     total_cost: float | None = None  # Cost in USD, if available from provider
+    usage_missing: bool = False
 
     def to_dict(self):
         result = {
@@ -54,6 +55,8 @@ class ModelUsageSummary:
         }
         if self.total_cost is not None:
             result["total_cost"] = self.total_cost
+        if self.usage_missing:
+            result["usage_missing"] = True
         return result
 
     @classmethod
@@ -63,6 +66,7 @@ class ModelUsageSummary:
             total_input_tokens=data.get("total_input_tokens"),
             total_output_tokens=data.get("total_output_tokens"),
             total_cost=data.get("total_cost"),
+            usage_missing=bool(data.get("usage_missing", False)),
         )
 
 
@@ -206,15 +210,19 @@ class RLMIteration:
     code_blocks: list[CodeBlock]
     final_answer: str | None = None
     iteration_time: float | None = None
+    action_metadata: dict[str, Any] | None = None
 
     def to_dict(self):
-        return {
+        result = {
             "prompt": self.prompt,
             "response": self.response,
             "code_blocks": [code_block.to_dict() for code_block in self.code_blocks],
             "final_answer": self.final_answer,
             "iteration_time": self.iteration_time,
         }
+        if self.action_metadata is not None:
+            result["action_metadata"] = _serialize_value(self.action_metadata)
+        return result
 
 
 ########################################################
