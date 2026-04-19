@@ -43,7 +43,7 @@ Recommended models:
 
 ## LiveCodeBench Baseline
 
-LiveCodeBench is available here as an external baseline model benchmark only. It is not the main VTM memory-drift benchmark, and it does not change the maintained retrieval, drift, or drifted-retrieval evidence.
+LiveCodeBench is available here as an external baseline model benchmark only. It is not the main VTM memory-drift benchmark, and it does not change the maintained retrieval, drift, drifted-retrieval, or controlled coding-drift evidence.
 
 Set up the external benchmark checkout:
 
@@ -91,7 +91,7 @@ Opt-in model execution:
 uv run --extra dspy python scripts/run_dspy_vtm_smoke.py --workspace-root . --run-model
 ```
 
-DSPy is the main forward-facing agent interface for VTM memory, but it does not change the maintained retrieval, drift, drifted-retrieval, or controlled coding-drift scoring surfaces.
+DSPy is the recommended forward-facing agent interface for VTM memory, and it remains optional; it does not change the maintained retrieval, drift, drifted-retrieval, or controlled coding-drift scoring surfaces.
 
 ## Retrieval
 

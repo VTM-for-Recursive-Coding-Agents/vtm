@@ -305,11 +305,19 @@ def resolve_config(args: argparse.Namespace) -> BaselineConfig:
     return configs
 
 
-def write_metadata(run_dir: Path, config: BaselineConfig, command: list[str]) -> None:
+def write_metadata(
+    run_dir: Path,
+    config: BaselineConfig,
+    command: list[str],
+    *,
+    status: str,
+    exit_code: int | None,
+) -> None:
     metadata = [
         f"run_id={config.run_id}",
         "benchmark=livecodebench",
         "mode=baseline_only",
+        f"status={status}",
         f"model={config.model}",
         f"base_url={config.base_url}",
         f"scenario={config.scenario}",
@@ -321,7 +329,9 @@ def write_metadata(run_dir: Path, config: BaselineConfig, command: list[str]) ->
         f"end_date={config.end_date or ''}",
         f"smoke={str(config.smoke).lower()}",
         f"benchmark_root={config.benchmark_root}",
+        f"output_dir={run_dir}",
         f"summary_path={normalized_summary_path(config)}",
+        f"exit_code={'' if exit_code is None else exit_code}",
         f"command={shlex.join(command)}",
         f"started_at={dt.datetime.now(dt.UTC).isoformat()}",
     ]
@@ -399,6 +409,8 @@ def run(
     if not benchmark_exists:
         print("[livecodebench] benchmark checkout missing; dry-run only")
 
+    write_metadata(run_dir, config, command, status="planned", exit_code=None)
+
     if config.dry_run:
         write_summary(summary_path, config=config, command=command, run_dir=run_dir, exit_code=None)
         return 0
@@ -408,7 +420,6 @@ def run(
             "OpenRouter API key is required. Set OPENROUTER_API_KEY or pass --api-key."
         )
 
-    write_metadata(run_dir, config, command)
     runner = subprocess.run if command_runner is None else command_runner
     completed = runner(
         command,
@@ -417,6 +428,13 @@ def run(
         check=False,
     )
     exit_code = int(completed.returncode)
+    write_metadata(
+        run_dir,
+        config,
+        command,
+        status="passed" if exit_code == 0 else "failed",
+        exit_code=exit_code,
+    )
     write_summary(
         summary_path,
         config=config,

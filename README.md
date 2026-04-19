@@ -34,7 +34,7 @@ DSPy is the recommended forward-facing agent and programming interface for VTM m
 
 - DSPy ReAct plus tools is the preferred tool-using workflow surface
 - DSPy RLM is optional long-context reasoning glue, not the maintained local repo-editing executor
-- DSPy remains optional and does not change the maintained retrieval, drift, or drifted-retrieval benchmark surface
+- DSPy remains optional and does not change the maintained retrieval, drift, drifted-retrieval, or controlled coding-drift benchmark surface
 - Controlled coding-drift remains the small agent-loop benchmark
 - LiveCodeBench remains baseline model evaluation only
 - SWE-bench Lite remains removed from the maintained result surface after empty-patch pilot failures
@@ -46,7 +46,7 @@ LiveCodeBench support is available for baseline model coding ability checks unde
 - LiveCodeBench baseline runs live under `.benchmarks/livecodebench/`
 - LiveCodeBench summaries export under `.benchmarks/paper-tables/livecodebench-baselines/`
 - No VTM memory mode is wired into that baseline runner yet
-- The main VTM evidence remains retrieval, drift, and drifted retrieval
+- The main VTM evidence remains retrieval, drift verification, drifted retrieval, and controlled coding-drift
 - SWE-bench Lite remains removed from the maintained result surface after empty-patch pilot failures
 
 ## OpenRouter Defaults

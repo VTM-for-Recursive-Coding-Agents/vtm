@@ -174,8 +174,12 @@ def test_docs_frame_dspy_and_livecodebench_correctly() -> None:
         "controlled coding-drift"
     ) in readme
     assert "LiveCodeBench support is available for baseline model coding ability checks" in readme
-    assert "main VTM evidence remains retrieval, drift, and drifted retrieval" in readme
+    assert (
+        "main VTM evidence remains retrieval, drift verification, drifted retrieval, "
+        "and controlled coding-drift"
+    ) in readme
     assert "DSPy is the recommended forward-facing agent interface for VTM memory" in final_scope
+    assert "it remains optional" in final_scope
     assert (
         "controlled_coding_drift remains the small maintained agent-loop benchmark" in final_scope
     )
@@ -183,4 +187,6 @@ def test_docs_frame_dspy_and_livecodebench_correctly() -> None:
         "DSPy is the recommended forward-facing agent and programming interface for VTM"
         in dspy_doc
     )
+    assert "drifted retrieval, and controlled coding-drift" in dspy_doc
+    assert "it remains optional" in recipes
     assert "uv run python scripts/run_dspy_vtm_smoke.py --workspace-root ." in recipes

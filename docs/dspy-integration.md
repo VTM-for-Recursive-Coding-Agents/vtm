@@ -6,7 +6,7 @@ DSPy is the recommended forward-facing agent and programming interface for VTM, 
 
 - `vtm` remains the kernel for memory records, retrieval, verification, and benchmark logic.
 - `vtm_dspy` is optional and only loaded when you want a DSPy agent or DSPy RLM integration.
-- The final quantitative evidence remains retrieval, drift, and drifted retrieval.
+- The final quantitative evidence remains retrieval, drift verification, drifted retrieval, and controlled coding-drift.
 - `controlled_coding_drift` remains the small maintained agent-loop benchmark.
 - LiveCodeBench remains a baseline model coding benchmark only.
 - SWE-bench Lite is still not maintained after the empty-patch pilot failures.

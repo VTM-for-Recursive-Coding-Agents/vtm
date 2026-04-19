@@ -6,7 +6,7 @@ LiveCodeBench is available in this repository as an external baseline model benc
 
 - LiveCodeBench here is baseline-only
 - No VTM memory mode is wired into the baseline runner yet
-- Main VTM evidence remains retrieval, drift, and drifted retrieval
+- Main VTM evidence remains retrieval, drift verification, drifted retrieval, and controlled coding-drift
 - Controlled coding-drift remains the maintained coding benchmark inside the paper story
 - SWE-bench Lite remains demoted after empty-patch pilot failures and is not part of the maintained result surface
 
@@ -14,7 +14,7 @@ LiveCodeBench is available in this repository as an external baseline model benc
 
 LiveCodeBench is useful for baseline model coding ability because it covers tasks such as code generation, self-repair, code execution, and test-output prediction.
 
-That makes it a good external baseline for model capability, but not a direct evaluation of VTM's verified repository memory under drift. It does not replace the main VTM evidence from retrieval, drift verification, and drifted retrieval.
+That makes it a good external baseline for model capability, but not a direct evaluation of VTM's verified repository memory under drift. It does not replace the main VTM evidence from retrieval, drift verification, drifted retrieval, and controlled coding-drift.
 
 ## Environment
 
@@ -111,7 +111,7 @@ Use LiveCodeBench in the paper as a baseline model-evaluation reference, not as 
 Recommended framing:
 
 - LiveCodeBench reports external baseline coding ability for the underlying model.
-- VTM's main quantitative evidence remains retrieval, drift, and drifted retrieval.
+- VTM's main quantitative evidence remains retrieval, drift verification, drifted retrieval, and controlled coding-drift.
 - Controlled coding-drift is the small maintained agent-loop benchmark inside the VTM paper story.
 
 ## Notes

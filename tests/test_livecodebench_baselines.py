@@ -158,6 +158,11 @@ def test_dry_run_does_not_execute_model_call(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert calls == []
+    metadata_path = module.normalized_run_dir(config) / "metadata.txt"
+    assert metadata_path.exists()
+    metadata = metadata_path.read_text(encoding="utf-8")
+    assert "status=planned" in metadata
+    assert "command=" in metadata
     assert module.normalized_summary_path(config).exists()
 
 
@@ -167,10 +172,17 @@ def test_livecodebench_docs_mark_baseline_only_scope() -> None:
     baselines = (REPO_ROOT / "docs" / "livecodebench-baselines.md").read_text(encoding="utf-8")
 
     assert "LiveCodeBench support is available for baseline model coding ability checks" in readme
-    assert "main VTM evidence remains retrieval, drift, and drifted retrieval" in readme
+    assert (
+        "main VTM evidence remains retrieval, drift verification, drifted retrieval, "
+        "and controlled coding-drift"
+    ) in readme
     assert "LiveCodeBench is available here as an external baseline model benchmark only" in recipes
     assert "bash scripts/run_livecodebench_baseline.sh --smoke --execute" in recipes
     assert "It is not the main VTM memory benchmark" in baselines
+    assert (
+        "Main VTM evidence remains retrieval, drift verification, drifted retrieval, "
+        "and controlled coding-drift"
+    ) in baselines
     assert "SWE-bench Lite remains demoted after empty-patch pilot failures" in baselines
     assert "VTM_OPENROUTER_BASE_URL" in baselines
     assert "OPENROUTER_API_KEY" in baselines
