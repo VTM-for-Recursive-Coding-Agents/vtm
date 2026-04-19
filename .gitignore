@@ -26,6 +26,12 @@ dist/
 *.egg-info/
 .benchmarks/
 
+# Generated launcher bundles and external benchmark artifacts
+launchers/*
+!launchers/README.md
+results/*
+!results/README.md
+
 # Root benchmark outputs
 /gold*.json
 /vtm-*.json

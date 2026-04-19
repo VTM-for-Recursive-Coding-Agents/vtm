@@ -35,6 +35,28 @@ Recommended models:
 - main execution runs: `google/gemma-4-31b-it:free`
 - optional stronger ablation: `nvidia/nemotron-3-super-120b-a12b:free`
 
+## LiveCodeBench Baseline
+
+LiveCodeBench is available here as an external baseline model benchmark only. It is not the main VTM memory-drift benchmark, and it does not change the maintained retrieval, drift, or drifted-retrieval evidence.
+
+Set up the external benchmark checkout:
+
+```bash
+bash scripts/livecodebench/setup_livecodebench.sh
+```
+
+OpenRouter-backed smoke command:
+
+```bash
+export OPENROUTER_API_KEY=...
+export VTM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+export VTM_EXECUTION_MODEL=google/gemma-4-31b-it:free
+
+bash scripts/run_livecodebench_baseline.sh --smoke
+```
+
+This baseline runner is memory-free by design. No VTM retrieval or verifier path is involved.
+
 ## Retrieval
 
 No-memory baseline:

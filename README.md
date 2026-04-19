@@ -26,6 +26,15 @@ External coding prompts no longer expose oracle `expected_changed_paths` or `tou
 
 SWE-bench Lite was attempted as an external agent pilot, but the OpenRouter-backed vendored RLM produced empty patches and zero resolved tasks. It is not part of the final maintained benchmark surface or paper claim.
 
+## External Baselines
+
+LiveCodeBench support is available for baseline model coding ability checks under OpenRouter, but it is not a maintained VTM memory benchmark.
+
+- LiveCodeBench baseline runs live under `.benchmarks/livecodebench/`
+- No VTM memory mode is wired into that baseline runner yet
+- The main VTM evidence remains retrieval, drift, and drifted retrieval
+- SWE-bench Lite remains removed from the maintained result surface after empty-patch pilot failures
+
 ## OpenRouter Defaults
 
 The maintained inference path uses OpenRouter’s OpenAI-compatible API only.
@@ -99,6 +108,7 @@ vtm-bench-report --help
 - [docs/final-scope.md](docs/final-scope.md): final paper-facing scope and removed branches
 - [docs/final-audit.md](docs/final-audit.md): final maintained surface, rationale, and freeze audit
 - [docs/benchmark-recipes.md](docs/benchmark-recipes.md): maintained commands
+- [docs/livecodebench-baselines.md](docs/livecodebench-baselines.md): external LiveCodeBench baseline setup and smoke command
 - [docs/current-state-audit.md](docs/current-state-audit.md): guarantees and limits
 - [docs/harness.md](docs/harness.md): task-pack and executor contract
 - [docs/runtime-example.md](docs/runtime-example.md): executable kernel example
