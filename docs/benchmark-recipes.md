@@ -211,6 +211,40 @@ uv run python -m vtm.benchmarks.matrix \
   --execution-model "$VTM_EXECUTION_MODEL"
 ```
 
+Controlled coding drift benchmark:
+
+Nano smoke run:
+
+```bash
+export VTM_EXECUTION_MODEL=nvidia/nemotron-3-nano-30b-a3b:free
+
+uv run --extra bench --extra rlm python -m vtm.benchmarks.matrix \
+  --preset controlled_coding_drift \
+  --output .benchmarks/controlled-coding-drift-nano \
+  --execution-model "$VTM_EXECUTION_MODEL"
+```
+
+Nemotron Super run:
+
+```bash
+export VTM_EXECUTION_MODEL=nvidia/nemotron-3-super-120b-a12b:free
+
+uv run --extra bench --extra rlm python -m vtm.benchmarks.matrix \
+  --preset controlled_coding_drift \
+  --output .benchmarks/controlled-coding-drift-super \
+  --execution-model "$VTM_EXECUTION_MODEL"
+```
+
+Report export:
+
+```bash
+uv run python -m vtm.benchmarks.report \
+  --coding-run .benchmarks/controlled-coding-drift-super/runs/no_memory \
+  --coding-run .benchmarks/controlled-coding-drift-super/runs/naive_lexical \
+  --coding-run .benchmarks/controlled-coding-drift-super/runs/verified_lexical \
+  --output .benchmarks/paper-tables/controlled-coding-drift-super
+```
+
 ## Synthetic Coding Smoke
 
 No-memory baseline:

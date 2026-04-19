@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
@@ -12,6 +12,7 @@ from vtm.harness.models import ExecutorRequest, ExecutorResult, HarnessTaskPack
 from vtm.harness.workspace import PreparedWorkspace
 from vtm_rlm.context import RLMRuntimeContext
 from vtm_rlm.execution import VendoredRLMRunResult, run_vendored_rlm
+from vtm_rlm.memory_bridge import summarize_memory_context
 from vtm_rlm.prompting import model_visible_task_pack
 from vtm_rlm.writeback import write_success_memory
 
@@ -40,6 +41,8 @@ class _PhaseRunSnapshot:
     runtime_error: str | None
     corrective_retry_used: bool = False
     corrective_retry_reason: str | None = None
+    rlm_diagnostics: dict[str, Any] = field(default_factory=dict)
+    empty_patch: bool = False
 
     @property
     def passed(self) -> bool:
@@ -48,6 +51,10 @@ class _PhaseRunSnapshot:
             and self.test_result.exit_code == 0
             and not self.test_result.timed_out
         )
+
+    @property
+    def executed_repl_code(self) -> bool:
+        return bool(self.rlm_diagnostics.get("rlm_executed_repl_block_count", 0))
 
 
 class RLMBenchmarkExecutor:
@@ -170,6 +177,7 @@ class RLMBenchmarkExecutor:
                 )
             final_result = final_phase.rlm_result
             usage_summary = dict(final_result.usage_summary) if final_result is not None else {}
+            execution_diagnostics = _aggregate_execution_diagnostics(phase_runs)
             phase_metadata = [
                 {
                     "phase_name": phase.phase_name,
@@ -179,6 +187,9 @@ class RLMBenchmarkExecutor:
                     "corrective_retry_used": phase.corrective_retry_used,
                     "corrective_retry_reason": phase.corrective_retry_reason,
                     "produced_changed_paths": list(phase.changed_paths),
+                    "empty_patch": phase.empty_patch,
+                    "rlm_tool_code_executed": phase.executed_repl_code,
+                    **phase.rlm_diagnostics,
                     "response_path": (
                         phase.rlm_result.response_path if phase.rlm_result is not None else None
                     ),
@@ -252,6 +263,9 @@ class RLMBenchmarkExecutor:
                     "rlm_total_input_tokens": usage_summary.get("total_input_tokens", 0),
                     "rlm_total_output_tokens": usage_summary.get("total_output_tokens", 0),
                     "rlm_total_cost": usage_summary.get("total_cost"),
+                    "turn_count": execution_diagnostics["rlm_iteration_count"],
+                    "tool_call_count": execution_diagnostics["rlm_executed_repl_block_count"],
+                    "tool_failure_count": execution_diagnostics["tool_failure_count"],
                 },
                 agent_artifacts={
                     "rlm_response_path": (
@@ -279,9 +293,30 @@ class RLMBenchmarkExecutor:
                     "agent_mode": "vendored_rlm",
                     "rlm_memory_id": memory_id,
                     "rlm_usage_summary": usage_summary,
+                    "rlm_usage_missing": execution_diagnostics["usage_missing"],
                     "rlm_metadata": final_result.metadata if final_result is not None else {},
                     "rlm_execution_strategy": (
                         "ground_then_memory" if use_memory_fallback else "single_pass"
+                    ),
+                    **execution_diagnostics,
+                    "final_response_was_tool_call": execution_diagnostics[
+                        "final_response_was_tool_call"
+                    ],
+                    "empty_patch": final_phase.empty_patch,
+                    "empty_patch_after_rlm_execution": final_phase.empty_patch,
+                    "rlm_tool_code_executed": execution_diagnostics[
+                        "rlm_executed_repl_block_count"
+                    ]
+                    > 0,
+                    "corrective_retry_triggered": any(
+                        phase.corrective_retry_used for phase in phase_runs
+                    ),
+                    "corrective_retry_had_nonempty_diff": any(
+                        phase.corrective_retry_used and not phase.empty_patch
+                        for phase in phase_runs
+                    ),
+                    "rlm_corrective_retry_triggered": any(
+                        phase.corrective_retry_used for phase in phase_runs
                     ),
                     "rlm_phases": phase_metadata,
                 },
@@ -348,6 +383,11 @@ class RLMBenchmarkExecutor:
             runtime_error=retry_attempt.runtime_error,
             corrective_retry_used=True,
             corrective_retry_reason=corrective_reason,
+            rlm_diagnostics=_merge_phase_diagnostics(
+                first_attempt.rlm_diagnostics,
+                retry_attempt.rlm_diagnostics,
+            ),
+            empty_patch=retry_attempt.empty_patch,
         )
 
     def _execute_phase_attempt(
@@ -407,6 +447,7 @@ class RLMBenchmarkExecutor:
         produced_patch = prepared_workspace.driver.capture_patch()
         changed_paths = prepared_workspace.driver.capture_changed_paths()
         final_git_status = prepared_workspace.driver.git_status()
+        rlm_diagnostics = _phase_execution_diagnostics(rlm_result)
         (artifact_root / "produced.patch").write_text(produced_patch, encoding="utf-8")
         (artifact_root / "git-status.txt").write_text(final_git_status, encoding="utf-8")
         return _PhaseRunSnapshot(
@@ -418,14 +459,20 @@ class RLMBenchmarkExecutor:
             changed_paths=changed_paths,
             final_git_status=final_git_status,
             runtime_error=runtime_error,
+            rlm_diagnostics=rlm_diagnostics,
+            empty_patch=not produced_patch.strip(),
         )
 
     def _corrective_retry_reason(
         self,
         phase_snapshot: _PhaseRunSnapshot,
     ) -> str | None:
-        if phase_snapshot.passed or phase_snapshot.rlm_result is None:
+        if phase_snapshot.rlm_result is None:
             return None
+        if phase_snapshot.passed:
+            return None
+        if bool(phase_snapshot.rlm_diagnostics.get("final_response_was_tool_call", False)):
+            return "Previous attempt ended with a tool call instead of a completed repository edit."
         if not phase_snapshot.changed_paths:
             return "Previous attempt did not modify any repository files."
         if not phase_snapshot.produced_patch.strip():
@@ -449,10 +496,19 @@ class RLMBenchmarkExecutor:
             "Corrective Retry",
             corrective_reason,
             (
-                "You must modify the repository files directly and leave a valid patch in "
-                "the workspace."
+                "You have not changed any files. This attempt will fail unless you edit the "
+                "repository. Inspect WORKSPACE_ROOT, open the relevant source files, modify at "
+                "least one file, run git diff, and only finish after git diff is non-empty."
             ),
-            "Do not stop at explaining the fix.",
+            "Inspect files under WORKSPACE_ROOT before concluding anything.",
+            "Open the failing tests and the relevant implementation files.",
+            "Edit the repository directly under WORKSPACE_ROOT.",
+            "Do not return a final answer until at least one repository file has changed.",
+            "Run git diff to verify the patch is non-empty before finishing.",
+            (
+                "expected_changed_paths are scoring-only and should not be printed unless already "
+                "allowed by fairness logic."
+            ),
         ]
         if visible_task_pack.expected_changed_paths:
             guidance_lines.append(
@@ -460,6 +516,22 @@ class RLMBenchmarkExecutor:
             )
         if verification_excerpt:
             guidance_lines.append("Latest verifier signal: " + verification_excerpt)
+        problem_statement = (visible_task_pack.problem_statement or "").strip()
+        if problem_statement:
+            guidance_lines.extend(["", "Problem Statement", problem_statement])
+        failing_tests = tuple(
+            visible_task_pack.fail_to_pass_tests or visible_task_pack.failing_tests
+        )
+        if failing_tests:
+            guidance_lines.extend(["", "Failing Tests", "\n".join(failing_tests)])
+        if visible_task_pack.memory_context:
+            guidance_lines.extend(
+                [
+                    "",
+                    "Retrieved Memory Cards",
+                    summarize_memory_context(visible_task_pack.memory_context),
+                ]
+            )
         guidance = "\n".join(guidance_lines)
         updated_hint = visible_task_pack.hints_text or ""
         if updated_hint:
@@ -487,6 +559,8 @@ class RLMBenchmarkExecutor:
         if final_phase.test_result is not None:
             verification_stdout_path.write_text(final_phase.test_result.stdout, encoding="utf-8")
             verification_stderr_path.write_text(final_phase.test_result.stderr, encoding="utf-8")
+
+
 def _workspace_metadata(
     prepared_workspace: PreparedWorkspace,
     key: str,
@@ -511,3 +585,93 @@ __all__ = [
     "BenchmarkExecutor",
     "RLMBenchmarkExecutor",
 ]
+
+
+def _phase_execution_diagnostics(
+    rlm_result: VendoredRLMRunResult | None,
+) -> dict[str, Any]:
+    if rlm_result is None:
+        return {
+            "rlm_iteration_count": 0,
+            "rlm_executed_repl_block_count": 0,
+            "rlm_detected_json_repl_count": 0,
+            "rlm_final_response_had_json_repl": False,
+            "final_response_was_tool_call": False,
+            "tool_failure_count": 0,
+            "usage_missing": False,
+        }
+    diagnostics = rlm_result.metadata.get("vtm_execution_diagnostics", {})
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+    return {
+        "rlm_iteration_count": int(diagnostics.get("rlm_iteration_count", 0) or 0),
+        "rlm_executed_repl_block_count": int(
+            diagnostics.get("rlm_executed_repl_block_count", 0) or 0
+        ),
+        "rlm_detected_json_repl_count": int(
+            diagnostics.get("rlm_detected_json_repl_count", 0) or 0
+        ),
+        "rlm_final_response_had_json_repl": bool(
+            diagnostics.get("rlm_final_response_had_json_repl", False)
+        ),
+        "final_response_was_tool_call": bool(
+            diagnostics.get("final_response_was_tool_call", False)
+        ),
+        "tool_failure_count": int(diagnostics.get("tool_failure_count", 0) or 0),
+        "usage_missing": bool(diagnostics.get("usage_missing", False)),
+    }
+
+
+def _aggregate_execution_diagnostics(
+    phase_runs: list[_PhaseRunSnapshot],
+) -> dict[str, Any]:
+    final_phase = phase_runs[-1]
+    return {
+        "rlm_iteration_count": sum(
+            phase.rlm_diagnostics.get("rlm_iteration_count", 0) for phase in phase_runs
+        ),
+        "rlm_executed_repl_block_count": sum(
+            phase.rlm_diagnostics.get("rlm_executed_repl_block_count", 0)
+            for phase in phase_runs
+        ),
+        "rlm_detected_json_repl_count": sum(
+            phase.rlm_diagnostics.get("rlm_detected_json_repl_count", 0)
+            for phase in phase_runs
+        ),
+        "rlm_final_response_had_json_repl": bool(
+            final_phase.rlm_diagnostics.get("rlm_final_response_had_json_repl", False)
+        ),
+        "final_response_was_tool_call": bool(
+            final_phase.rlm_diagnostics.get("final_response_was_tool_call", False)
+        ),
+        "tool_failure_count": sum(
+            phase.rlm_diagnostics.get("tool_failure_count", 0) for phase in phase_runs
+        ),
+        "usage_missing": any(
+            bool(phase.rlm_diagnostics.get("usage_missing", False)) for phase in phase_runs
+        ),
+    }
+
+
+def _merge_phase_diagnostics(
+    first: dict[str, Any],
+    second: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "rlm_iteration_count": int(first.get("rlm_iteration_count", 0) or 0)
+        + int(second.get("rlm_iteration_count", 0) or 0),
+        "rlm_executed_repl_block_count": int(
+            first.get("rlm_executed_repl_block_count", 0) or 0
+        )
+        + int(second.get("rlm_executed_repl_block_count", 0) or 0),
+        "rlm_detected_json_repl_count": int(first.get("rlm_detected_json_repl_count", 0) or 0)
+        + int(second.get("rlm_detected_json_repl_count", 0) or 0),
+        "rlm_final_response_had_json_repl": bool(
+            second.get("rlm_final_response_had_json_repl", False)
+        ),
+        "final_response_was_tool_call": bool(second.get("final_response_was_tool_call", False)),
+        "tool_failure_count": int(first.get("tool_failure_count", 0) or 0)
+        + int(second.get("tool_failure_count", 0) or 0),
+        "usage_missing": bool(first.get("usage_missing", False))
+        or bool(second.get("usage_missing", False)),
+    }

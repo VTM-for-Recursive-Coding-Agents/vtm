@@ -41,6 +41,8 @@ CODING_RLM_SYSTEM_PROMPT = dedent(
       or clearly explained why no edit was needed.
     - Never call `FINAL(...)` inside Python code. Use FINAL only in a normal
       assistant response after you are done.
+    - Use Python pathlib to read and write files under `WORKSPACE_ROOT`.
+    - After editing, run `git diff` to confirm changes.
 
     Helpful pattern:
     ```repl
@@ -157,19 +159,25 @@ def _should_compact_external_prompt(task_pack: HarnessTaskPack) -> bool:
     )
 
 
-def _should_render_expected_changed_paths(task_pack: HarnessTaskPack) -> bool:
+def _should_hide_oracle_changed_paths(task_pack: HarnessTaskPack) -> bool:
     if not task_pack.expected_changed_paths:
         return False
     if task_pack.debug_expected_changed_paths:
-        return True
-    return not _should_compact_external_prompt(task_pack)
+        return False
+    return _should_compact_external_prompt(task_pack) or (
+        task_pack.task_kind == "controlled_coding_drift"
+    )
+
+
+def _should_render_expected_changed_paths(task_pack: HarnessTaskPack) -> bool:
+    return bool(task_pack.expected_changed_paths) and not _should_hide_oracle_changed_paths(
+        task_pack
+    )
 
 
 def model_visible_task_pack(task_pack: HarnessTaskPack) -> HarnessTaskPack:
-    """Strip oracle-only changed-path hints from external benchmark tasks."""
-    if _should_render_expected_changed_paths(task_pack):
-        return task_pack
-    if not _should_compact_external_prompt(task_pack):
+    """Strip oracle-only changed-path hints from prompts shown to the model."""
+    if not _should_hide_oracle_changed_paths(task_pack):
         return task_pack
     return task_pack.model_copy(
         update={

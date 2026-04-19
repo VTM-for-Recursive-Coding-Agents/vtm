@@ -1,0 +1,168 @@
+{
+  "description": "Controlled synthetic coding benchmark with drifted memory seeding for small agent-loop cases.",
+  "manifest_id": "synthetic_controlled_coding_drift",
+  "repos": [
+    {
+      "branch": "main",
+      "commit_pairs": [
+        {
+          "base_ref": "ccd-stale-api-bug",
+          "description": "Stale API rename with a small parser fix.",
+          "head_ref": "ccd-stale-api-fix",
+          "label": "stale_api_name",
+          "pair_id": "stale_api_name"
+        },
+        {
+          "base_ref": "ccd-relocated-helper-bug",
+          "description": "Relocated helper with a stale import path in the caller.",
+          "head_ref": "ccd-relocated-helper-fix",
+          "label": "relocated_helper",
+          "pair_id": "relocated_helper"
+        },
+        {
+          "base_ref": "ccd-stale-invariant-bug",
+          "description": "Stale timeout invariant after a current validation contract change.",
+          "head_ref": "ccd-stale-invariant-fix",
+          "label": "stale_invariant",
+          "pair_id": "stale_invariant"
+        },
+        {
+          "base_ref": "ccd-validation-procedure-bug",
+          "description": "Current validation procedure memory with a one-line greeting fix.",
+          "head_ref": "ccd-validation-procedure-fix",
+          "label": "validation_procedure",
+          "pair_id": "validation_procedure"
+        }
+      ],
+      "repo_name": "synthetic_controlled_coding_drift",
+      "source_kind": "synthetic_python_controlled_coding_drift"
+    }
+  ],
+  "coding_tasks": [
+    {
+      "case_id": "controlled_stale_api_name",
+      "commit_pair_id": "stale_api_name",
+      "difficulty": "easy",
+      "expected_changed_paths": [
+        "parser.py"
+      ],
+      "failing_tests": [
+        "tests.test_parser.ParserTests.test_parse_state_current_aliases"
+      ],
+      "memory_seed_ref": "ccd-stale-api-seed",
+      "repo_name": "synthetic_controlled_coding_drift",
+      "retrieval_query": "parse_status parse_state parser.py current state alias pending waiting",
+      "task_kind": "controlled_coding_drift",
+      "task_statement": "Fix parse_state so current state aliases normalize correctly again.",
+      "test_command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_*.py",
+        "-q"
+      ],
+      "touched_paths": [
+        "parser.py"
+      ]
+    },
+    {
+      "case_id": "controlled_relocated_helper",
+      "commit_pair_id": "relocated_helper",
+      "difficulty": "easy",
+      "expected_changed_paths": [
+        "presenter.py"
+      ],
+      "failing_tests": [
+        "tests.test_presenter.PresenterTests.test_render_label_uses_formatter"
+      ],
+      "memory_seed_ref": "ccd-relocated-helper-seed",
+      "repo_name": "synthetic_controlled_coding_drift",
+      "retrieval_query": "format_label formatting.py utils.py presenter render_label import",
+      "task_kind": "controlled_coding_drift",
+      "task_statement": "Fix render_label so it uses the relocated formatting helper again.",
+      "test_command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_*.py",
+        "-q"
+      ],
+      "touched_paths": [
+        "presenter.py"
+      ]
+    },
+    {
+      "case_id": "controlled_stale_invariant",
+      "commit_pair_id": "stale_invariant",
+      "difficulty": "medium",
+      "expected_changed_paths": [
+        "timeout_rules.py"
+      ],
+      "failing_tests": [
+        "tests.test_timeout_rules.TimeoutRuleTests.test_negative_timeout_is_rejected"
+      ],
+      "memory_seed_ref": "ccd-stale-invariant-seed",
+      "repo_name": "synthetic_controlled_coding_drift",
+      "retrieval_query": "normalize_timeout validate_timeout negative timeout retry forever invalid",
+      "task_kind": "controlled_coding_drift",
+      "task_statement": "Fix validate_timeout so negative timeout values are rejected under the current invariant.",
+      "test_command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_*.py",
+        "-q"
+      ],
+      "touched_paths": [
+        "timeout_rules.py"
+      ]
+    },
+    {
+      "case_id": "controlled_validation_procedure",
+      "commit_pair_id": "validation_procedure",
+      "difficulty": "easy",
+      "expected_changed_paths": [
+        "message_builder.py"
+      ],
+      "failing_tests": [
+        "tests.test_message_builder.MessageBuilderTests.test_build_message_title_cases_greeting"
+      ],
+      "repo_name": "synthetic_controlled_coding_drift",
+      "retrieval_query": "validation procedure test command build_message greeting title case",
+      "seed_validation_procedure_memory": true,
+      "task_kind": "controlled_coding_drift",
+      "task_statement": "Fix build_message so the greeting uses the maintained title-cased form.",
+      "test_command": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_*.py",
+        "-q"
+      ],
+      "touched_paths": [
+        "message_builder.py"
+      ]
+    }
+  ],
+  "seed": 0
+}

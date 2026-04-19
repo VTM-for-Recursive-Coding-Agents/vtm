@@ -7,6 +7,33 @@ import subprocess
 from pathlib import Path
 
 
+class _SyntheticGitCorpus:
+    """Shared git-repo helpers for synthetic benchmark corpora."""
+
+    def _initialize_repo(self, repo_root: Path) -> None:
+        if repo_root.exists():
+            shutil.rmtree(repo_root)
+        repo_root.mkdir(parents=True, exist_ok=True)
+        self._run(repo_root, "git", "init", "-b", "main")
+        self._run(repo_root, "git", "config", "user.name", "VTM Benchmarks")
+        self._run(repo_root, "git", "config", "user.email", "vtm-benchmarks@example.com")
+
+    def _commit(self, repo_root: Path, message: str, tag: str) -> None:
+        self._run(repo_root, "git", "add", ".")
+        self._run(repo_root, "git", "commit", "-m", message)
+        self._run(repo_root, "git", "tag", "-f", tag)
+
+    def _run(self, cwd: Path, *args: str) -> str:
+        completed = subprocess.run(
+            list(args),
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return completed.stdout.strip()
+
+
 class SyntheticPythonSmokeCorpus:
     """Builds a small git repo with retrieval, drift, and coding benchmark cases."""
 
@@ -274,3 +301,212 @@ class SyntheticPythonSmokeCorpus:
             text=True,
         )
         return completed.stdout.strip()
+
+
+class SyntheticControlledCodingDriftCorpus(_SyntheticGitCorpus):
+    """Builds a small repo with drifted coding tasks for agent-loop evaluation."""
+
+    def materialize(self, repo_root: Path) -> None:
+        """Create the controlled coding-drift corpus repository and all commits."""
+        self._initialize_repo(repo_root)
+        (repo_root / "README.md").write_text(
+            "# Controlled coding drift benchmark corpus\n",
+            encoding="utf-8",
+        )
+        tests_dir = repo_root / "tests"
+        tests_dir.mkdir(exist_ok=True)
+        (tests_dir / "__init__.py").write_text("", encoding="utf-8")
+        self._commit(repo_root, "initial controlled coding drift corpus", "ccd-initial")
+
+        self._add_stale_api_name_case(repo_root, tests_dir)
+        self._add_relocated_helper_case(repo_root, tests_dir)
+        self._add_stale_invariant_case(repo_root, tests_dir)
+        self._add_validation_procedure_case(repo_root, tests_dir)
+
+    def _add_stale_api_name_case(self, repo_root: Path, tests_dir: Path) -> None:
+        (repo_root / "parser.py").write_text(
+            "def parse_status(raw: str) -> str:\n"
+            '    """Normalize legacy status strings into stable state names."""\n'
+            "    cleaned = raw.strip().lower()\n"
+            "    aliases = {'ok': 'ready', 'warn': 'waiting', 'error': 'blocked'}\n"
+            "    return aliases.get(cleaned, cleaned)\n",
+            encoding="utf-8",
+        )
+        (tests_dir / "test_parser.py").write_text(
+            "import unittest\n\n"
+            "from parser import parse_status\n\n\n"
+            "class ParserTests(unittest.TestCase):\n"
+            "    def test_parse_status_legacy_aliases(self) -> None:\n"
+            "        self.assertEqual(parse_status('warn'), 'waiting')\n\n\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+        self._commit(repo_root, "seed stale api memory", "ccd-stale-api-seed")
+
+        (repo_root / "parser.py").write_text(
+            "def parse_state(raw: str) -> str:\n"
+            '    """Normalize current state strings into stable state names."""\n'
+            "    cleaned = raw.strip().lower()\n"
+            "    aliases = {'ok': 'ready', 'pending': 'waiting', 'error': 'blocked'}\n"
+            "    return cleaned\n",
+            encoding="utf-8",
+        )
+        (tests_dir / "test_parser.py").write_text(
+            "import unittest\n\n"
+            "from parser import parse_state\n\n\n"
+            "class ParserTests(unittest.TestCase):\n"
+            "    def test_parse_state_current_aliases(self) -> None:\n"
+            "        self.assertEqual(parse_state(' Pending '), 'waiting')\n\n\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+        self._commit(repo_root, "introduce stale api coding bug", "ccd-stale-api-bug")
+
+        (repo_root / "parser.py").write_text(
+            "def parse_state(raw: str) -> str:\n"
+            '    """Normalize current state strings into stable state names."""\n'
+            "    cleaned = raw.strip().lower()\n"
+            "    aliases = {'ok': 'ready', 'pending': 'waiting', 'error': 'blocked'}\n"
+            "    return aliases.get(cleaned, cleaned)\n",
+            encoding="utf-8",
+        )
+        self._commit(repo_root, "fix stale api coding bug", "ccd-stale-api-fix")
+
+    def _add_relocated_helper_case(self, repo_root: Path, tests_dir: Path) -> None:
+        (repo_root / "utils.py").write_text(
+            "def format_label(name: str) -> str:\n"
+            '    """Return a normalized label for queue names."""\n'
+            "    return name.strip().title()\n",
+            encoding="utf-8",
+        )
+        (repo_root / "presenter.py").write_text(
+            "from utils import format_label\n\n\n"
+            "def render_label(name: str) -> str:\n"
+            '    """Render a queue label for output."""\n'
+            "    return f'[{format_label(name)}]'\n",
+            encoding="utf-8",
+        )
+        (tests_dir / "test_presenter.py").write_text(
+            "import unittest\n\n"
+            "from presenter import render_label\n\n\n"
+            "class PresenterTests(unittest.TestCase):\n"
+            "    def test_render_label_uses_formatter(self) -> None:\n"
+            "        self.assertEqual(render_label(' build queue '), '[Build Queue]')\n\n\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+        self._commit(repo_root, "seed relocated helper memory", "ccd-relocated-helper-seed")
+
+        (repo_root / "formatting.py").write_text(
+            "def format_label(name: str) -> str:\n"
+            '    """Return a normalized label for queue names."""\n'
+            "    return name.strip().title()\n",
+            encoding="utf-8",
+        )
+        (repo_root / "utils.py").unlink()
+        self._commit(repo_root, "move helper without updating caller", "ccd-relocated-helper-bug")
+
+        (repo_root / "presenter.py").write_text(
+            "from formatting import format_label\n\n\n"
+            "def render_label(name: str) -> str:\n"
+            '    """Render a queue label for output."""\n'
+            "    return f'[{format_label(name)}]'\n",
+            encoding="utf-8",
+        )
+        self._commit(repo_root, "fix relocated helper call site", "ccd-relocated-helper-fix")
+
+    def _add_stale_invariant_case(self, repo_root: Path, tests_dir: Path) -> None:
+        (repo_root / "timeout_rules.py").write_text(
+            "def normalize_timeout(value: int | None) -> int:\n"
+            '    """Negative timeout values mean retry forever."""\n'
+            "    if value is None:\n"
+            "        return 30\n"
+            "    if value < 0:\n"
+            "        return -1\n"
+            "    return value\n",
+            encoding="utf-8",
+        )
+        (tests_dir / "test_timeout_rules.py").write_text(
+            "import unittest\n\n"
+            "from timeout_rules import normalize_timeout\n\n\n"
+            "class TimeoutRuleSeedTests(unittest.TestCase):\n"
+            "    def test_negative_timeout_means_forever(self) -> None:\n"
+            "        self.assertEqual(normalize_timeout(-1), -1)\n\n\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+        self._commit(repo_root, "seed stale invariant memory", "ccd-stale-invariant-seed")
+
+        (repo_root / "timeout_rules.py").write_text(
+            "def validate_timeout(value: int | None) -> int:\n"
+            '    """Negative timeout values are invalid for retry scheduling."""\n'
+            "    if value is None:\n"
+            "        return 30\n"
+            "    if value < 0:\n"
+            "        return 30\n"
+            "    return value\n",
+            encoding="utf-8",
+        )
+        (tests_dir / "test_timeout_rules.py").write_text(
+            "import unittest\n\n"
+            "from timeout_rules import validate_timeout\n\n\n"
+            "class TimeoutRuleTests(unittest.TestCase):\n"
+            "    def test_negative_timeout_is_rejected(self) -> None:\n"
+            "        with self.assertRaises(ValueError):\n"
+            "            validate_timeout(-1)\n\n\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+        self._commit(repo_root, "introduce stale invariant coding bug", "ccd-stale-invariant-bug")
+
+        (repo_root / "timeout_rules.py").write_text(
+            "def validate_timeout(value: int | None) -> int:\n"
+            '    """Negative timeout values are invalid for retry scheduling."""\n'
+            "    if value is None:\n"
+            "        return 30\n"
+            "    if value < 0:\n"
+            "        raise ValueError('timeout must be non-negative')\n"
+            "    return value\n",
+            encoding="utf-8",
+        )
+        self._commit(repo_root, "fix stale invariant coding bug", "ccd-stale-invariant-fix")
+
+    def _add_validation_procedure_case(self, repo_root: Path, tests_dir: Path) -> None:
+        (repo_root / "message_builder.py").write_text(
+            "def build_message(name: str) -> str:\n"
+            '    """Build a greeting for a single user."""\n'
+            "    return f'hello, {name.title()}'\n",
+            encoding="utf-8",
+        )
+        (tests_dir / "test_message_builder.py").write_text(
+            "import unittest\n\n"
+            "from message_builder import build_message\n\n\n"
+            "class MessageBuilderTests(unittest.TestCase):\n"
+            "    def test_build_message_title_cases_greeting(self) -> None:\n"
+            "        self.assertEqual(build_message('ada'), 'Hello, Ada')\n\n\n"
+            "if __name__ == '__main__':\n"
+            "    unittest.main()\n",
+            encoding="utf-8",
+        )
+        self._commit(
+            repo_root,
+            "introduce validation procedure coding bug",
+            "ccd-validation-procedure-bug",
+        )
+
+        (repo_root / "message_builder.py").write_text(
+            "def build_message(name: str) -> str:\n"
+            '    """Build a greeting for a single user."""\n'
+            "    return f'Hello, {name.title()}'\n",
+            encoding="utf-8",
+        )
+        self._commit(
+            repo_root,
+            "fix validation procedure coding bug",
+            "ccd-validation-procedure-fix",
+        )

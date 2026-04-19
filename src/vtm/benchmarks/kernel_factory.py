@@ -104,12 +104,14 @@ class BenchmarkKernelFactory:
         pair: CommitPair,
         symbols: dict[tuple[str, str], SymbolSnapshot],
         scope: VisibilityScope,
+        *,
+        dependency_ref: str | None = None,
     ) -> None:
         """Seed symbol snapshots from the base repo state into the kernel."""
         dependency = self.dependency_builder().build(
             str(repo_root),
             dependency_ids=(f"benchmark:{pair.pair_id}",),
-            input_digests=(pair.base_ref,),
+            input_digests=((dependency_ref or pair.base_ref),),
         )
         tx = kernel.begin_transaction(
             scope,

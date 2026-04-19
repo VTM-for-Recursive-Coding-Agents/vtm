@@ -10,9 +10,13 @@ from vtm.benchmarks import BenchmarkManifest, BenchmarkRunConfig, BenchmarkRunne
 from vtm.benchmarks.compare import compare_completed_runs
 from vtm.benchmarks.models import CommitPair, RepoSpec
 from vtm.benchmarks.symbol_index import SymbolIndexer
-from vtm.benchmarks.synthetic import SyntheticPythonSmokeCorpus
+from vtm.benchmarks.synthetic import (
+    SyntheticControlledCodingDriftCorpus,
+    SyntheticPythonSmokeCorpus,
+)
 from vtm.enums import ValidityStatus
 from vtm.harness.models import HarnessTaskPack
+from vtm_rlm.prompting import build_phase1_task_prompt
 
 
 def _run(repo: Path, *args: str) -> str:
@@ -391,6 +395,102 @@ def test_synthetic_coding_tasks_fail_on_base_and_pass_on_head(tmp_path: Path) ->
 
         assert base_result.returncode != 0, task.case_id
         assert head_result.returncode == 0, task.case_id
+
+
+def test_controlled_coding_drift_tasks_fail_on_base_and_pass_on_head(tmp_path: Path) -> None:
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/controlled-coding-drift.json")
+    repo_root = tmp_path / "controlled-coding-drift-corpus"
+    SyntheticControlledCodingDriftCorpus().materialize(repo_root)
+    pair_map = {
+        pair.pair_id: pair
+        for repo in manifest.repos
+        if repo.repo_name == "synthetic_controlled_coding_drift"
+        for pair in repo.commit_pairs
+    }
+
+    assert len(manifest.coding_tasks) == 4
+    for task in manifest.coding_tasks:
+        pair = pair_map[task.commit_pair_id]
+        _run(repo_root, "git", "checkout", "--quiet", pair.base_ref)
+        base_result = subprocess.run(
+            list(task.test_command),
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        _run(repo_root, "git", "checkout", "--quiet", pair.head_ref)
+        head_result = subprocess.run(
+            list(task.test_command),
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        assert base_result.returncode != 0, task.case_id
+        assert head_result.returncode == 0, task.case_id
+
+
+def test_controlled_coding_drift_task_pack_hides_expected_changed_paths_from_prompt(
+    tmp_path: Path,
+    install_fake_vendored_rlm,
+) -> None:
+    install_fake_vendored_rlm()
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/controlled-coding-drift.json")
+    result = BenchmarkRunner(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/controlled-coding-drift.json",
+            suite="coding",
+            mode="verified_lexical",
+            output_dir=str(tmp_path / "controlled-coding"),
+            pair_filters=("stale_api_name",),
+            max_cases=1,
+            top_k=5,
+            rlm_model_id="fake-model",
+        ),
+    ).run()
+
+    assert result.case_count == 1
+    task_pack = HarnessTaskPack.from_json(
+        (
+            tmp_path / "controlled-coding" / "task-packs" / "controlled_stale_api_name.json"
+        ).read_text(encoding="utf-8")
+    )
+    prompt = build_phase1_task_prompt(task_pack, Path("/tmp/workspace"))
+
+    assert task_pack.expected_changed_paths == ("parser.py",)
+    assert "Expected Changed Paths" not in prompt
+    assert "\nparser.py\n" not in f"\n{prompt}\n"
+
+
+def test_controlled_coding_drift_verified_mode_records_stale_filtering(
+    tmp_path: Path,
+    install_fake_vendored_rlm,
+) -> None:
+    install_fake_vendored_rlm()
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/controlled-coding-drift.json")
+    result = BenchmarkRunner(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/controlled-coding-drift.json",
+            suite="coding",
+            mode="verified_lexical",
+            output_dir=str(tmp_path / "controlled-coding-verified"),
+            pair_filters=("stale_api_name", "relocated_helper", "stale_invariant"),
+            top_k=5,
+            rlm_model_id="fake-model",
+        ),
+    ).run()
+
+    results = [
+        json.loads(line)
+        for line in Path(result.artifacts["results_jsonl"]).read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert result.metrics["mean_stale_filtered_count"] > 0.0
+    assert any(item["metrics"]["stale_filtered_count"] > 0 for item in results)
 
 
 def test_coding_suite_reports_multiple_tasks_and_filtering(

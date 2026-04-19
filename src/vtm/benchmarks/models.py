@@ -17,7 +17,11 @@ BenchmarkMode = Literal[
     "verified_lexical",
     "lexical_rlm_rerank",
 ]
-RepoSourceKind = Literal["git", "synthetic_python_smoke"]
+RepoSourceKind = Literal[
+    "git",
+    "synthetic_python_smoke",
+    "synthetic_python_controlled_coding_drift",
+]
 CodingEvaluationBackend = Literal["local_subprocess", "swebench_harness"]
 CodingExecutionStyle = Literal["mixed_patch", "shell_command"]
 CodingExecutionEngine = Literal["vendored_rlm"]
@@ -105,9 +109,11 @@ class CodingTaskCase(VTMModel):
     pass_to_pass_tests: tuple[str, ...] = Field(default_factory=tuple)
     touched_paths: tuple[str, ...] = Field(default_factory=tuple)
     expected_changed_paths: tuple[str, ...] = Field(default_factory=tuple)
+    memory_seed_ref: str | None = None
     retrieval_query: str | None = None
     verifier_output: str | None = None
     localization_notes: tuple[str, ...] = Field(default_factory=tuple)
+    seed_validation_procedure_memory: bool = False
     debug_expected_changed_paths: bool = False
     test_command: tuple[str, ...] = Field(default_factory=tuple)
     target_patch: str | None = None
