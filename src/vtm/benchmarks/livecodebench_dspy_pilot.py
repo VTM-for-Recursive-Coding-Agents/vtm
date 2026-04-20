@@ -544,7 +544,7 @@ def aggregate_summary(
         "evaluation_available_count": evaluation_available_count,
         "pass_count": pass_count if evaluation_rows else None,
         "pass_rate": round(pass_rate, 6) if pass_rate is not None else None,
-        "accuracy": round(pass_rate, 6) if pass_rate is not None else None,
+        "public_test_pass_rate": round(pass_rate, 6) if pass_rate is not None else None,
         "syntax_error_count": syntax_error_count,
         "retrieval_usage_rate": round(retrieval_usage_rate, 6),
         "retrieval_hit_rate": round(retrieval_hit_rate, 6),

@@ -265,7 +265,7 @@ def test_baseline_run_records_official_eval_metrics(tmp_path: Path) -> None:
     module = _load_baseline_module()
     benchmark_root = tmp_path / "benchmarks" / "LiveCodeBench"
     benchmark_root.mkdir(parents=True)
-    output_dir = benchmark_root / "output" / "Fake-Model"
+    output_dir = benchmark_root / "output" / module.model_slug("google/gemma-test")
     config = module.BaselineConfig(
         model="google/gemma-test",
         base_url="https://openrouter.example/api/v1",
@@ -319,9 +319,58 @@ def test_baseline_run_records_official_eval_metrics(tmp_path: Path) -> None:
     assert summary["official_pass_at_5"] == 0.5
     assert summary["official_problem_count"] == 2
     assert summary["eval_file"].endswith("codegeneration_10_0.2_eval.json")
+    assert summary["wrapper_output_dir"].endswith("executed_case")
+    assert summary["benchmark_output_dir"].endswith(module.model_slug("google/gemma-test"))
     metadata_text = (module.normalized_run_dir(config) / "metadata.txt").read_text(encoding="utf-8")
     assert "official_pass_at_1=0.25" in metadata_text
     assert "official_pass_at_5=0.5" in metadata_text
+    assert "wrapper_output_dir=" in metadata_text
+    assert "benchmark_output_dir=" in metadata_text
+
+
+def test_baseline_run_does_not_reuse_stale_metrics_from_other_model(tmp_path: Path) -> None:
+    module = _load_baseline_module()
+    benchmark_root = tmp_path / "benchmarks" / "LiveCodeBench"
+    stale_dir = benchmark_root / "output" / "stale-model"
+    stale_dir.mkdir(parents=True)
+    (stale_dir / "codegeneration_10_0.2.json").write_text("[]\n", encoding="utf-8")
+    (stale_dir / "codegeneration_10_0.2_eval.json").write_text(
+        json.dumps([{"pass@1": 1.0, "pass@5": 1.0, "detail": {"pass@1": {"q1": 1.0}}}, {}, []]) + "\n",
+        encoding="utf-8",
+    )
+    (stale_dir / "codegeneration_10_0.2_eval_all.json").write_text(
+        json.dumps([{"question_id": "q1"}]) + "\n",
+        encoding="utf-8",
+    )
+    config = module.BaselineConfig(
+        model="qwen/qwen3-coder-next",
+        base_url="https://openrouter.example/api/v1",
+        api_key="openrouter-test-key",
+        run_id="stale_metrics_case",
+        output_root=tmp_path / ".benchmarks" / "livecodebench",
+        summary_root=tmp_path / ".benchmarks" / "paper-tables" / "livecodebench-baselines",
+        benchmark_root=benchmark_root,
+        scenario="codegeneration",
+        release_version="release_v1",
+        n=10,
+        temperature=0.2,
+        evaluate=True,
+        start_date=None,
+        end_date=None,
+        smoke=False,
+        execute=True,
+    )
+
+    def fake_runner(command, cwd, env, check):
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    exit_code = module.run(config, command_runner=fake_runner)
+
+    assert exit_code == 0
+    summary = json.loads(module.normalized_summary_path(config).read_text(encoding="utf-8"))
+    assert summary["official_metrics_available"] is False
+    assert summary["official_pass_at_1"] is None
+    assert summary["eval_file"] is None
 
 
 def test_export_results_merges_summary_json_metrics(tmp_path: Path) -> None:
@@ -338,6 +387,8 @@ def test_export_results_merges_summary_json_metrics(tmp_path: Path) -> None:
                 "official_metrics_available": True,
                 "official_pass_at_1": 0.33,
                 "official_pass_at_5": 0.66,
+                "wrapper_output_dir": "/tmp/fake-wrapper-output",
+                "benchmark_output_dir": "/tmp/fake-benchmark-output",
             }
         )
         + "\n",
@@ -365,6 +416,13 @@ def test_export_results_merges_summary_json_metrics(tmp_path: Path) -> None:
     assert rows[0]["status"] == "passed"
     assert rows[0]["official_pass_at_1"] == 0.33
     assert rows[0]["official_pass_at_5"] == 0.66
+    assert rows[0]["wrapper_output_dir"] == "/tmp/fake-wrapper-output"
+    assert rows[0]["benchmark_output_dir"] == "/tmp/fake-benchmark-output"
+
+    markdown_path = tmp_path / "summary.md"
+    module.write_markdown(markdown_path, rows)
+    markdown = markdown_path.read_text(encoding="utf-8")
+    assert "/tmp/fake-benchmark-output" in markdown
 
 
 def test_livecodebench_checkout_resolves_custom_openrouter_model(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -473,6 +531,31 @@ def test_livecodebench_checkout_code_generation_loader_reads_hub_jsonl(
     assert len(dataset) == 1
     assert dataset[0].question_id == "q1"
     assert dataset[0].metadata["func_name"] == "add"
+
+
+def test_livecodebench_checkout_code_generation_release_version_maps_expected_files(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fake_hub_module = SimpleNamespace(hf_hub_download=lambda **_: str(tmp_path / "unused.jsonl"))
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub_module)
+    module = _load_module_from_path(
+        "vtm_lcb_code_generation_release_map",
+        LCB_CHECKOUT_ROOT / "lcb_runner" / "benchmarks" / "code_generation.py",
+    )
+
+    assert module._dataset_filenames_for_release(
+        dataset_repo=module.CODE_GENERATION_LITE_DATASET_REPO,
+        release_version="release_v2",
+    ) == ("test.jsonl", "test2.jsonl")
+    assert module._dataset_filenames_for_release(
+        dataset_repo=module.CODE_GENERATION_LITE_DATASET_REPO,
+        release_version="v2",
+    ) == ("test2.jsonl",)
+    assert module._dataset_filenames_for_release(
+        dataset_repo=module.CODE_GENERATION_LITE_DATASET_REPO,
+        release_version="v1_v3",
+    ) == ("test.jsonl", "test2.jsonl", "test3.jsonl")
 
 
 def test_livecodebench_docs_mark_baseline_only_scope() -> None:
@@ -620,6 +703,8 @@ def test_livecodebench_dspy_summary_aggregation_handles_missing_retrieval_metric
     assert summary["pass_count"] == 1
     assert summary["evaluation_available_count"] == 2
     assert summary["pass_rate"] == 0.5
+    assert summary["public_test_pass_rate"] == 0.5
+    assert "accuracy" not in summary
     assert summary["retrieval_usage_rate"] == 0.0
     assert summary["retrieval_hit_rate"] == 0.0
     assert summary["mean_verified_count"] == 0.0

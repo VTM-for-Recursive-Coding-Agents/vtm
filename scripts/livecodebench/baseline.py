@@ -274,6 +274,32 @@ def _baseline_output_dir(benchmark_root: Path) -> Path:
     return benchmark_root / "output"
 
 
+def _resolve_benchmark_model_repr(
+    benchmark_root: Path,
+    *,
+    python_bin: str,
+    model: str,
+    env: Mapping[str, str],
+) -> str:
+    resolver = (
+        "from lcb_runner.lm_styles import resolve_language_model\n"
+        f"print(resolve_language_model({model!r}).model_repr)\n"
+    )
+    completed = subprocess.run(
+        [python_bin, "-c", resolver],
+        cwd=benchmark_root,
+        env=dict(env),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode == 0:
+        resolved = completed.stdout.strip().splitlines()
+        if resolved and resolved[-1].strip():
+            return resolved[-1].strip()
+    return model_slug(model)
+
+
 def _snapshot_output_files(benchmark_root: Path) -> dict[Path, int]:
     output_dir = _baseline_output_dir(benchmark_root)
     if not output_dir.exists():
@@ -285,50 +311,40 @@ def _snapshot_output_files(benchmark_root: Path) -> dict[Path, int]:
     }
 
 
-def _candidate_output_files(benchmark_root: Path, config: BaselineConfig) -> list[Path]:
-    output_dir = _baseline_output_dir(benchmark_root)
-    if not output_dir.exists():
-        return []
-    prefix = f"{config.scenario}_{config.n}_{config.temperature}"
-    return sorted(
-        (
-            path
-            for path in output_dir.rglob("*.json")
-            if path.is_file() and path.name.startswith(prefix)
-        ),
-        key=lambda path: path.stat().st_mtime_ns,
-    )
+def _expected_official_artifact_paths(
+    benchmark_root: Path,
+    *,
+    config: BaselineConfig,
+    benchmark_model_repr: str,
+) -> dict[str, Path]:
+    output_dir = _baseline_output_dir(benchmark_root) / benchmark_model_repr
+    prefix = output_dir / f"{config.scenario}_{config.n}_{config.temperature}"
+    return {
+        "raw_output_file": Path(f"{prefix}.json"),
+        "eval_file": Path(f"{prefix}_eval.json"),
+        "eval_all_file": Path(f"{prefix}_eval_all.json"),
+    }
+
+
+def _path_was_updated(path: Path, before_snapshot: Mapping[Path, int]) -> bool:
+    return path.exists() and path.stat().st_mtime_ns > before_snapshot.get(path, -1)
 
 
 def _resolve_official_artifact_paths(
     benchmark_root: Path,
     *,
     config: BaselineConfig,
+    benchmark_model_repr: str,
     before_snapshot: dict[Path, int],
 ) -> dict[str, str | None]:
-    candidates = _candidate_output_files(benchmark_root, config)
-    updated = [
-        path
-        for path in candidates
-        if path.stat().st_mtime_ns > before_snapshot.get(path, -1)
-    ]
-    selected = updated or candidates
-    raw_output = next(
-        (path for path in reversed(selected) if not path.name.endswith(("_eval.json", "_eval_all.json"))),
-        None,
-    )
-    eval_file = next(
-        (path for path in reversed(selected) if path.name.endswith("_eval.json")),
-        None,
-    )
-    eval_all_file = next(
-        (path for path in reversed(selected) if path.name.endswith("_eval_all.json")),
-        None,
+    expected_paths = _expected_official_artifact_paths(
+        benchmark_root,
+        config=config,
+        benchmark_model_repr=benchmark_model_repr,
     )
     return {
-        "raw_output_file": str(raw_output) if raw_output is not None else None,
-        "eval_file": str(eval_file) if eval_file is not None else None,
-        "eval_all_file": str(eval_all_file) if eval_all_file is not None else None,
+        key: str(path) if _path_was_updated(path, before_snapshot) else None
+        for key, path in expected_paths.items()
     }
 
 
@@ -447,6 +463,7 @@ def write_metadata(
     status: str,
     exit_code: int | None,
     official_metrics: Mapping[str, Any] | None = None,
+    benchmark_output_dir: Path | None = None,
 ) -> None:
     metrics = dict(official_metrics or {})
     metadata = [
@@ -466,7 +483,8 @@ def write_metadata(
         f"smoke={str(config.smoke).lower()}",
         f"debug={str(config.debug).lower()}",
         f"benchmark_root={config.benchmark_root}",
-        f"output_dir={run_dir}",
+        f"wrapper_output_dir={run_dir}",
+        f"benchmark_output_dir={'' if benchmark_output_dir is None else benchmark_output_dir}",
         f"summary_path={normalized_summary_path(config)}",
         f"exit_code={'' if exit_code is None else exit_code}",
         f"command={shlex.join(command)}",
@@ -491,6 +509,7 @@ def write_summary(
     run_dir: Path,
     exit_code: int | None,
     official_metrics: Mapping[str, Any] | None = None,
+    benchmark_output_dir: Path | None = None,
 ) -> None:
     metrics = dict(official_metrics or {})
     payload = {
@@ -504,7 +523,10 @@ def write_summary(
         "smoke": config.smoke,
         "debug": config.debug,
         "evaluate": config.evaluate,
-        "output_dir": str(run_dir),
+        "wrapper_output_dir": str(run_dir),
+        "benchmark_output_dir": (
+            str(benchmark_output_dir) if benchmark_output_dir is not None else None
+        ),
         "command": command,
         "command_text": shlex.join(command),
         "base_url": config.base_url,
@@ -548,8 +570,21 @@ def run(
         python_bin = sys.executable or "python3"
     command = build_livecodebench_command(python_bin, config)
     env = build_openrouter_env(model=config.model, base_url=config.base_url, api_key=config.api_key)
+    benchmark_model_repr = model_slug(config.model)
+    if benchmark_exists and config.execute:
+        benchmark_model_repr = _resolve_benchmark_model_repr(
+            config.benchmark_root,
+            python_bin=python_bin,
+            model=config.model,
+            env=env,
+        )
     run_dir = normalized_run_dir(config)
     summary_path = normalized_summary_path(config)
+    benchmark_output_dir = (
+        _baseline_output_dir(config.benchmark_root) / benchmark_model_repr
+        if benchmark_exists
+        else None
+    )
     official_metrics: dict[str, Any] = {
         "official_metrics_available": False,
         "official_metric_source": None,
@@ -564,7 +599,9 @@ def run(
     print("[livecodebench] baseline-only runner")
     print(f"[livecodebench] run_id={config.run_id}")
     print(f"[livecodebench] benchmark_root={config.benchmark_root}")
-    print(f"[livecodebench] output_dir={run_dir}")
+    print(f"[livecodebench] wrapper_output_dir={run_dir}")
+    if benchmark_output_dir is not None:
+        print(f"[livecodebench] benchmark_output_dir={benchmark_output_dir}")
     print(f"[livecodebench] summary_path={summary_path}")
     print(f"[livecodebench] model={config.model}")
     print(f"[livecodebench] mode={'execute' if config.execute else 'dry-run'}")
@@ -581,6 +618,7 @@ def run(
         status="planned",
         exit_code=None,
         official_metrics=official_metrics,
+        benchmark_output_dir=benchmark_output_dir,
     )
 
     if config.dry_run:
@@ -591,6 +629,7 @@ def run(
             run_dir=run_dir,
             exit_code=None,
             official_metrics=official_metrics,
+            benchmark_output_dir=benchmark_output_dir,
         )
         return 0
 
@@ -612,6 +651,7 @@ def run(
         artifacts = _resolve_official_artifact_paths(
             config.benchmark_root,
             config=config,
+            benchmark_model_repr=benchmark_model_repr,
             before_snapshot=before_snapshot,
         )
         official_metrics = _extract_official_metrics(artifacts)
@@ -622,6 +662,7 @@ def run(
         status="passed" if exit_code == 0 else "failed",
         exit_code=exit_code,
         official_metrics=official_metrics,
+        benchmark_output_dir=benchmark_output_dir,
     )
     write_summary(
         summary_path,
@@ -630,6 +671,7 @@ def run(
         run_dir=run_dir,
         exit_code=exit_code,
         official_metrics=official_metrics,
+        benchmark_output_dir=benchmark_output_dir,
     )
     if official_metrics.get("official_metrics_available"):
         print(

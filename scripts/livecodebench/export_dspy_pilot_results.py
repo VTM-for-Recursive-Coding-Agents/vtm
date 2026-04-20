@@ -38,7 +38,7 @@ def collect_rows(input_root: Path) -> list[dict[str, Any]]:
                 "method": payload.get("method", ""),
                 "model": payload.get("model", ""),
                 "problems": payload.get("total", 0),
-                "pass_rate": payload.get("pass_rate"),
+                "pass_rate": payload.get("public_test_pass_rate", payload.get("pass_rate")),
                 "retrieval_usage_rate": payload.get("retrieval_usage_rate", 0),
                 "mean_verified_count": payload.get("mean_verified_count", 0),
                 "mean_stale_filtered_count": payload.get("mean_stale_filtered_count", 0),
@@ -62,7 +62,7 @@ def write_markdown(path: Path, rows: list[dict[str, Any]]) -> None:
         "This DSPy plus VTM comparison is a scaffolded pilot, not a maintained VTM "
         "retrieval or drift benchmark.",
         "",
-        "| Scenario | Method | Model | Problems | Pass Rate / Accuracy | Retrieval Usage Rate | "
+        "| Scenario | Method | Model | Problems | Public Test Pass Rate | Retrieval Usage Rate | "
         "Mean Verified Count | Mean Stale Filtered Count | Mean Tool Calls |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]

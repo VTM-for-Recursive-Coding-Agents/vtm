@@ -80,7 +80,7 @@ def write_markdown(path: Path, rows: list[dict[str, Any]]) -> None:
         "LiveCodeBench is reported here as baseline model evaluation only. "
         "It is not a VTM memory-drift result.",
         "",
-        "| run_id | model | scenario | release | status | pass@1 | pass@5 | evaluate | output_dir |",
+        "| run_id | model | scenario | release | status | pass@1 | pass@5 | evaluate | benchmark_output_dir |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in rows:
@@ -89,7 +89,7 @@ def write_markdown(path: Path, rows: list[dict[str, Any]]) -> None:
         lines.append(
             (
                 "| {run_id} | {model} | {scenario} | {release_version} | "
-                "{status} | {pass_at_1} | {pass_at_5} | {evaluate} | {output_dir} |"
+                "{status} | {pass_at_1} | {pass_at_5} | {evaluate} | {benchmark_output_dir} |"
             ).format(
                 run_id=row.get("run_id", ""),
                 model=row.get("model", ""),
@@ -99,7 +99,13 @@ def write_markdown(path: Path, rows: list[dict[str, Any]]) -> None:
                 pass_at_1="" if pass_at_1 in (None, "") else f"{float(pass_at_1):.4f}",
                 pass_at_5="" if pass_at_5 in (None, "") else f"{float(pass_at_5):.4f}",
                 evaluate=row.get("evaluate", ""),
-                output_dir=row.get("summary_path", row.get("benchmark_root", "")),
+                benchmark_output_dir=row.get(
+                    "benchmark_output_dir",
+                    row.get(
+                        "wrapper_output_dir",
+                        row.get("output_dir", row.get("summary_path", row.get("benchmark_root", ""))),
+                    ),
+                ),
             )
         )
     path.parent.mkdir(parents=True, exist_ok=True)
