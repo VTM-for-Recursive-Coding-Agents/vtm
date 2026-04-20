@@ -19,6 +19,8 @@ Contents
 
 Important contract details
 - `HarnessTaskPack`: canonical per-case task file, including derived or explicit `retrieval_query`, retained `execution_style` compatibility, and visible task context such as `verifier_output` / `localization_notes`.
+  When not provided directly, `retrieval_query` is derived from visible task text, tests, verifier output, and deterministic localization notes.
+- `TaskMemoryContextItem`: normalized retrieved-memory entry stored in `memory_context`, including advisory match metadata such as `matched_terms`, `matched_fields`, and `relevance_reason`.
 - `ExecutorRequest`: per-attempt execution request, including `attempt_index`, `artifact_root`, and `workspace_backend`.
 - `ExecutorResult`: per-attempt execution output used for `attempts.jsonl`.
 - Local layout:

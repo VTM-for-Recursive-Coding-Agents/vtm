@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
+import shutil
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -53,6 +55,7 @@ class VTMRLMCodingAgent:
 
     def describe(self) -> dict[str, Any]:
         """Return dry-run metadata describing the configured RLM surface."""
+        interpreter_available, interpreter_error = rlm_interpreter_availability()
         return {
             "tool_names": list(self.tool_names()),
             "model": self.model_config.summary(),
@@ -61,6 +64,8 @@ class VTMRLMCodingAgent:
             "max_iterations": self.max_iterations,
             "max_llm_calls": self.max_llm_calls,
             "execution_mode": "rlm",
+            "interpreter_available": interpreter_available,
+            "interpreter_error": interpreter_error,
         }
 
     def create_lm(self) -> Any:
@@ -102,6 +107,22 @@ class VTMRLMCodingAgent:
         if not task.strip():
             raise ValueError("task must be non-empty")
         resolved_query = (query or task).strip()
+        interpreter_available, interpreter_error = rlm_interpreter_availability()
+        if not interpreter_available:
+            return {
+                "response": {
+                    "response": "",
+                    "error": interpreter_error,
+                },
+                "trajectory": {
+                    **self.describe(),
+                    "task": task,
+                    "query": resolved_query,
+                    "context_card_count": 0,
+                    "execution_mode": "rlm_unavailable",
+                    "execution_error": interpreter_error,
+                },
+            }
         context = self.context_adapter.build_context(resolved_query)
         program = self.create_program(signature=signature)
         try:
@@ -150,4 +171,16 @@ def _is_known_dspy_rlm_none_code_bug(exc: AttributeError) -> bool:
     return "'NoneType' object has no attribute 'strip'" in str(exc)
 
 
-__all__ = ["VTMRLMCodingAgent"]
+@lru_cache(maxsize=1)
+def rlm_interpreter_availability() -> tuple[bool, str | None]:
+    deno_path = shutil.which("deno")
+    if deno_path:
+        return True, None
+    return (
+        False,
+        "DSPy RLM requires `deno` on PATH for its default PythonInterpreter sandbox. "
+        "Install Deno or run only the non-RLM pilot methods.",
+    )
+
+
+__all__ = ["VTMRLMCodingAgent", "rlm_interpreter_availability"]

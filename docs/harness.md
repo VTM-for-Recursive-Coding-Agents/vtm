@@ -8,11 +8,12 @@ It owns the contracts that should stay stable even when benchmark orchestration,
 
 - `HarnessTaskPack`
   - typed on-disk task definition used by the vendored-RLM coding executor
-  - includes `retrieval_query`, which is either author-provided or derived from visible task signals
+  - includes `retrieval_query`, which is either author-provided or derived from visible task signals such as task text, tests, verifier output, and deterministic localization notes
   - retains `execution_style` for task-pack compatibility, but the maintained paper path is the patch-oriented vendored-RLM executor
   - includes optional `verifier_output` and `localization_notes` for visible, non-oracle task context
 - `TaskMemoryContextItem`
   - normalized retrieval context embedded in a task pack
+  - carries advisory retrieval explanation fields such as `matched_terms`, `matched_fields`, and `relevance_reason` alongside anchor location data
 - `ExecutorRequest`
   - typed execution request metadata
   - includes `attempt_index`, `artifact_root`, and `workspace_backend`
@@ -85,8 +86,12 @@ Important fields:
 - scoring inputs: `expected_changed_paths`, `target_patch_digest`, optional `gold_test_patch_digest`
 - execution settings: `memory_mode`, `top_k`
 - execution style: `execution_style`
-- retrieval override: optional `retrieval_query`
-- retrieval context: `memory_context`
+- retrieval override: optional `retrieval_query`; when omitted, maintained coding runners derive it from visible task text, test names, hints, verifier output, and localization notes
+- retrieval context: `memory_context`, a normalized list of retrieved memories including score, status, optional anchor path or symbol, and advisory retrieval explanation metadata
+
+For controlled coding-drift, benchmark preparation may expand the initial lexical candidate
+pool, derive visible path/module/symbol/failure hints from non-oracle task inputs, rerank
+those candidates with those hints, and then truncate to the task pack's `top_k`.
 
 For controlled coding-drift and generic external-like coding tasks, `expected_changed_paths` stays in the canonical task pack for scoring, but prompt builders and the vendored-RLM `TASK` tool hide those oracle hints by default unless `debug_expected_changed_paths=True`.
 

@@ -75,6 +75,9 @@ class VTMMemoryBridge:
                 "tags": list(candidate.memory.tags),
                 "path": self._anchor_path(candidate.memory),
                 "symbol": self._anchor_symbol(candidate.memory),
+                "matched_terms": list(candidate.explanation.matched_tokens),
+                "matched_fields": list(candidate.explanation.matched_fields),
+                "reason": candidate.explanation.reason,
             }
             for candidate in result.candidates
         ]
@@ -136,11 +139,22 @@ def summarize_memory_context(items: Sequence[TaskMemoryContextItem]) -> str:
             location = f" path={item.relative_path}"
         if item.symbol is not None:
             location = f"{location} symbol={item.symbol}".rstrip()
+        why_bits: list[str] = []
+        if item.matched_terms:
+            term_preview = ", ".join(item.matched_terms[:4])
+            if len(item.matched_terms) > 4:
+                term_preview = f"{term_preview}, ..."
+            why_bits.append(f"matched terms={term_preview}")
+        if item.matched_fields:
+            why_bits.append(f"matched fields={', '.join(item.matched_fields)}")
+        if item.relevance_reason:
+            why_bits.append(item.relevance_reason)
         lines.extend(
             [
                 f"{index}. [{item.status}] {item.title} (score={item.score:.3f})",
                 f"   summary: verify whether this is still true: {item.summary}",
                 f"   memory_id: {item.memory_id}{location}",
+                f"   why: {'; '.join(why_bits)}" if why_bits else "",
             ]
         )
-    return "\n".join(lines)
+    return "\n".join(line for line in lines if line)

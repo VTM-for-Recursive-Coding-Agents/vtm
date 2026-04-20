@@ -17,7 +17,7 @@ from vtm.verification import VerificationResult
 from vtm_dspy.config import DSPyOpenRouterConfig
 from vtm_dspy.react_agent import VTMReActCodingAgent
 from vtm_dspy.rlm_adapter import VTMRLMContextAdapter, make_vtm_rlm
-from vtm_dspy.rlm_agent import VTMRLMCodingAgent
+from vtm_dspy.rlm_agent import VTMRLMCodingAgent, rlm_interpreter_availability
 from vtm_dspy.tools import VTMMemoryTools
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -298,6 +298,7 @@ def test_rlm_agent_handles_known_dspy_none_code_bug(monkeypatch: pytest.MonkeyPa
             raise AttributeError("'NoneType' object has no attribute 'strip'")
 
     agent = VTMRLMCodingAgent(kernel=None, scopes=())
+    monkeypatch.setattr("vtm_dspy.rlm_agent.rlm_interpreter_availability", lambda: (True, None))
     monkeypatch.setattr(agent, "create_program", lambda *, signature="task, context -> response": FakeProgram())
 
     result = agent.run("Solve it")
@@ -305,6 +306,35 @@ def test_rlm_agent_handles_known_dspy_none_code_bug(monkeypatch: pytest.MonkeyPa
     assert result["response"]["response"] == ""
     assert "code=None" in result["response"]["error"]
     assert "execution_error" in result["trajectory"]
+
+
+def test_rlm_agent_reports_missing_deno_prerequisite(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = VTMRLMCodingAgent(kernel=None, scopes=())
+    monkeypatch.setattr(
+        "vtm_dspy.rlm_agent.rlm_interpreter_availability",
+        lambda: (False, "Deno required for DSPy RLM."),
+    )
+
+    result = agent.run("Solve it")
+
+    assert result["response"]["response"] == ""
+    assert result["response"]["error"] == "Deno required for DSPy RLM."
+    assert result["trajectory"]["execution_mode"] == "rlm_unavailable"
+
+
+def test_rlm_interpreter_availability_reports_missing_deno(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rlm_interpreter_availability.cache_clear()
+    monkeypatch.setattr("vtm_dspy.rlm_agent.shutil.which", lambda name: None)
+    try:
+        available, error = rlm_interpreter_availability()
+    finally:
+        rlm_interpreter_availability.cache_clear()
+
+    assert available is False
+    assert error is not None
+    assert "deno" in error.lower()
 
 
 def test_livecodebench_dspy_vtm_runtime_exposes_memory_tools() -> None:

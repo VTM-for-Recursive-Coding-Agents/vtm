@@ -8,8 +8,10 @@ from pathlib import Path
 from vtm.adapters.rlm import RLMRankRequest, RLMRankResponse
 from vtm.benchmarks import BenchmarkManifest, BenchmarkRunConfig, BenchmarkRunner
 from vtm.benchmarks.coding_suite import (
+    VisibleTaskContext,
     benchmark_dependency_fingerprint,
     build_visible_task_context,
+    rerank_coding_candidates,
     seed_task_conditioned_memories,
     task_memory_id,
 )
@@ -23,6 +25,7 @@ from vtm.benchmarks.synthetic import (
 )
 from vtm.enums import MemoryKind, ValidityStatus
 from vtm.harness.models import HarnessTaskPack
+from vtm.retrieval import RetrieveCandidate, RetrieveExplanation
 from vtm_rlm.prompting import build_phase1_task_prompt
 
 
@@ -357,8 +360,11 @@ def test_coding_suite_writes_task_pack_and_executes_rlm(
     assert isinstance(task_pack.memory_context, tuple)
     if task_pack.memory_context:
         assert any(
-            item.title.startswith("Verifier signal for ") for item in task_pack.memory_context
+            item.relative_path is not None or item.symbol is not None
+            for item in task_pack.memory_context
         )
+        assert any(item.matched_terms for item in task_pack.memory_context)
+        assert all(item.relevance_reason is not None for item in task_pack.memory_context)
 
 
 def test_coding_suite_supports_naive_lexical_mode(
@@ -567,6 +573,134 @@ def test_controlled_coding_drift_seeded_verified_memories_are_evidence_backed(
         assert f"Task statement: {task.task_statement}" in validation_evidence_text
         assert f"Validation command: {' '.join(task.test_command)}" in validation_evidence_text
         assert task.failing_tests[0] in validation_evidence_text
+
+
+def test_build_visible_task_context_extracts_structured_hints(tmp_path: Path) -> None:
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
+    repo_root = tmp_path / "synthetic-smoke-corpus"
+    SyntheticPythonSmokeCorpus().materialize(repo_root)
+    task = next(
+        task
+        for task in manifest.coding_tasks
+        if task.case_id == "synthetic_bugfix_unittest"
+    )
+    pair = next(
+        pair
+        for repo in manifest.repos
+        if repo.repo_name == task.repo_name
+        for pair in repo.commit_pairs
+        if pair.pair_id == task.commit_pair_id
+    )
+    _run(repo_root, "git", "checkout", "--quiet", pair.base_ref)
+
+    visible_task_context = build_visible_task_context(
+        repo_root=repo_root,
+        task=task,
+        timeout_seconds=30,
+    )
+
+    assert visible_task_context.retrieval_query_parts
+    assert "bugfix_module.py" in visible_task_context.path_hints
+    assert "tests/test_bugfix_module.py" in visible_task_context.path_hints
+    assert "bugfix_module" in visible_task_context.module_hints
+    assert "buggy_increment" in visible_task_context.symbol_hints
+    assert visible_task_context.failure_signatures
+    assert "buggy_increment" in visible_task_context.retrieval_query
+
+
+def test_task_conditioned_memories_include_structured_visible_hints(tmp_path: Path) -> None:
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
+    repo_root = tmp_path / "synthetic-smoke-corpus"
+    SyntheticPythonSmokeCorpus().materialize(repo_root)
+    pair_map = {
+        pair.pair_id: pair
+        for repo in manifest.repos
+        if repo.repo_name == "synthetic_python_smoke"
+        for pair in repo.commit_pairs
+    }
+    task = next(
+        task
+        for task in manifest.coding_tasks
+        if task.case_id == "synthetic_bugfix_unittest"
+    )
+    memories, _artifact_bytes_by_id = _seed_controlled_task_memories(
+        tmp_path=tmp_path / task.case_id,
+        repo_root=repo_root,
+        task=task,
+        pair=pair_map[task.commit_pair_id],
+    )
+    memory_by_title = {memory.title: memory for memory in memories}
+
+    tests_memory = memory_by_title[f"Failing tests for {task.case_id}"]
+    localization_memory = memory_by_title[f"Localization notes for {task.case_id}"]
+    verifier_memory = memory_by_title[f"Verifier signal for {task.case_id}"]
+
+    assert "Candidate paths:" in tests_memory.payload.claim
+    assert "Candidate modules:" in tests_memory.payload.claim
+    assert "Candidate symbols:" in localization_memory.payload.claim
+    assert "Failure signatures:" in verifier_memory.payload.claim
+
+
+def test_rerank_coding_candidates_prefers_structural_matches(
+    memory_factory,
+    anchor_evidence,
+) -> None:
+    generic_memory = memory_factory(
+        title="Target behavior note",
+        summary="General target note with lexical overlap only.",
+    )
+    anchored_memory = memory_factory(
+        title="Target fix for src/example.py",
+        summary="Grounded target fix for the anchored function.",
+        evidence=(anchor_evidence,),
+    )
+    candidates = (
+        RetrieveCandidate(
+            memory=generic_memory,
+            score=6.0,
+            explanation=RetrieveExplanation(
+                matched_tokens=("target", "fix"),
+                matched_fields=("title", "summary"),
+                score=6.0,
+                reason="matched lexical overlap",
+            ),
+        ),
+        RetrieveCandidate(
+            memory=anchored_memory,
+            score=4.0,
+            explanation=RetrieveExplanation(
+                matched_tokens=("target",),
+                matched_fields=("title",),
+                score=4.0,
+                reason="matched lexical overlap",
+            ),
+        ),
+    )
+
+    reranked = rerank_coding_candidates(
+        candidates,
+        visible_task_context=VisibleTaskContext(
+            retrieval_query="src/example.py target ImportError",
+            retrieval_query_parts=("src/example.py", "target", "ImportError"),
+            verifier_output="ImportError: cannot import target",
+            localization_notes=("Referenced module from test import: src/example.py",),
+            path_hints=("src/example.py",),
+            module_hints=("src.example", "example"),
+            symbol_hints=("target",),
+            failure_signatures=("ImportError: cannot import target",),
+        ),
+        top_k=2,
+    )
+
+    assert reranked[0].memory.memory_id == anchored_memory.memory_id
+    assert reranked[0].score > reranked[1].score
+    assert "structural boost" in reranked[0].explanation.reason
+    assert reranked[0].explanation.metadata["coding_structural_matches"] == (
+        "path",
+        "module",
+        "symbol",
+        "failure_signature",
+    )
 
 
 def test_controlled_coding_drift_task_pack_hides_expected_changed_paths_from_prompt(

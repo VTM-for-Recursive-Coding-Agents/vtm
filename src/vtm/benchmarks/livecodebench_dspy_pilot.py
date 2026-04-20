@@ -41,7 +41,7 @@ from vtm.stores.sqlite_store import SqliteMetadataStore
 from vtm_dspy import dspy_available, require_dspy
 from vtm_dspy.config import DSPyOpenRouterConfig
 from vtm_dspy.react_agent import VTMReActCodingAgent
-from vtm_dspy.rlm_agent import VTMRLMCodingAgent
+from vtm_dspy.rlm_agent import VTMRLMCodingAgent, rlm_interpreter_availability
 
 PilotMethod = Literal[
     "direct",
@@ -59,6 +59,8 @@ DEFAULT_MAX_TOKENS: Final[int] = 8192
 DEFAULT_TEMPERATURE: Final[float] = 0.0
 DEFAULT_SCENARIO: Final[PilotScenario] = "self_repair"
 DEFAULT_DIRECT_EMPTY_RESPONSE_RETRIES: Final[int] = 2
+PILOT_RLM_MAX_ITERATIONS: Final[int] = 2
+PILOT_RLM_MAX_LLM_CALLS: Final[int] = 4
 METHODS: Final[tuple[PilotMethod, ...]] = (
     "direct",
     "dspy_baseline",
@@ -75,6 +77,15 @@ CODE_BLOCK_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"```(?:python)?\s*\n(.*?)```",
     re.DOTALL | re.IGNORECASE,
 )
+PROMPT_CARD_ROLE_PRIORITY: Final[dict[str, int]] = {
+    "feedback_item": 0,
+    "feedback": 1,
+    "public_tests": 2,
+    "function_contract": 3,
+    "refuted_answer": 4,
+    "attempt_summary": 5,
+    "problem_summary": 20,
+}
 
 
 @dataclass(frozen=True)
@@ -131,6 +142,8 @@ class MethodRuntime:
     dspy_available: bool
     rlm_available: bool
     memory_tools_enabled: bool
+    interpreter_available: bool | None = None
+    interpreter_error: str | None = None
 
 
 @dataclass
@@ -291,6 +304,11 @@ def describe_method_runtime(
         dspy_model_name=model,
     )
     if method in {"dspy_vtm", "dspy_rlm_vtm"}:
+        interpreter_available, interpreter_error = (
+            rlm_interpreter_availability()
+            if method == "dspy_rlm_vtm"
+            else (None, None)
+        )
         with TemporaryDirectory(prefix="vtm-lcb-dspy-dry-run-") as temp_dir:
             session = open_memory_session(
                 state_root=Path(temp_dir),
@@ -315,6 +333,8 @@ def describe_method_runtime(
                         dependency_provider=lambda: session.dependency,
                         memory_lookup=session.metadata_store.get_memory_item,
                         model_config=model_config,
+                        max_iterations=PILOT_RLM_MAX_ITERATIONS,
+                        max_llm_calls=PILOT_RLM_MAX_LLM_CALLS,
                     )
                     memory_tools_enabled = agent.context_adapter.memory_tools.enabled
                 tool_names = agent.tool_names()
@@ -328,12 +348,17 @@ def describe_method_runtime(
             dspy_available=dspy_available(),
             rlm_available=_dspy_rlm_available(),
             memory_tools_enabled=memory_tools_enabled,
+            interpreter_available=interpreter_available,
+            interpreter_error=interpreter_error,
         )
     if method == "dspy_rlm_baseline":
+        interpreter_available, interpreter_error = rlm_interpreter_availability()
         agent = VTMRLMCodingAgent(
             kernel=None,
             scopes=(),
             model_config=model_config,
+            max_iterations=PILOT_RLM_MAX_ITERATIONS,
+            max_llm_calls=PILOT_RLM_MAX_LLM_CALLS,
         )
         return MethodRuntime(
             method=method,
@@ -343,6 +368,8 @@ def describe_method_runtime(
             dspy_available=dspy_available(),
             rlm_available=_dspy_rlm_available(),
             memory_tools_enabled=agent.context_adapter.memory_tools.enabled,
+            interpreter_available=interpreter_available,
+            interpreter_error=interpreter_error,
         )
     if method == "dspy_baseline":
         agent = VTMReActCodingAgent(
@@ -425,20 +452,7 @@ def build_attempt_prompt(
         sections.append("")
         sections.append("Verified Memory Cards:")
         for index, card in enumerate(memory_cards, start=1):
-            sections.append(
-                json.dumps(
-                    {
-                        "index": index,
-                        "title": card.get("title"),
-                        "summary": card.get("summary"),
-                        "status": card.get("status"),
-                        "path": card.get("path"),
-                        "symbol": card.get("symbol"),
-                        "evidence_summary": card.get("evidence_summary", []),
-                    },
-                    sort_keys=True,
-                )
-            )
+            sections.extend(_render_memory_card(index=index, card=card))
     if repair_context is not None:
         sections.append("")
         sections.append("Previous Attempt:")
@@ -467,10 +481,13 @@ def build_attempt_prompt(
 def extract_code(text: str) -> str | None:
     if not text.strip():
         return None
-    match = CODE_BLOCK_PATTERN.search(text)
-    if match is not None:
-        code = match.group(1).strip()
-        return code or None
+    blocks = [
+        match.group(1).strip()
+        for match in CODE_BLOCK_PATTERN.finditer(text)
+        if match.group(1).strip()
+    ]
+    if blocks:
+        return blocks[-1]
     stripped = text.strip()
     return stripped or None
 
@@ -537,6 +554,7 @@ def aggregate_summary(
     return {
         "benchmark": "livecodebench",
         "kind": "dspy_pilot",
+        "status": "completed",
         "scenario": scenario,
         "method": method,
         "model": model,
@@ -551,6 +569,46 @@ def aggregate_summary(
         "mean_verified_count": round(mean_verified_count, 6),
         "mean_stale_filtered_count": round(mean_stale_filtered_count, 6),
         "mean_tool_calls": round(mean_tool_calls, 6),
+        "pilot_limitations": list(PILOT_LIMITATION_NOTES),
+    }
+
+
+def skipped_summary(
+    *,
+    method: PilotMethod,
+    scenario: PilotScenario,
+    model: str,
+    run_id: str,
+    reason: str,
+    problem_source: Mapping[str, Any],
+    problem_offset: int,
+    planned_problem_count: int,
+) -> dict[str, Any]:
+    return {
+        "benchmark": "livecodebench",
+        "kind": "dspy_pilot",
+        "status": "skipped",
+        "scenario": scenario,
+        "method": method,
+        "model": model,
+        "run_id": run_id,
+        "generated_at": utc_now().isoformat(),
+        "problem_source": dict(problem_source),
+        "problem_offset": problem_offset,
+        "planned_problem_count": planned_problem_count,
+        "scenario_semantics": _scenario_semantics(scenario),
+        "total": 0,
+        "evaluation_available_count": 0,
+        "pass_count": None,
+        "pass_rate": None,
+        "public_test_pass_rate": None,
+        "syntax_error_count": 0,
+        "retrieval_usage_rate": 0.0,
+        "retrieval_hit_rate": 0.0,
+        "mean_verified_count": 0.0,
+        "mean_stale_filtered_count": 0.0,
+        "mean_tool_calls": 0.0,
+        "skip_reason": reason,
         "pilot_limitations": list(PILOT_LIMITATION_NOTES),
     }
 
@@ -619,6 +677,27 @@ def run_pilot(
             raise RuntimeError(f"{method} requires the optional 'dspy' extra")
         if method in {"dspy_rlm_baseline", "dspy_rlm_vtm"} and not runtime.rlm_available:
             raise RuntimeError(f"{method} requires a DSPy build that exposes dspy.RLM")
+        if (
+            method in {"dspy_rlm_baseline", "dspy_rlm_vtm"}
+            and runtime.interpreter_available is False
+        ):
+            summary = skipped_summary(
+                method=method,
+                scenario=config.resolved_scenario,
+                model=config.model,
+                run_id=config.run_id,
+                reason=runtime.interpreter_error
+                or "DSPy RLM interpreter prerequisites were not available.",
+                problem_source=source.describe(),
+                problem_offset=config.problem_offset,
+                planned_problem_count=len(problems),
+            )
+            write_problem_rows(paths.problems_jsonl, [])
+            write_summary(paths.summary_json, summary)
+            run_payload["summary"] = summary
+            run_payload["skipped"] = True
+            run_payload["skip_reason"] = summary["skip_reason"]
+            continue
         rows = execute_method(
             method,
             config=config,
@@ -764,6 +843,7 @@ def execute_problem(
                     retrieval_payload = retrieve_verified_memory(
                         session,
                         query=retrieval_query,
+                        attempt_index=attempt_index,
                     )
                     retrieval_invocation_count += 1
                     retrieval_queries.append(retrieval_query)
@@ -968,6 +1048,8 @@ def run_dspy_attempt(
             dependency_provider=lambda: session.dependency,
             memory_lookup=session.metadata_store.get_memory_item,
             model_config=model_config,
+            max_iterations=PILOT_RLM_MAX_ITERATIONS,
+            max_llm_calls=PILOT_RLM_MAX_LLM_CALLS,
         )
         result = agent.run(prompt, query=memory_query)
     elif method == "dspy_rlm_baseline":
@@ -975,6 +1057,8 @@ def run_dspy_attempt(
             kernel=None,
             scopes=(),
             model_config=model_config,
+            max_iterations=PILOT_RLM_MAX_ITERATIONS,
+            max_llm_calls=PILOT_RLM_MAX_LLM_CALLS,
         )
         result = agent.run(prompt, query=memory_query)
     else:
@@ -1059,6 +1143,8 @@ def seed_problem_memory(
     problem: LiveCodeBenchProblem,
 ) -> None:
     summary_text = compact_text(problem.prompt, limit=220)
+    contract_claim = _function_contract_claim(problem)
+    public_tests_claim = _public_tests_claim(problem)
     payload = {
         "problem_id": problem.problem_id,
         "scenario": problem.scenario,
@@ -1102,6 +1188,50 @@ def seed_problem_memory(
             metadata={"problem_id": problem.problem_id, "memory_role": "problem_summary"},
         ),
     )
+    if contract_claim:
+        session.kernel.stage_memory_item(
+            tx.tx_id,
+            MemoryItem(
+                kind=MemoryKind.CLAIM,
+                title=f"Interface contract for {problem.problem_id}",
+                summary=compact_text(contract_claim, limit=220),
+                payload=ClaimPayload(
+                    claim=contract_claim,
+                    strength=ClaimStrength.SUPPORTED,
+                ),
+                evidence=(evidence,),
+                tags=("livecodebench", "contract"),
+                visibility=session.scope,
+                validity=ValidityState(
+                    status=ValidityStatus.VERIFIED,
+                    dependency_fingerprint=session.dependency,
+                    reason="Public function contract captured for the current pilot run",
+                ),
+                metadata={"problem_id": problem.problem_id, "memory_role": "function_contract"},
+            ),
+        )
+    if public_tests_claim:
+        session.kernel.stage_memory_item(
+            tx.tx_id,
+            MemoryItem(
+                kind=MemoryKind.CLAIM,
+                title=f"Public tests for {problem.problem_id}",
+                summary=compact_text(public_tests_claim, limit=220),
+                payload=ClaimPayload(
+                    claim=public_tests_claim,
+                    strength=ClaimStrength.SUPPORTED,
+                ),
+                evidence=(evidence,),
+                tags=("livecodebench", "public_tests"),
+                visibility=session.scope,
+                validity=ValidityState(
+                    status=ValidityStatus.VERIFIED,
+                    dependency_fingerprint=session.dependency,
+                    reason="Public tests captured for the current pilot run",
+                ),
+                metadata={"problem_id": problem.problem_id, "memory_role": "public_tests"},
+            ),
+        )
     session.kernel.commit_transaction(tx.tx_id)
 
 
@@ -1130,10 +1260,15 @@ def record_attempt_memory(
         summary=f"Raw response for attempt {attempt_index}",
     )
     evidence = [response_evidence]
+    feedback_items = [
+        str(item).strip()
+        for item in (evaluation.get("failure_feedback", []) if evaluation else [])
+        if str(item).strip()
+    ]
     feedback_summaries: list[str] = []
-    if evaluation and evaluation.get("failure_feedback"):
+    if feedback_items:
         feedback_payload = json.dumps(
-            evaluation.get("failure_feedback"),
+            feedback_items,
             indent=2,
             sort_keys=True,
         ).encode("utf-8")
@@ -1153,7 +1288,7 @@ def record_attempt_memory(
             summary=f"Visible execution or evaluation feedback for attempt {attempt_index}",
         )
         evidence.append(feedback_evidence)
-        feedback_summaries.extend(str(item) for item in evaluation.get("failure_feedback", []))
+        feedback_summaries.extend(feedback_items)
 
     tx = session.kernel.begin_transaction(
         session.scope,
@@ -1208,6 +1343,33 @@ def record_attempt_memory(
                 metadata={"problem_id": problem.problem_id, "memory_role": "feedback"},
             ),
         )
+        for feedback_index, feedback_text in enumerate(feedback_summaries[:3], start=1):
+            feedback_item_summary = compact_text(feedback_text, limit=220)
+            session.kernel.stage_memory_item(
+                tx.tx_id,
+                MemoryItem(
+                    kind=MemoryKind.CLAIM,
+                    title=f"Attempt {attempt_index} feedback item {feedback_index}",
+                    summary=feedback_item_summary,
+                    payload=ClaimPayload(
+                        claim=feedback_text,
+                        strength=ClaimStrength.SUPPORTED,
+                    ),
+                    evidence=tuple(evidence),
+                    tags=("livecodebench", "feedback_item"),
+                    visibility=session.scope,
+                    validity=ValidityState(
+                        status=ValidityStatus.VERIFIED,
+                        dependency_fingerprint=session.dependency,
+                        reason="Visible execution feedback captured during the current run",
+                    ),
+                    metadata={
+                        "problem_id": problem.problem_id,
+                        "memory_role": "feedback_item",
+                        "feedback_index": feedback_index,
+                    },
+                ),
+            )
         session.kernel.stage_memory_item(
             tx.tx_id,
             MemoryItem(
@@ -1248,6 +1410,7 @@ def retrieve_verified_memory(
     session: PilotMemorySession,
     *,
     query: str,
+    attempt_index: int,
 ) -> dict[str, Any]:
     result = session.kernel.retrieve(
         RetrieveRequest(
@@ -1260,10 +1423,14 @@ def retrieve_verified_memory(
             return_verified_only=True,
         )
     )
+    selected_candidates = _select_prompt_candidates(
+        result.candidates,
+        attempt_index=attempt_index,
+    )
     return {
-        "used": bool(result.candidates),
+        "used": bool(selected_candidates),
         "query": query,
-        "cards": [_serialize_candidate(candidate) for candidate in result.candidates],
+        "cards": [_serialize_candidate(candidate) for candidate in selected_candidates],
         "verified_count": result.verified_count,
         "stale_filtered_count": result.stale_filtered_count,
         "tool_calls": 1,
@@ -1411,11 +1578,130 @@ def _serialize_candidate(candidate: Any) -> dict[str, Any]:
         "title": memory.title,
         "summary": memory.summary,
         "status": memory.validity.status.value,
+        "role": _memory_role(memory),
         "score": round(candidate.score, 6),
         "path": path,
         "symbol": symbol,
         "evidence_summary": evidence_summary,
     }
+
+
+def _render_memory_card(*, index: int, card: Mapping[str, Any]) -> list[str]:
+    role = str(card.get("role") or "").strip().replace("_", " ")
+    title = str(card.get("title") or "Verified memory").strip()
+    path = str(card.get("path") or "").strip()
+    symbol = str(card.get("symbol") or "").strip()
+    location = ""
+    if path and symbol:
+        location = f" ({path}::{symbol})"
+    elif path:
+        location = f" ({path})"
+    header = f"{index}. "
+    if role:
+        header += f"[{role}] "
+    header += f"{title}{location}"
+    lines = [header]
+    summary = str(card.get("summary") or "").strip()
+    if summary:
+        lines.append(f"summary: {summary}")
+    evidence_summary = card.get("evidence_summary")
+    if isinstance(evidence_summary, Sequence) and not isinstance(evidence_summary, str | bytes):
+        evidence_preview = [str(item).strip() for item in evidence_summary if str(item).strip()]
+        if evidence_preview:
+            lines.append(f"evidence: {'; '.join(evidence_preview[:3])}")
+    return lines
+
+
+def _function_contract_claim(problem: LiveCodeBenchProblem) -> str | None:
+    lines: list[str] = []
+    required_func_name = _required_function_name(problem)
+    if required_func_name:
+        lines.append(f"Expose a top-level callable named `{required_func_name}`.")
+    public_tests = problem.evaluator_payload.get("public_tests")
+    if isinstance(public_tests, list | tuple) and public_tests:
+        test_types = {
+            str(item.get("testtype", "stdin")).strip().lower()
+            for item in public_tests
+            if isinstance(item, Mapping)
+        }
+        if "functional" in test_types:
+            lines.append("Public evaluation may call the function directly.")
+        if not test_types or "stdin" in test_types:
+            lines.append("Public evaluation may execute the module from stdin/stdout.")
+    starter_preview = compact_text(problem.starter_code, limit=180)
+    if starter_preview:
+        lines.append(f"Starter code preview: {starter_preview}")
+    if not lines:
+        return None
+    return "\n".join(lines)
+
+
+def _public_tests_claim(problem: LiveCodeBenchProblem) -> str | None:
+    public_tests = problem.evaluator_payload.get("public_tests")
+    if not isinstance(public_tests, list | tuple) or not public_tests:
+        return None
+    lines: list[str] = []
+    for index, raw_test in enumerate(public_tests[:3], start=1):
+        if isinstance(raw_test, Mapping):
+            test_type = str(raw_test.get("testtype", "stdin")).strip().lower()
+            label = "Functional example" if test_type == "functional" else "Stdin example"
+            input_text = compact_text(str(raw_test.get("input", "")), limit=80)
+            output_text = compact_text(str(raw_test.get("output", "")), limit=80)
+            lines.append(f"{label} {index}: input={input_text!r} output={output_text!r}")
+        else:
+            lines.append(f"Public test {index}: {compact_text(str(raw_test), limit=120)}")
+    return "\n".join(lines) if lines else None
+
+
+def _memory_role(memory: Any) -> str:
+    metadata = getattr(memory, "metadata", None)
+    if isinstance(metadata, Mapping):
+        role = metadata.get("memory_role")
+        if isinstance(role, str) and role.strip():
+            return role.strip()
+    return ""
+
+
+def _select_prompt_candidates(
+    candidates: Sequence[Any],
+    *,
+    attempt_index: int,
+    limit: int = 5,
+) -> list[Any]:
+    if not candidates:
+        return []
+    role_ranked = sorted(
+        candidates,
+        key=lambda candidate: (
+            PROMPT_CARD_ROLE_PRIORITY.get(_memory_role(candidate.memory), 10),
+            -float(candidate.score),
+            candidate.memory.title or "",
+        ),
+    )
+    non_summary = [
+        candidate
+        for candidate in role_ranked
+        if _memory_role(candidate.memory) != "problem_summary"
+    ]
+    if non_summary:
+        role_ranked = non_summary
+    if attempt_index <= 1:
+        role_ranked = [
+            candidate
+            for candidate in role_ranked
+            if _memory_role(candidate.memory) not in {"feedback", "feedback_item", "refuted_answer"}
+        ] or role_ranked
+    selected: list[Any] = []
+    seen_ids: set[str] = set()
+    for candidate in role_ranked:
+        memory_id = getattr(candidate.memory, "memory_id", "")
+        if memory_id in seen_ids:
+            continue
+        selected.append(candidate)
+        seen_ids.add(memory_id)
+        if len(selected) >= limit:
+            break
+    return selected
 
 
 def _mean_numeric(values: Iterable[Any]) -> float:

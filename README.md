@@ -26,6 +26,12 @@ The maintained package boundaries are:
 
 External coding prompts no longer expose oracle `expected_changed_paths` or `touched_paths` by default. Those fields remain available for scoring only.
 
+For controlled coding-drift, retrieval queries are derived from visible task signals such as
+task text, failing tests, verifier output, and deterministic localization notes. Retrieved
+memory written into task packs now includes advisory explanation metadata such as
+`matched_terms`, `matched_fields`, and `relevance_reason`, and the coding suite reranks an
+expanded lexical candidate pool using only those visible hints before truncating to `top_k`.
+
 SWE-bench Lite was attempted as an external agent pilot, but the OpenRouter-backed vendored RLM produced empty patches and zero resolved tasks. It is not part of the final maintained benchmark surface or paper claim.
 
 ## DSPy Interface

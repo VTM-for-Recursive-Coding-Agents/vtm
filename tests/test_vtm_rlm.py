@@ -122,6 +122,9 @@ def test_memory_bridge_search_and_expand(kernel, memory_factory, scope: Visibili
 
     assert results
     assert results[0]["memory_id"] == memory.memory_id
+    assert results[0]["matched_terms"] == ["fallback", "parser"]
+    assert results[0]["matched_fields"]
+    assert results[0]["reason"] == "matched lexical overlap"
 
     evidence = bridge.expand_memory(memory.memory_id)
     assert evidence
@@ -173,6 +176,9 @@ def test_summarize_memory_context_marks_memory_as_advisory() -> None:
                 "summary": "bug.py should return value + 1",
                 "score": 0.9,
                 "status": "verified",
+                "matched_terms": ("bug", "fix_bug"),
+                "matched_fields": ("title", "payload"),
+                "relevance_reason": "matched lexical overlap",
             },
         ),
     )
@@ -183,6 +189,8 @@ def test_summarize_memory_context_marks_memory_as_advisory() -> None:
     assert "Advisory VTM Memory" in prompt
     assert "trust the repository" in prompt
     assert "verify whether this is still true" in summary
+    assert "matched terms=bug, fix_bug" in summary
+    assert "matched fields=title, payload" in summary
 
 
 def test_build_phase1_task_prompt_compacts_external_tasks() -> None:

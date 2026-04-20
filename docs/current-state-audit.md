@@ -11,6 +11,7 @@ This is the maintained snapshot of what still matters for the narrowed paper art
 - Retrieval-time verification can refresh dependency fingerprints, relocate anchors on read, persist relocation evidence, and filter stale memories before they reach the agent.
 - External coding prompts no longer expose oracle changed-path hints by default.
 - Corrective retry keeps using the same fairness policy, so external retry hints do not inject oracle changed-path targets.
+- Controlled coding-drift retrieval derives query and reranking hints from visible task text, tests, verifier output, and deterministic localization notes only; task-pack memory context now retains advisory match metadata for each retrieved memory.
 - Coding task packs are stable, executor artifacts are durable, and the maintained coding executor is the OpenRouter-backed RLM path.
 - Vendored-RLM integration remains thin: fixed OpenRouter-backed execution plus optional reranking.
 

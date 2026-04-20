@@ -31,6 +31,9 @@ class TaskMemoryContextItem(VTMModel):
     symbol: str | None = None
     slice_name: str | None = None
     raw_anchor_path: str | None = None
+    matched_terms: tuple[str, ...] = Field(default_factory=tuple)
+    matched_fields: tuple[str, ...] = Field(default_factory=tuple)
+    relevance_reason: str | None = None
 
 
 class HarnessTaskPack(VTMModel):

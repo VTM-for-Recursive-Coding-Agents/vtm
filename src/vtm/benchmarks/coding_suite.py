@@ -41,6 +41,8 @@ from vtm.harness.workspace_docker import DockerWorkspaceBackend
 from vtm.memory_items import (
     ClaimPayload,
     CommandValidatorConfig,
+    ConstraintPayload,
+    DecisionPayload,
     MemoryItem,
     ProcedurePayload,
     ProcedureStep,
@@ -48,7 +50,7 @@ from vtm.memory_items import (
     ValidityState,
     VisibilityScope,
 )
-from vtm.retrieval import RetrieveRequest
+from vtm.retrieval import RetrieveCandidate, RetrieveExplanation, RetrieveRequest
 from vtm.services import TransactionalMemoryKernel
 from vtm.stores import (
     FilesystemArtifactStore,
@@ -56,6 +58,14 @@ from vtm.stores import (
     SqliteMetadataStore,
 )
 from vtm_rlm.context import RLMRuntimeContext
+
+PATH_HINT_RE = re.compile(r"[A-Za-z0-9_./-]+\.py")
+IDENTIFIER_HINT_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
+TEXT_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+FAILURE_SIGNATURE_RE = re.compile(
+    r"(traceback|error|exception|failed|assert|cannot import name|no module named|not found)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -81,8 +91,13 @@ class VisibleTaskContext:
     """Visible, non-oracle task signals used for retrieval and prompting."""
 
     retrieval_query: str
+    retrieval_query_parts: tuple[str, ...]
     verifier_output: str | None
     localization_notes: tuple[str, ...]
+    path_hints: tuple[str, ...] = ()
+    module_hints: tuple[str, ...] = ()
+    symbol_hints: tuple[str, ...] = ()
+    failure_signatures: tuple[str, ...] = ()
 
 
 def run_coding_suite(
@@ -230,17 +245,22 @@ def prepare_coding_task(
                 mode=config.mode,
                 query=query,
                 scope=durable_scope,
-                limit=config.top_k,
+                limit=coding_candidate_pool_limit(config.top_k),
                 current_dependency=current_dependency,
             )
+        )
+        selected_candidates = rerank_coding_candidates(
+            retrieval_result.candidates,
+            visible_task_context=visible_task_context,
+            top_k=config.top_k,
         )
         memory_context = tuple(
             memory_context_payload(
                 candidate.memory,
                 candidate.score,
-                candidate.explanation.metadata,
+                candidate.explanation,
             )
-            for candidate in retrieval_result.candidates
+            for candidate in selected_candidates
         )
         retrieval_verified_count = retrieval_result.verified_count
         retrieval_relocated_count = retrieval_result.relocated_count
@@ -351,6 +371,11 @@ def coding_retrieve_request(
     )
 
 
+def coding_candidate_pool_limit(top_k: int) -> int:
+    """Expand the lexical candidate pool before task-specific reranking."""
+    return min(25, max(10, top_k * 3))
+
+
 def benchmark_dependency_fingerprint(
     *,
     kernel_factory: BenchmarkKernelFactory,
@@ -385,23 +410,51 @@ def build_visible_task_context(
             ]
         )
     )
-    query = task.retrieval_query or " ".join(
-        part
-        for part in (
-            _compact_visible_text(task.task_statement),
-            _compact_visible_text(task.problem_statement),
-            " ".join(task.failing_tests),
-            " ".join(task.fail_to_pass_tests),
-            " ".join(task.pass_to_pass_tests),
-            " ".join(localization_notes),
-            _compact_visible_text(verifier_output),
-        )
-        if part
-    ).strip()
+    path_hints = _extract_path_hints(
+        repo_root=repo_root,
+        texts=(
+            task.task_statement,
+            task.problem_statement,
+            task.hints_text,
+            *task.failing_tests,
+            *task.fail_to_pass_tests,
+            *task.pass_to_pass_tests,
+            *localization_notes,
+            verifier_output,
+        ),
+    )
+    module_hints = _extract_module_hints(path_hints)
+    symbol_hints = _extract_symbol_hints(
+        task=task,
+        localization_notes=localization_notes,
+        verifier_output=verifier_output,
+    )
+    failure_signatures = _extract_failure_signatures(verifier_output)
+    query_parts = _unique_visible_parts(
+        task.retrieval_query,
+        _compact_visible_text(task.task_statement),
+        _compact_visible_text(task.problem_statement),
+        _compact_visible_text(task.hints_text),
+        " ".join(task.failing_tests),
+        " ".join(task.fail_to_pass_tests),
+        " ".join(task.pass_to_pass_tests),
+        " ".join(localization_notes),
+        " ".join(path_hints),
+        " ".join(module_hints),
+        " ".join(symbol_hints),
+        " ".join(failure_signatures),
+        _compact_visible_text(verifier_output),
+    )
+    query = " ".join(query_parts).strip()
     return VisibleTaskContext(
         retrieval_query=query,
+        retrieval_query_parts=query_parts,
         verifier_output=verifier_output,
         localization_notes=localization_notes,
+        path_hints=path_hints,
+        module_hints=module_hints,
+        symbol_hints=symbol_hints,
+        failure_signatures=failure_signatures,
     )
 
 
@@ -461,13 +514,20 @@ def resolve_test_path(*, repo_root: Path, test_name: str) -> Path | None:
     direct_path = repo_root / candidate
     if candidate and direct_path.exists():
         return direct_path
-    dotted = candidate.replace(".", "/")
-    if dotted.endswith(".py"):
-        dotted_path = repo_root / dotted
-    else:
-        dotted_path = repo_root / f"{dotted}.py"
-    if candidate and dotted_path.exists():
-        return dotted_path
+    dotted_candidates = [candidate]
+    if "." in candidate:
+        segments = candidate.split(".")
+        dotted_candidates.extend(
+            ".".join(segments[:end])
+            for end in range(len(segments) - 1, 0, -1)
+        )
+    for dotted_candidate in dict.fromkeys(
+        option for option in dotted_candidates if option and "/" not in option
+    ):
+        dotted = dotted_candidate.replace(".", "/")
+        dotted_path = repo_root / (dotted if dotted.endswith(".py") else f"{dotted}.py")
+        if dotted_path.exists():
+            return dotted_path
     return None
 
 
@@ -505,43 +565,55 @@ def seed_task_conditioned_memories(
             "problem",
             f"Task problem for {task.case_id}",
             "Visible issue summary derived from the task statement and problem statement.",
-            " ".join(
-                part
-                for part in (
-                    _compact_visible_text(task.task_statement),
-                    _compact_visible_text(task.problem_statement),
-                )
-                if part
+            _render_visible_card(
+                f"Task statement: {_compact_visible_text(task.task_statement)}",
+                (
+                    f"Problem statement: {_compact_visible_text(task.problem_statement)}"
+                    if task.problem_statement
+                    else ""
+                ),
+                f"Hints: {_compact_visible_text(task.hints_text)}" if task.hints_text else "",
+                _render_hint_line("Candidate symbols", visible_task_context.symbol_hints),
             ),
         ),
         (
             "tests",
             f"Failing tests for {task.case_id}",
             "Visible failing and stability tests attached to this task.",
-            " ".join(
-                part
-                for part in (
+            _render_visible_card(
+                (
                     f"Failing tests: {', '.join(task.fail_to_pass_tests or task.failing_tests)}"
                     if (task.fail_to_pass_tests or task.failing_tests)
-                    else "",
+                    else ""
+                ),
+                (
                     f"Pass-to-pass tests: {', '.join(task.pass_to_pass_tests)}"
                     if task.pass_to_pass_tests
-                    else "",
-                )
-                if part
+                    else ""
+                ),
+                _render_hint_line("Candidate paths", visible_task_context.path_hints),
+                _render_hint_line("Candidate modules", visible_task_context.module_hints),
             ),
         ),
         (
             "verifier",
             f"Verifier signal for {task.case_id}",
             "Visible verifier output captured from the failing task command.",
-            visible_task_context.verifier_output or "",
+            _render_visible_card(
+                _render_hint_line("Failure signatures", visible_task_context.failure_signatures),
+                visible_task_context.verifier_output or "",
+            ),
         ),
         (
             "localization",
             f"Localization notes for {task.case_id}",
             "Deterministic localization notes inferred from visible test paths and imports.",
-            " ".join(visible_task_context.localization_notes),
+            _render_visible_card(
+                "\n".join(visible_task_context.localization_notes),
+                _render_hint_line("Candidate paths", visible_task_context.path_hints),
+                _render_hint_line("Candidate modules", visible_task_context.module_hints),
+                _render_hint_line("Candidate symbols", visible_task_context.symbol_hints),
+            ),
         ),
     ]
     tx = kernel.begin_transaction(scope)
@@ -667,6 +739,263 @@ def _compact_visible_text(text: str | None) -> str:
     collapsed = " ".join(line.strip() for line in text.splitlines() if line.strip())
     collapsed = re.sub(r"\s+", " ", collapsed).strip()
     return _clip_visible_text(collapsed, max_chars=280)
+
+
+def _unique_visible_parts(*parts: str | None) -> tuple[str, ...]:
+    unique_parts: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        cleaned = _compact_visible_text(part)
+        if not cleaned or cleaned in seen:
+            continue
+        unique_parts.append(cleaned)
+        seen.add(cleaned)
+    return tuple(unique_parts)
+
+
+def _render_visible_card(*parts: str | None) -> str:
+    return "\n".join(part.strip() for part in parts if part and part.strip())
+
+
+def _render_hint_line(label: str, values: tuple[str, ...]) -> str:
+    if not values:
+        return ""
+    preview = ", ".join(values[:6])
+    if len(values) > 6:
+        preview = f"{preview}, ..."
+    return f"{label}: {preview}"
+
+
+def _extract_path_hints(
+    *,
+    repo_root: Path,
+    texts: tuple[str | None, ...],
+) -> tuple[str, ...]:
+    hints: list[str] = []
+    for text in texts:
+        if not text:
+            continue
+        for raw_match in PATH_HINT_RE.findall(text):
+            candidate = raw_match.strip()
+            if not candidate:
+                continue
+            raw_path = Path(candidate)
+            if raw_path.is_absolute():
+                try:
+                    normalized = raw_path.relative_to(repo_root).as_posix()
+                except ValueError:
+                    normalized = raw_path.as_posix()
+            else:
+                normalized = candidate.removeprefix("./")
+            hints.append(normalized)
+    return tuple(dict.fromkeys(hints))
+
+
+def _extract_module_hints(path_hints: tuple[str, ...]) -> tuple[str, ...]:
+    hints: list[str] = []
+    for path_hint in path_hints:
+        if not path_hint.endswith(".py"):
+            continue
+        normalized = path_hint[:-3].replace("/", ".")
+        normalized = normalized.removesuffix(".__init__")
+        if normalized:
+            hints.append(normalized)
+        stem = Path(path_hint).stem
+        if stem and stem != "__init__":
+            hints.append(stem)
+    return tuple(dict.fromkeys(hints))
+
+
+def _extract_symbol_hints(
+    *,
+    task: CodingTaskCase,
+    localization_notes: tuple[str, ...],
+    verifier_output: str | None,
+) -> tuple[str, ...]:
+    hints: list[str] = []
+    for test_name in (*task.fail_to_pass_tests, *task.failing_tests, *task.pass_to_pass_tests):
+        for segment in re.split(r"[:.]+", test_name):
+            normalized = segment.strip()
+            if normalized.startswith("test_") and len(normalized) > 5:
+                hints.append(normalized[5:])
+            if _is_symbol_hint(normalized):
+                hints.append(normalized)
+    for text in (
+        task.task_statement,
+        task.problem_statement,
+        task.hints_text,
+        *localization_notes,
+        verifier_output,
+    ):
+        if not text:
+            continue
+        for token in IDENTIFIER_HINT_RE.findall(text):
+            if token.startswith("test_") and len(token) > 5:
+                hints.append(token[5:])
+            if _is_symbol_hint(token):
+                hints.append(token)
+    return tuple(dict.fromkeys(hints))
+
+
+def _is_symbol_hint(token: str) -> bool:
+    normalized = token.strip("_")
+    if len(normalized) < 3:
+        return False
+    if normalized.lower() in {"test", "tests", "none"}:
+        return False
+    return "_" in normalized
+
+
+def _extract_failure_signatures(verifier_output: str | None) -> tuple[str, ...]:
+    if not verifier_output:
+        return ()
+    lines: list[str] = []
+    for raw_line in verifier_output.splitlines():
+        line = raw_line.strip()
+        if not line or not FAILURE_SIGNATURE_RE.search(line):
+            continue
+        lines.append(_clip_visible_text(line, max_chars=180))
+    if not lines:
+        first_line = next(
+            (line.strip() for line in verifier_output.splitlines() if line.strip()),
+            "",
+        )
+        if first_line:
+            lines.append(_clip_visible_text(first_line, max_chars=180))
+    return tuple(dict.fromkeys(lines[:4]))
+
+
+def rerank_coding_candidates(
+    candidates: tuple[RetrieveCandidate, ...],
+    *,
+    visible_task_context: VisibleTaskContext,
+    top_k: int,
+) -> tuple[RetrieveCandidate, ...]:
+    """Prefer memories that align with visible file, module, symbol, and failure hints."""
+    if not candidates:
+        return ()
+
+    path_hints = set(visible_task_context.path_hints)
+    filename_hints = {Path(path_hint).name for path_hint in path_hints if path_hint}
+    module_hints = set(visible_task_context.module_hints)
+    symbol_hints = set(visible_task_context.symbol_hints)
+    failure_terms = _hint_terms(*visible_task_context.failure_signatures)
+    ranked: list[tuple[RetrieveCandidate, int]] = []
+
+    for candidate in candidates:
+        bonus, reasons = _candidate_structural_bonus(
+            candidate,
+            path_hints=path_hints,
+            filename_hints=filename_hints,
+            module_hints=module_hints,
+            symbol_hints=symbol_hints,
+            failure_terms=failure_terms,
+        )
+        final_score = candidate.score + bonus
+        explanation_metadata = dict(candidate.explanation.metadata)
+        explanation_metadata["coding_structural_bonus"] = bonus
+        explanation_metadata["coding_structural_matches"] = reasons
+        explanation_reason = candidate.explanation.reason
+        if reasons:
+            explanation_reason = (
+                f"{explanation_reason}; structural boost: {', '.join(reasons)}"
+            )
+        ranked_candidate = candidate.model_copy(
+            update={
+                "score": final_score,
+                "explanation": candidate.explanation.model_copy(
+                    update={
+                        "score": final_score,
+                        "reason": explanation_reason,
+                        "metadata": explanation_metadata,
+                    }
+                ),
+            }
+        )
+        ranked.append((ranked_candidate, len(reasons)))
+
+    ranked.sort(
+        key=lambda entry: (
+            -entry[0].score,
+            -entry[1],
+            entry[0].memory.memory_id,
+        )
+    )
+    return tuple(entry[0] for entry in ranked[:top_k])
+
+
+def _candidate_structural_bonus(
+    candidate: RetrieveCandidate,
+    *,
+    path_hints: set[str],
+    filename_hints: set[str],
+    module_hints: set[str],
+    symbol_hints: set[str],
+    failure_terms: set[str],
+) -> tuple[float, tuple[str, ...]]:
+    bonus = 0.0
+    reasons: list[str] = []
+    anchor = first_anchor(candidate.memory)
+    if anchor is not None:
+        if anchor.path in path_hints:
+            bonus += 6.0
+            reasons.append("path")
+        elif Path(anchor.path).name in filename_hints:
+            bonus += 3.0
+            reasons.append("filename")
+
+        anchor_module = ""
+        if anchor.path.endswith(".py"):
+            anchor_module = anchor.path[:-3].replace("/", ".").removesuffix(".__init__")
+        anchor_stem = Path(anchor.path).stem
+        if anchor_module in module_hints or anchor_stem in module_hints:
+            bonus += 2.5
+            reasons.append("module")
+
+        if anchor.symbol and anchor.symbol in symbol_hints:
+            bonus += 5.0
+            reasons.append("symbol")
+
+    if failure_terms:
+        failure_overlap = len(failure_terms & _candidate_hint_terms(candidate.memory, anchor))
+        if failure_overlap:
+            bonus += min(2.0, 0.5 * float(failure_overlap))
+            reasons.append("failure_signature")
+
+    distinct_reasons = tuple(dict.fromkeys(reasons))
+    if len(distinct_reasons) > 1:
+        bonus += 0.5 * float(len(distinct_reasons) - 1)
+    return bonus, distinct_reasons
+
+
+def _candidate_hint_terms(memory: MemoryItem, anchor: Any | None) -> set[str]:
+    texts = [memory.title, memory.summary, " ".join(memory.tags)]
+    payload = memory.payload
+    if isinstance(payload, ClaimPayload):
+        texts.append(payload.claim)
+    elif isinstance(payload, ProcedurePayload):
+        texts.append(payload.goal)
+        texts.extend(step.instruction for step in payload.steps)
+    elif isinstance(payload, ConstraintPayload):
+        texts.append(payload.statement)
+    elif isinstance(payload, DecisionPayload):
+        texts.append(payload.summary)
+        if payload.rationale is not None:
+            texts.append(payload.rationale)
+    if anchor is not None:
+        texts.append(anchor.path)
+        if anchor.symbol is not None:
+            texts.append(anchor.symbol)
+    return _hint_terms(*texts)
+
+
+def _hint_terms(*texts: str | None) -> set[str]:
+    terms: set[str] = set()
+    for text in texts:
+        if not text:
+            continue
+        terms.update(token.lower() for token in TEXT_TOKEN_RE.findall(text))
+    return terms
 
 
 def _clip_visible_text(text: str, *, max_chars: int) -> str:
@@ -1027,7 +1356,7 @@ def best_attempt_sort_key(attempt: BenchmarkAttemptResult) -> tuple[float, ...]:
 def memory_context_payload(
     memory: MemoryItem,
     score: float,
-    explanation_metadata: dict[str, Any],
+    explanation: RetrieveExplanation,
 ) -> TaskMemoryContextItem:
     """Convert a retrieved memory into the normalized task-pack context item."""
     anchor = first_anchor(memory)
@@ -1039,10 +1368,13 @@ def memory_context_payload(
         status=memory.validity.status.value,
         relative_path=anchor.path if anchor is not None else None,
         symbol=anchor.symbol if anchor is not None else None,
-        slice_name=str(explanation_metadata.get("slice_name"))
-        if explanation_metadata.get("slice_name") is not None
+        slice_name=str(explanation.metadata.get("slice_name"))
+        if explanation.metadata.get("slice_name") is not None
         else None,
         raw_anchor_path=anchor.path if anchor is not None else None,
+        matched_terms=explanation.matched_tokens,
+        matched_fields=explanation.matched_fields,
+        relevance_reason=explanation.reason,
     )
 
 

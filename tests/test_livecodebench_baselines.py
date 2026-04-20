@@ -17,7 +17,12 @@ from vtm.benchmarks.livecodebench_dspy_pilot import (
     _request_direct_completion,
     aggregate_summary,
     build_attempt_prompt,
+    extract_code,
     method_run_dir,
+    open_memory_session,
+    record_attempt_memory,
+    retrieve_verified_memory,
+    seed_problem_memory,
 )
 from vtm.benchmarks.livecodebench_dspy_pilot import (
     main as livecodebench_dspy_pilot_main,
@@ -900,6 +905,23 @@ def test_livecodebench_dspy_self_repair_prompt_includes_previous_code_and_feedba
     assert "This is repair attempt 2. Fix the previous attempt." in prompt
 
 
+def test_livecodebench_dspy_extract_code_prefers_final_fenced_block() -> None:
+    response = """
+Here is the bug in the previous attempt:
+```python
+tmp = broken_call()
+```
+
+Final answer:
+```python
+def solve():
+    print("ok")
+```
+""".strip()
+
+    assert extract_code(response) == 'def solve():\n    print("ok")'
+
+
 def test_livecodebench_dspy_prompt_includes_function_contract_for_functional_problems() -> None:
     problem = LiveCodeBenchProblem(
         problem_id="lcb-functional-contract",
@@ -918,6 +940,54 @@ def test_livecodebench_dspy_prompt_includes_function_contract_for_functional_pro
     assert "Implementation Contract:" in prompt
     assert "Define a top-level function named `add`" in prompt
     assert "Do not rely on a `class Solution` wrapper" in prompt
+
+
+def test_livecodebench_dspy_retrieval_prioritizes_repair_feedback_cards(
+    tmp_path: Path,
+) -> None:
+    session = open_memory_session(
+        state_root=tmp_path / "pilot-state",
+        problem_id="lcb-feedback-priority",
+        workspace_root=tmp_path,
+    )
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-feedback-priority",
+        scenario="self_repair",
+        prompt="Implement solve() for the provided stdin task.",
+        evaluator_payload={
+            "public_tests": [
+                {"input": "2\n", "output": "4\n", "testtype": "stdin"},
+            ],
+        },
+    )
+    try:
+        seed_problem_memory(session, problem)
+        record_attempt_memory(
+            session,
+            problem=problem,
+            attempt_index=1,
+            response_text="```python\nprint(3)\n```",
+            extracted_code="print(3)\n",
+            evaluation={
+                "failure_feedback": [
+                    "Public stdin test mismatch: expected='4' actual='3'",
+                ]
+            },
+        )
+
+        payload = retrieve_verified_memory(
+            session,
+            query="lcb-feedback-priority | Public stdin test mismatch: expected='4' actual='3'",
+            attempt_index=2,
+        )
+    finally:
+        session.close()
+
+    roles = [card.get("role") for card in payload["cards"]]
+
+    assert payload["used"] is True
+    assert roles[0] == "feedback_item"
+    assert "problem_summary" not in roles
 
 
 def test_livecodebench_dspy_counts_tool_calls_from_trajectory_mapping() -> None:
@@ -1196,6 +1266,91 @@ def test_livecodebench_dspy_dry_run_reports_self_repair_semantics(
     assert payload["problem_offset"] == 1
     assert payload["resolved_scenario"] == "self_repair"
     assert "previous candidate code" in payload["scenario_semantics"].lower()
+
+
+def test_livecodebench_dspy_execute_skips_rlm_methods_without_deno(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    problem_file = tmp_path / "problems.jsonl"
+    problem_file.write_text(
+        json.dumps(
+            {
+                "question_id": "lcb-1",
+                "prompt": "Write solve() that returns 42.",
+                "starter_code": "def solve():\n    pass\n",
+                "public_test_cases": [{"input": "", "output": "42", "testtype": "functional"}],
+                "metadata": {"func_name": "solve"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    source = ProblemFileSource(problem_file)
+    config = livecodebench_dspy_pilot.PilotRunConfig(
+        methods=(
+            "direct",
+            "dspy_baseline",
+            "dspy_vtm",
+            "dspy_rlm_baseline",
+            "dspy_rlm_vtm",
+        ),
+        requested_scenario="self_repair",
+        resolved_scenario="self_repair",
+        model="qwen/qwen3-coder-next",
+        base_url="https://openrouter.example/api/v1",
+        api_key="openrouter-test-key",
+        temperature=0.0,
+        max_tokens=4096,
+        problem_offset=0,
+        max_problems=1,
+        execute=True,
+        output_root=tmp_path / ".benchmarks" / "livecodebench-dspy",
+        benchmark_root=tmp_path / "benchmarks" / "LiveCodeBench",
+        problem_file=problem_file,
+        run_id="skip_rlm_missing_deno",
+    )
+
+    called_methods: list[str] = []
+
+    def fake_execute_method(
+        method: str,
+        *,
+        config,
+        problems,
+        source,
+    ) -> list[dict[str, object]]:
+        del config, problems, source
+        called_methods.append(method)
+        return [
+            {
+                "problem_id": "lcb-1",
+                "method": method,
+                "evaluation": {"available": True, "passed": True, "syntax_error": False},
+                "tool_calls": 0,
+            }
+        ]
+
+    monkeypatch.setattr(
+        livecodebench_dspy_pilot,
+        "rlm_interpreter_availability",
+        lambda: (False, "Deno required for DSPy RLM."),
+    )
+    monkeypatch.setattr(livecodebench_dspy_pilot, "execute_method", fake_execute_method)
+
+    payload = livecodebench_dspy_pilot.run_pilot(config, source=source)
+
+    assert called_methods == ["direct", "dspy_baseline", "dspy_vtm"]
+    skipped_runs = {
+        run["method"]: run
+        for run in payload["runs"]
+        if run["method"] in {"dspy_rlm_baseline", "dspy_rlm_vtm"}
+    }
+    assert skipped_runs["dspy_rlm_baseline"]["skipped"] is True
+    assert skipped_runs["dspy_rlm_vtm"]["skipped"] is True
+    assert skipped_runs["dspy_rlm_baseline"]["summary"]["status"] == "skipped"
+    assert skipped_runs["dspy_rlm_vtm"]["summary"]["status"] == "skipped"
+    assert "Deno required" in skipped_runs["dspy_rlm_baseline"]["skip_reason"]
 
 
 def test_livecodebench_dspy_direct_completion_retries_empty_provider_response() -> None:

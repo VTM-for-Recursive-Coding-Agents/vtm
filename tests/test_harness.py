@@ -74,6 +74,9 @@ def test_harness_models_round_trip() -> None:
                 relative_path="bug.py",
                 symbol="fix_bug",
                 raw_anchor_path="bug.py",
+                matched_terms=("fix_bug", "bug"),
+                matched_fields=("title", "payload"),
+                relevance_reason="matched lexical overlap",
             ),
         ),
     )
