@@ -1,4 +1,4 @@
-"""Small LiveCodeBench pilot comparing direct, DSPy, and DSPy plus VTM flows."""
+"""Small LiveCodeBench pilot comparing direct, DSPy ReAct, and DSPy RLM flows."""
 
 from __future__ import annotations
 
@@ -43,7 +43,13 @@ from vtm_dspy.config import DSPyOpenRouterConfig
 from vtm_dspy.react_agent import VTMReActCodingAgent
 from vtm_dspy.rlm_agent import VTMRLMCodingAgent
 
-PilotMethod = Literal["direct", "dspy_baseline", "dspy_vtm", "dspy_rlm_vtm"]
+PilotMethod = Literal[
+    "direct",
+    "dspy_baseline",
+    "dspy_vtm",
+    "dspy_rlm_baseline",
+    "dspy_rlm_vtm",
+]
 
 PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[3]
 DEFAULT_OUTPUT_ROOT: Final[Path] = PROJECT_ROOT / ".benchmarks" / "livecodebench-dspy"
@@ -57,6 +63,7 @@ METHODS: Final[tuple[PilotMethod, ...]] = (
     "direct",
     "dspy_baseline",
     "dspy_vtm",
+    "dspy_rlm_baseline",
     "dspy_rlm_vtm",
 )
 PILOT_LIMITATION_NOTES: Final[tuple[str, ...]] = (
@@ -147,12 +154,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Run a small LiveCodeBench pilot comparing direct OpenRouter, DSPy, "
-            "DSPy plus VTM verified memory, and an experimental DSPy RLM variant."
+            "DSPy plus VTM verified memory, and DSPy RLM variants with and without memory."
         )
     )
     parser.add_argument(
         "--method",
-        choices=("direct", "dspy_baseline", "dspy_vtm", "dspy_rlm_vtm", "all"),
+        choices=("direct", "dspy_baseline", "dspy_vtm", "dspy_rlm_baseline", "dspy_rlm_vtm", "all"),
         default="all",
     )
     parser.add_argument(
@@ -321,6 +328,21 @@ def describe_method_runtime(
             dspy_available=dspy_available(),
             rlm_available=_dspy_rlm_available(),
             memory_tools_enabled=memory_tools_enabled,
+        )
+    if method == "dspy_rlm_baseline":
+        agent = VTMRLMCodingAgent(
+            kernel=None,
+            scopes=(),
+            model_config=model_config,
+        )
+        return MethodRuntime(
+            method=method,
+            uses_dspy=True,
+            uses_vtm_memory=False,
+            tool_names=agent.tool_names(),
+            dspy_available=dspy_available(),
+            rlm_available=_dspy_rlm_available(),
+            memory_tools_enabled=agent.context_adapter.memory_tools.enabled,
         )
     if method == "dspy_baseline":
         agent = VTMReActCodingAgent(
@@ -595,7 +617,7 @@ def run_pilot(
             continue
         if method != "direct" and not runtime.dspy_available:
             raise RuntimeError(f"{method} requires the optional 'dspy' extra")
-        if method == "dspy_rlm_vtm" and not runtime.rlm_available:
+        if method in {"dspy_rlm_baseline", "dspy_rlm_vtm"} and not runtime.rlm_available:
             raise RuntimeError(f"{method} requires a DSPy build that exposes dspy.RLM")
         rows = execute_method(
             method,
@@ -719,7 +741,7 @@ def execute_problem(
     retrieval_queries: list[str] = []
     dspy_tool_calls = 0
     direct_retry_count = 0
-    direct_response_error: str | None = None
+    response_error: str | None = None
     repair_context: RepairContext | None = None
 
     with TemporaryDirectory(prefix=f"vtm-lcb-{problem.problem_id}-") as temp_dir:
@@ -761,7 +783,7 @@ def execute_problem(
                     repair_context=repair_context,
                 )
                 if method == "direct":
-                    response_payload, response_text, direct_retry_count, direct_response_error = (
+                    response_payload, response_text, direct_retry_count, response_error = (
                         _request_direct_completion(
                             client,
                             model=config.model,
@@ -782,6 +804,8 @@ def execute_problem(
                     response_text = response_payload["response_text"]
                     dspy_tool_calls += int(response_payload["tool_calls"])
                     usage = _normalize_usage(response_payload.get("usage"))
+                    if isinstance(response_payload.get("response_error"), str):
+                        response_error = response_payload["response_error"]
                 extracted_code = extract_code(response_text)
                 evaluation = source.evaluate(
                     problem,
@@ -848,7 +872,7 @@ def execute_problem(
         "retrieval": retrieval_summary,
         "tool_calls": total_tool_calls,
         "direct_retry_count": direct_retry_count,
-        "response_error": direct_response_error,
+        "response_error": response_error,
         "attempt_count": 2 if repair_context is not None else 1,
         "repair_used": repair_context is not None,
     }
@@ -946,6 +970,13 @@ def run_dspy_attempt(
             model_config=model_config,
         )
         result = agent.run(prompt, query=memory_query)
+    elif method == "dspy_rlm_baseline":
+        agent = VTMRLMCodingAgent(
+            kernel=None,
+            scopes=(),
+            model_config=model_config,
+        )
+        result = agent.run(prompt, query=memory_query)
     else:
         agent = VTMReActCodingAgent(
             kernel=None,
@@ -955,11 +986,21 @@ def run_dspy_attempt(
         )
         result = agent.run(prompt)
     response_payload = result.get("response")
+    response_error = None
+    if isinstance(response_payload, Mapping):
+        error_value = response_payload.get("error")
+        if isinstance(error_value, str) and error_value.strip():
+            response_error = error_value
+    if response_error is None and isinstance(result.get("trajectory"), Mapping):
+        error_value = result["trajectory"].get("execution_error")
+        if isinstance(error_value, str) and error_value.strip():
+            response_error = error_value
     return {
         "response_text": _coerce_response_text(response_payload),
         "tool_calls": _count_result_tool_calls(result, response_payload),
         "trajectory": result.get("trajectory"),
         "usage": None,
+        "response_error": response_error,
     }
 
 

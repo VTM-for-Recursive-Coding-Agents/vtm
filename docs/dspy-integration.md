@@ -108,11 +108,15 @@ uv run --extra dspy python scripts/run_dspy_vtm_smoke.py --run-model
 
 ## LiveCodeBench DSPy Pilot
 
-`scripts/run_livecodebench_dspy_pilot.py` is a small scaffolded pilot for external LiveCodeBench tasks. It compares a direct OpenRouter baseline, a DSPy baseline without VTM memory, and DSPy with VTM verified-memory tools.
+`scripts/run_livecodebench_dspy_pilot.py` is a small scaffolded pilot for external LiveCodeBench tasks. It compares:
 
-An experimental `dspy_rlm_vtm` method is also available for inspection. It keeps the
-same VTM verified-memory session but swaps the DSPy orchestration surface from ReAct
-to DSPy RLM. It is exploratory only and does not replace the ReAct path.
+- a direct OpenRouter baseline
+- a DSPy ReAct baseline without VTM memory
+- DSPy ReAct with VTM verified-memory tools
+- a DSPy RLM baseline without VTM memory
+- DSPy RLM with VTM verified-memory tools
+
+The RLM variants are exploratory only and do not replace the ReAct path.
 
 It is deliberately separate from the maintained VTM evidence:
 
@@ -120,7 +124,7 @@ It is deliberately separate from the maintained VTM evidence:
 - The DSPy plus VTM LiveCodeBench path is a scaffolded pilot only.
 - The main VTM evidence remains retrieval, drift verification, drifted retrieval, and controlled coding-drift.
 
-When the pilot runs in `self_repair` mode, the second attempt is a public-feedback repair pass. Each method sees the same previous candidate code and the same visible public-test feedback; only DSPy orchestration and VTM memory access differ.
+When the pilot runs in `self_repair` mode, the second attempt is a public-feedback repair pass. Each method sees the same previous candidate code and the same visible public-test feedback so the pilot can isolate both orchestration differences and memory-access differences.
 
 Dry-run:
 

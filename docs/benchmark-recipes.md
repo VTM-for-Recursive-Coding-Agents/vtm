@@ -70,6 +70,20 @@ Opt in to actual execution explicitly:
 bash scripts/run_livecodebench_baseline.sh --smoke --execute
 ```
 
+Minimal official-score check against the smallest maintained date slice:
+
+```bash
+bash scripts/run_livecodebench_baseline.sh \
+  --model qwen/qwen3-coder-next \
+  --n 1 \
+  --start-date 2023-05-07 \
+  --end-date 2023-05-07 \
+  --debug \
+  --execute
+```
+
+That window currently contains 2 code-generation problems, and `--debug` preserves a small official-eval run even if the upstream slice grows later.
+
 Preview the maintained OpenRouter baseline trio without calling the API:
 
 ```bash
@@ -80,7 +94,7 @@ bash scripts/run_livecodebench_baseline.sh \
 
 This baseline runner is memory-free by design. No VTM retrieval or verifier path is involved.
 
-Optional scaffolded DSPy plus VTM pilot on external LiveCodeBench:
+Optional scaffolded DSPy pilot on external LiveCodeBench:
 
 ```bash
 uv run --extra dspy python scripts/run_livecodebench_dspy_pilot.py \
@@ -130,7 +144,7 @@ uv run python scripts/livecodebench/export_dspy_pilot_results.py \
   --output-root .benchmarks/paper-tables/livecodebench-dspy-pilot
 ```
 
-This pilot is not part of the maintained retrieval, drift verification, drifted retrieval, or controlled coding-drift result surface.
+This pilot is not part of the maintained retrieval, drift verification, drifted retrieval, or controlled coding-drift result surface. `--method all` runs direct, DSPy ReAct baseline, DSPy ReAct plus VTM, DSPy RLM baseline, and DSPy RLM plus VTM.
 
 ## DSPy Smoke
 

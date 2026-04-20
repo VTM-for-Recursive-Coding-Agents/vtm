@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import json
 import subprocess
@@ -29,6 +30,7 @@ from vtm.benchmarks.livecodebench_sources import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+LCB_CHECKOUT_ROOT = REPO_ROOT / "benchmarks" / "LiveCodeBench"
 
 
 def _load_baseline_module():
@@ -40,6 +42,43 @@ def _load_baseline_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _load_export_results_module():
+    module_path = REPO_ROOT / "scripts" / "livecodebench" / "export_results.py"
+    spec = importlib.util.spec_from_file_location("vtm_livecodebench_export_results", module_path)
+    if spec is None or spec.loader is None:
+        raise AssertionError(f"Unable to load module from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_module_from_path(module_name: str, module_path: Path):
+    if not module_path.exists():
+        pytest.skip(f"Missing module path: {module_path}")
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise AssertionError(f"Unable to load module from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_lcb_checkout_module(module_name: str):
+    if not LCB_CHECKOUT_ROOT.exists():
+        pytest.skip("LiveCodeBench checkout is not present")
+    checkout_path = str(LCB_CHECKOUT_ROOT)
+    sys.path.insert(0, checkout_path)
+    try:
+        for name in tuple(sys.modules):
+            if name == "lcb_runner" or name.startswith("lcb_runner."):
+                sys.modules.pop(name, None)
+        return importlib.import_module(module_name)
+    finally:
+        sys.path.remove(checkout_path)
 
 
 def test_livecodebench_script_paths_exist() -> None:
@@ -103,6 +142,7 @@ def test_livecodebench_command_uses_openrouter_defaults() -> None:
     assert env["VTM_OPENROUTER_BASE_URL"] == "https://openrouter.example/api/v1"
     assert env["OPENROUTER_API_KEY"] == "openrouter-test-key"
     assert env["OPENAI_API_KEY"] == "openrouter-test-key"
+    assert env["OPENAI_KEY"] == "openrouter-test-key"
     assert env["OPENAI_BASE_URL"] == "https://openrouter.example/api/v1"
     assert env["OPENAI_API_BASE"] == "https://openrouter.example/api/v1"
     assert module.normalized_run_dir(config) == Path(
@@ -111,6 +151,34 @@ def test_livecodebench_command_uses_openrouter_defaults() -> None:
     assert module.normalized_summary_path(config) == Path(
         ".benchmarks/paper-tables/livecodebench-baselines/lcb_baseline_smoke__google-gemma-test.json"
     )
+
+
+def test_livecodebench_command_supports_debug_passthrough() -> None:
+    module = _load_baseline_module()
+    config = module.BaselineConfig(
+        model="qwen/qwen3-coder-next",
+        base_url="https://openrouter.example/api/v1",
+        api_key="openrouter-test-key",
+        run_id="lcb_baseline_debug",
+        output_root=Path(".benchmarks/livecodebench"),
+        summary_root=Path(".benchmarks/paper-tables/livecodebench-baselines"),
+        benchmark_root=Path("benchmarks/LiveCodeBench"),
+        scenario="codegeneration",
+        release_version="release_v1",
+        n=1,
+        temperature=0.2,
+        evaluate=True,
+        start_date="2023-05-07",
+        end_date="2023-05-07",
+        smoke=False,
+        execute=False,
+        debug=True,
+    )
+
+    command = module.build_livecodebench_command("python3", config)
+
+    assert "--evaluate" in command
+    assert "--debug" in command
 
 
 def test_smoke_mode_defaults_to_small_window() -> None:
@@ -193,6 +261,220 @@ def test_dry_run_does_not_execute_model_call(tmp_path: Path) -> None:
     assert module.normalized_summary_path(config).exists()
 
 
+def test_baseline_run_records_official_eval_metrics(tmp_path: Path) -> None:
+    module = _load_baseline_module()
+    benchmark_root = tmp_path / "benchmarks" / "LiveCodeBench"
+    benchmark_root.mkdir(parents=True)
+    output_dir = benchmark_root / "output" / "Fake-Model"
+    config = module.BaselineConfig(
+        model="google/gemma-test",
+        base_url="https://openrouter.example/api/v1",
+        api_key="openrouter-test-key",
+        run_id="executed_case",
+        output_root=tmp_path / ".benchmarks" / "livecodebench",
+        summary_root=tmp_path / ".benchmarks" / "paper-tables" / "livecodebench-baselines",
+        benchmark_root=benchmark_root,
+        scenario="codegeneration",
+        release_version="release_v1",
+        n=10,
+        temperature=0.2,
+        evaluate=True,
+        start_date=None,
+        end_date=None,
+        smoke=False,
+        execute=True,
+    )
+
+    def fake_runner(command, cwd, env, check):
+        assert cwd == benchmark_root
+        output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / "codegeneration_10_0.2.json").write_text("[]\n", encoding="utf-8")
+        (output_dir / "codegeneration_10_0.2_eval.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "pass@1": 0.25,
+                        "pass@5": 0.5,
+                        "detail": {"pass@1": {"q1": 1.0, "q2": 0.0}},
+                    },
+                    {},
+                    [],
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (output_dir / "codegeneration_10_0.2_eval_all.json").write_text(
+            json.dumps([{"question_id": "q1"}, {"question_id": "q2"}]) + "\n",
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(args=command, returncode=0)
+
+    exit_code = module.run(config, command_runner=fake_runner)
+
+    assert exit_code == 0
+    summary = json.loads(module.normalized_summary_path(config).read_text(encoding="utf-8"))
+    assert summary["official_metrics_available"] is True
+    assert summary["official_pass_at_1"] == 0.25
+    assert summary["official_pass_at_5"] == 0.5
+    assert summary["official_problem_count"] == 2
+    assert summary["eval_file"].endswith("codegeneration_10_0.2_eval.json")
+    metadata_text = (module.normalized_run_dir(config) / "metadata.txt").read_text(encoding="utf-8")
+    assert "official_pass_at_1=0.25" in metadata_text
+    assert "official_pass_at_5=0.5" in metadata_text
+
+
+def test_export_results_merges_summary_json_metrics(tmp_path: Path) -> None:
+    module = _load_export_results_module()
+    input_root = tmp_path / ".benchmarks" / "livecodebench"
+    run_dir = input_root / "fake-model" / "run"
+    run_dir.mkdir(parents=True)
+    summary_path = tmp_path / ".benchmarks" / "paper-tables" / "livecodebench-baselines" / "run__fake-model.json"
+    summary_path.parent.mkdir(parents=True)
+    summary_path.write_text(
+        json.dumps(
+            {
+                "status": "passed",
+                "official_metrics_available": True,
+                "official_pass_at_1": 0.33,
+                "official_pass_at_5": 0.66,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / "metadata.txt").write_text(
+        "\n".join(
+            [
+                "run_id=run",
+                "model=fake-model",
+                "scenario=codegeneration",
+                "release_version=release_v1",
+                "smoke=false",
+                "evaluate=true",
+                f"summary_path={summary_path}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rows = module.collect_rows(input_root)
+
+    assert len(rows) == 1
+    assert rows[0]["status"] == "passed"
+    assert rows[0]["official_pass_at_1"] == 0.33
+    assert rows[0]["official_pass_at_5"] == 0.66
+
+
+def test_livecodebench_checkout_resolves_custom_openrouter_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "openrouter-test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://openrouter.example/api/v1")
+    module = _load_module_from_path(
+        "vtm_lcb_lm_styles",
+        LCB_CHECKOUT_ROOT / "lcb_runner" / "lm_styles.py",
+    )
+
+    model = module.resolve_language_model("qwen/qwen3-coder-next")
+
+    assert model.model_name == "qwen/qwen3-coder-next"
+    assert model.model_repr == "qwen-qwen3-coder-next"
+    assert model.model_style == module.LMStyle.OpenAIChat
+    assert model.to_dict()["release_date"] is None
+
+
+def test_livecodebench_checkout_oai_runner_uses_openrouter_env_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("openai")
+    pytest.importorskip("pebble")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://openrouter.example/api/v1")
+    module = _load_lcb_checkout_module("lcb_runner.runner.oai_runner")
+
+    assert module._openai_api_key() == "openrouter-test-key"
+    assert module._openai_base_url() == "https://openrouter.example/api/v1"
+
+
+def test_livecodebench_checkout_code_generation_loader_reads_hub_jsonl(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fake_hub_module = SimpleNamespace(hf_hub_download=lambda **_: str(tmp_path / "unused.jsonl"))
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hub_module)
+    module = _load_module_from_path(
+        "vtm_lcb_code_generation",
+        LCB_CHECKOUT_ROOT / "lcb_runner" / "benchmarks" / "code_generation.py",
+    )
+    dataset_path = tmp_path / "test.jsonl"
+    dataset_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "question_title": "Add",
+                        "question_content": "Implement add(a, b).",
+                        "platform": "leetcode",
+                        "question_id": "q1",
+                        "contest_id": "contest-1",
+                        "contest_date": "2023-05-07T00:00:00",
+                        "starter_code": "def add(a, b):\n    pass\n",
+                        "difficulty": "easy",
+                        "public_test_cases": json.dumps(
+                            [{"input": "[2, 3]", "output": "5", "testtype": "functional"}]
+                        ),
+                        "private_test_cases": json.dumps(
+                            [{"input": "[4, 5]", "output": "9", "testtype": "functional"}]
+                        ),
+                        "metadata": json.dumps({"func_name": "add"}),
+                    }
+                ),
+                json.dumps(
+                    {
+                        "question_title": "Mul",
+                        "question_content": "Implement mul(a, b).",
+                        "platform": "leetcode",
+                        "question_id": "q2",
+                        "contest_id": "contest-2",
+                        "contest_date": "2023-05-13T00:00:00",
+                        "starter_code": "def mul(a, b):\n    pass\n",
+                        "difficulty": "medium",
+                        "public_test_cases": json.dumps(
+                            [{"input": "[2, 3]", "output": "6", "testtype": "functional"}]
+                        ),
+                        "private_test_cases": json.dumps(
+                            [{"input": "[4, 5]", "output": "20", "testtype": "functional"}]
+                        ),
+                        "metadata": json.dumps({"func_name": "mul"}),
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_hf_hub_download(*, repo_id, repo_type, filename, revision=None):
+        assert repo_id == module.CODE_GENERATION_LITE_DATASET_REPO
+        assert repo_type == "dataset"
+        assert filename == module.CODE_GENERATION_DATASET_FILENAME
+        assert revision is None
+        return str(dataset_path)
+
+    monkeypatch.setattr(module, "hf_hub_download", fake_hf_hub_download)
+
+    dataset = module.load_code_generation_dataset(
+        release_version="release_v1",
+        start_date="2023-05-07",
+        end_date="2023-05-07",
+    )
+
+    assert len(dataset) == 1
+    assert dataset[0].question_id == "q1"
+    assert dataset[0].metadata["func_name"] == "add"
+
+
 def test_livecodebench_docs_mark_baseline_only_scope() -> None:
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     recipes = (REPO_ROOT / "docs" / "benchmark-recipes.md").read_text(encoding="utf-8")
@@ -206,6 +488,9 @@ def test_livecodebench_docs_mark_baseline_only_scope() -> None:
     ) in readme
     assert "LiveCodeBench is available here as an external baseline model benchmark only" in recipes
     assert "bash scripts/run_livecodebench_baseline.sh --smoke --execute" in recipes
+    assert "--start-date 2023-05-07" in recipes
+    assert "--debug" in baselines
+    assert "official_pass_at_1" in baselines
     assert "scripts/run_livecodebench_dspy_pilot.py" in recipes
     assert "qwen/qwen3-coder-next" in recipes
     assert "It is not the main VTM memory benchmark" in baselines
@@ -295,10 +580,16 @@ def test_livecodebench_dspy_pilot_dry_run_supports_all_methods(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["dry_run"] is True
-    assert payload["methods"] == ["direct", "dspy_baseline", "dspy_vtm", "dspy_rlm_vtm"]
+    assert payload["methods"] == [
+        "direct",
+        "dspy_baseline",
+        "dspy_vtm",
+        "dspy_rlm_baseline",
+        "dspy_rlm_vtm",
+    ]
     assert payload["problem_offset"] == 0
     assert payload["problem_count"] == 1
-    assert len(payload["runs"]) == 4
+    assert len(payload["runs"]) == 5
     assert all(
         str(tmp_path / ".benchmarks" / "livecodebench-dspy") in run["run_dir"]
         for run in payload["runs"]
@@ -638,6 +929,44 @@ def test_livecodebench_dspy_rlm_attempt_uses_rlm_agent(monkeypatch: pytest.Monke
     assert payload["tool_calls"] == 1
     assert captured["prompt"] == "Solve it"
     assert captured["query"] == "lcb-123 | public feedback"
+
+
+def test_livecodebench_dspy_attempt_propagates_response_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeAgent:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def run(self, prompt: str, *, query: str | None = None) -> dict[str, object]:
+            return {
+                "response": {
+                    "response": "",
+                    "error": "DSPy RLM emitted an action with code=None before final extraction.",
+                },
+                "trajectory": {
+                    "execution_mode": "rlm",
+                    "execution_error": "DSPy RLM emitted an action with code=None before final extraction.",
+                },
+            }
+
+    monkeypatch.setattr(livecodebench_dspy_pilot, "VTMRLMCodingAgent", FakeAgent)
+
+    payload = livecodebench_dspy_pilot.run_dspy_attempt(
+        prompt="Solve it",
+        method="dspy_rlm_baseline",
+        session=None,
+        model_config=livecodebench_dspy_pilot.DSPyOpenRouterConfig.from_env(
+            base_url_value="https://openrouter.example/api/v1",
+            api_key_value="openrouter-test-key",
+            execution_model_name="qwen/qwen3-coder-next",
+            dspy_model_name="qwen/qwen3-coder-next",
+        ),
+    )
+
+    assert payload["response_text"] == ""
+    assert payload["response_error"] is not None
+    assert "code=None" in payload["response_error"]
 
 
 def test_livecodebench_dspy_output_paths_stay_under_pilot_root(tmp_path: Path) -> None:

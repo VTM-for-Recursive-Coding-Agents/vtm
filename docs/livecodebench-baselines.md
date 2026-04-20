@@ -73,6 +73,26 @@ To actually execute the external benchmark, opt in explicitly:
 bash scripts/run_livecodebench_baseline.sh --smoke --execute
 ```
 
+## Minimal Official Eval
+
+For the smallest official-score run that still emits `*_eval.json` and `*_eval_all.json`:
+
+```bash
+bash scripts/run_livecodebench_baseline.sh \
+  --model qwen/qwen3-coder-next \
+  --n 1 \
+  --start-date 2023-05-07 \
+  --end-date 2023-05-07 \
+  --debug \
+  --execute
+```
+
+Notes:
+
+- `--debug` passes through the external LiveCodeBench debug mode, which caps the run to the first 15 filtered problems
+- the `2023-05-07` code-generation window currently contains 2 problems, so this is the cheapest official-eval slice
+- unlike `--smoke`, this keeps evaluation enabled and should populate `official_pass_at_1` and `official_pass_at_5` in the baseline summary JSON
+
 ## OpenRouter Matrix
 
 Preview the maintained OpenRouter model trio without calling the API:
@@ -113,12 +133,14 @@ The repository ignores `.benchmarks/` by default, so raw outputs are not committ
 The repository also includes a small scaffolded LiveCodeBench DSPy pilot that compares:
 
 - direct OpenRouter calls
-- DSPy without VTM memory
-- DSPy with VTM verified-memory tools
+- DSPy ReAct without VTM memory
+- DSPy ReAct with VTM verified-memory tools
+- DSPy RLM without VTM memory
+- DSPy RLM with VTM verified-memory tools
 
 That pilot is intentionally separate from the maintained retrieval, drift verification, drifted retrieval, and controlled coding-drift evidence. It does not change VTM retrieval scoring, drift scoring, drifted retrieval scoring, or verifier semantics.
 
-In pilot `self_repair` mode, all methods receive the same public problem statement, the same previous candidate code, and the same visible public-test feedback on the repair attempt. The only intended difference is DSPy orchestration and whether VTM verified-memory tools are available.
+In pilot `self_repair` mode, all methods receive the same public problem statement, the same previous candidate code, and the same visible public-test feedback on the repair attempt. The intended comparison isolates both orchestration choice and whether VTM verified-memory tools are available.
 
 Preview the pilot without calling the model:
 
@@ -183,5 +205,6 @@ Recommended framing:
 ## Notes
 
 - These wrappers pass OpenRouter credentials through common OpenAI-compatible environment variables for the external LiveCodeBench runner.
+- The external checkout now accepts arbitrary OpenAI-compatible model ids when those environment variables are present, including OpenRouter ids such as `qwen/qwen3-coder-next`.
 - This is baseline model evaluation only. It does not touch VTM verifier semantics, retrieval scoring, drift scoring, or drifted-retrieval scoring.
 - Generated launcher bundles and benchmark outputs should stay out of git.

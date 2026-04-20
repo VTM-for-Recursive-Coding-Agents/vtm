@@ -11,10 +11,10 @@ import re
 import shlex
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
 SRC_ROOT: Final[Path] = PROJECT_ROOT / "src"
@@ -81,6 +81,7 @@ class BaselineConfig:
     end_date: str | None
     smoke: bool
     execute: bool
+    debug: bool = False
 
     @property
     def dry_run(self) -> bool:
@@ -153,6 +154,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start-date", default=None)
     parser.add_argument("--end-date", default=None)
     parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Pass through LiveCodeBench debug mode to cap the run to the first 15 filtered problems.",
+    )
+    parser.add_argument(
         "--smoke",
         action="store_true",
         help="Use a small baseline-only smoke profile: n=1, evaluate=false, fixed date window.",
@@ -201,6 +207,7 @@ def normalize_config(config: BaselineConfig) -> BaselineConfig:
         end_date=config.end_date or SMOKE_END_DATE,
         smoke=True,
         execute=config.execute,
+        debug=config.debug,
     )
 
 
@@ -213,6 +220,7 @@ def build_openrouter_env(*, model: str, base_url: str, api_key: str | None) -> d
     if api_key:
         env["OPENROUTER_API_KEY"] = api_key
         env["OPENAI_API_KEY"] = api_key
+        env["OPENAI_KEY"] = api_key
     return env
 
 
@@ -249,6 +257,8 @@ def build_livecodebench_command(python_bin: str, config: BaselineConfig) -> list
         command.extend(["--start_date", config.start_date])
     if config.end_date:
         command.extend(["--end_date", config.end_date])
+    if config.debug:
+        command.append("--debug")
     return command
 
 
@@ -258,6 +268,128 @@ def normalized_run_dir(config: BaselineConfig) -> Path:
 
 def normalized_summary_path(config: BaselineConfig) -> Path:
     return config.summary_root / f"{config.run_id}__{model_slug(config.model)}.json"
+
+
+def _baseline_output_dir(benchmark_root: Path) -> Path:
+    return benchmark_root / "output"
+
+
+def _snapshot_output_files(benchmark_root: Path) -> dict[Path, int]:
+    output_dir = _baseline_output_dir(benchmark_root)
+    if not output_dir.exists():
+        return {}
+    return {
+        path: path.stat().st_mtime_ns
+        for path in output_dir.rglob("*.json")
+        if path.is_file()
+    }
+
+
+def _candidate_output_files(benchmark_root: Path, config: BaselineConfig) -> list[Path]:
+    output_dir = _baseline_output_dir(benchmark_root)
+    if not output_dir.exists():
+        return []
+    prefix = f"{config.scenario}_{config.n}_{config.temperature}"
+    return sorted(
+        (
+            path
+            for path in output_dir.rglob("*.json")
+            if path.is_file() and path.name.startswith(prefix)
+        ),
+        key=lambda path: path.stat().st_mtime_ns,
+    )
+
+
+def _resolve_official_artifact_paths(
+    benchmark_root: Path,
+    *,
+    config: BaselineConfig,
+    before_snapshot: dict[Path, int],
+) -> dict[str, str | None]:
+    candidates = _candidate_output_files(benchmark_root, config)
+    updated = [
+        path
+        for path in candidates
+        if path.stat().st_mtime_ns > before_snapshot.get(path, -1)
+    ]
+    selected = updated or candidates
+    raw_output = next(
+        (path for path in reversed(selected) if not path.name.endswith(("_eval.json", "_eval_all.json"))),
+        None,
+    )
+    eval_file = next(
+        (path for path in reversed(selected) if path.name.endswith("_eval.json")),
+        None,
+    )
+    eval_all_file = next(
+        (path for path in reversed(selected) if path.name.endswith("_eval_all.json")),
+        None,
+    )
+    return {
+        "raw_output_file": str(raw_output) if raw_output is not None else None,
+        "eval_file": str(eval_file) if eval_file is not None else None,
+        "eval_all_file": str(eval_all_file) if eval_all_file is not None else None,
+    }
+
+
+def _extract_official_metrics(artifacts: dict[str, str | None]) -> dict[str, Any]:
+    eval_file = artifacts.get("eval_file")
+    eval_all_file = artifacts.get("eval_all_file")
+    payload: dict[str, Any] = {
+        "official_metrics_available": False,
+        "official_metric_source": None,
+        "official_pass_at_1": None,
+        "official_pass_at_5": None,
+        "official_problem_count": None,
+        "raw_output_file": artifacts.get("raw_output_file"),
+        "eval_file": eval_file,
+        "eval_all_file": eval_all_file,
+    }
+    if not eval_file:
+        return payload
+    eval_path = Path(eval_file)
+    if not eval_path.exists():
+        return payload
+    try:
+        metrics_blob = json.loads(eval_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return payload
+    metrics: Mapping[str, Any] | None = None
+    if isinstance(metrics_blob, list) and metrics_blob and isinstance(metrics_blob[0], dict):
+        metrics = metrics_blob[0]
+    elif isinstance(metrics_blob, dict):
+        metrics = metrics_blob
+    if not isinstance(metrics, dict):
+        return payload
+    pass_at_1 = metrics.get("pass@1")
+    pass_at_5 = metrics.get("pass@5")
+    detail = metrics.get("detail")
+    problem_count = None
+    if isinstance(detail, dict):
+        for key in ("pass@1", "pass@5"):
+            values = detail.get(key)
+            if isinstance(values, dict):
+                problem_count = len(values)
+                break
+    if problem_count is None and eval_all_file:
+        eval_all_path = Path(eval_all_file)
+        if eval_all_path.exists():
+            try:
+                eval_all_payload = json.loads(eval_all_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                eval_all_payload = None
+            if isinstance(eval_all_payload, list):
+                problem_count = len(eval_all_payload)
+    payload.update(
+        {
+            "official_metrics_available": isinstance(pass_at_1, int | float) or isinstance(pass_at_5, int | float),
+            "official_metric_source": "livecodebench_eval_json",
+            "official_pass_at_1": float(pass_at_1) if isinstance(pass_at_1, int | float) else None,
+            "official_pass_at_5": float(pass_at_5) if isinstance(pass_at_5, int | float) else None,
+            "official_problem_count": problem_count,
+        }
+    )
+    return payload
 
 
 def preflight_report(config: BaselineConfig) -> dict[str, str]:
@@ -271,6 +403,7 @@ def preflight_report(config: BaselineConfig) -> dict[str, str]:
         "model": config.model,
         "output_root": str(config.output_root),
         "summary_root": str(config.summary_root),
+        "debug": "true" if config.debug else "false",
     }
 
 
@@ -298,6 +431,7 @@ def resolve_config(args: argparse.Namespace) -> BaselineConfig:
                 end_date=args.end_date,
                 smoke=bool(args.smoke),
                 execute=bool(args.execute),
+                debug=bool(args.debug),
             )
         )
         for model_name in models
@@ -312,7 +446,9 @@ def write_metadata(
     *,
     status: str,
     exit_code: int | None,
+    official_metrics: Mapping[str, Any] | None = None,
 ) -> None:
+    metrics = dict(official_metrics or {})
     metadata = [
         f"run_id={config.run_id}",
         "benchmark=livecodebench",
@@ -328,12 +464,20 @@ def write_metadata(
         f"start_date={config.start_date or ''}",
         f"end_date={config.end_date or ''}",
         f"smoke={str(config.smoke).lower()}",
+        f"debug={str(config.debug).lower()}",
         f"benchmark_root={config.benchmark_root}",
         f"output_dir={run_dir}",
         f"summary_path={normalized_summary_path(config)}",
         f"exit_code={'' if exit_code is None else exit_code}",
         f"command={shlex.join(command)}",
         f"started_at={dt.datetime.now(dt.UTC).isoformat()}",
+        f"official_metrics_available={str(bool(metrics.get('official_metrics_available'))).lower()}",
+        f"official_pass_at_1={'' if metrics.get('official_pass_at_1') is None else metrics.get('official_pass_at_1')}",
+        f"official_pass_at_5={'' if metrics.get('official_pass_at_5') is None else metrics.get('official_pass_at_5')}",
+        f"official_problem_count={'' if metrics.get('official_problem_count') is None else metrics.get('official_problem_count')}",
+        f"raw_output_file={metrics.get('raw_output_file') or ''}",
+        f"eval_file={metrics.get('eval_file') or ''}",
+        f"eval_all_file={metrics.get('eval_all_file') or ''}",
     ]
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "metadata.txt").write_text("\n".join(metadata) + "\n", encoding="utf-8")
@@ -346,7 +490,9 @@ def write_summary(
     command: list[str],
     run_dir: Path,
     exit_code: int | None,
+    official_metrics: Mapping[str, Any] | None = None,
 ) -> None:
+    metrics = dict(official_metrics or {})
     payload = {
         "benchmark": "livecodebench",
         "kind": "baseline_model_evaluation",
@@ -356,6 +502,7 @@ def write_summary(
         "scenario": config.scenario,
         "release_version": config.release_version,
         "smoke": config.smoke,
+        "debug": config.debug,
         "evaluate": config.evaluate,
         "output_dir": str(run_dir),
         "command": command,
@@ -363,6 +510,14 @@ def write_summary(
         "base_url": config.base_url,
         "exit_code": exit_code,
         "status": "planned" if exit_code is None else ("passed" if exit_code == 0 else "failed"),
+        "official_metrics_available": bool(metrics.get("official_metrics_available")),
+        "official_metric_source": metrics.get("official_metric_source"),
+        "official_pass_at_1": metrics.get("official_pass_at_1"),
+        "official_pass_at_5": metrics.get("official_pass_at_5"),
+        "official_problem_count": metrics.get("official_problem_count"),
+        "raw_output_file": metrics.get("raw_output_file"),
+        "eval_file": metrics.get("eval_file"),
+        "eval_all_file": metrics.get("eval_all_file"),
         "paper_note": (
             "LiveCodeBench is a baseline model coding benchmark only. "
             "It is not a VTM memory-drift result."
@@ -395,6 +550,16 @@ def run(
     env = build_openrouter_env(model=config.model, base_url=config.base_url, api_key=config.api_key)
     run_dir = normalized_run_dir(config)
     summary_path = normalized_summary_path(config)
+    official_metrics: dict[str, Any] = {
+        "official_metrics_available": False,
+        "official_metric_source": None,
+        "official_pass_at_1": None,
+        "official_pass_at_5": None,
+        "official_problem_count": None,
+        "raw_output_file": None,
+        "eval_file": None,
+        "eval_all_file": None,
+    }
 
     print("[livecodebench] baseline-only runner")
     print(f"[livecodebench] run_id={config.run_id}")
@@ -409,10 +574,24 @@ def run(
     if not benchmark_exists:
         print("[livecodebench] benchmark checkout missing; dry-run only")
 
-    write_metadata(run_dir, config, command, status="planned", exit_code=None)
+    write_metadata(
+        run_dir,
+        config,
+        command,
+        status="planned",
+        exit_code=None,
+        official_metrics=official_metrics,
+    )
 
     if config.dry_run:
-        write_summary(summary_path, config=config, command=command, run_dir=run_dir, exit_code=None)
+        write_summary(
+            summary_path,
+            config=config,
+            command=command,
+            run_dir=run_dir,
+            exit_code=None,
+            official_metrics=official_metrics,
+        )
         return 0
 
     if not config.api_key:
@@ -420,6 +599,7 @@ def run(
             "OpenRouter API key is required. Set OPENROUTER_API_KEY or pass --api-key."
         )
 
+    before_snapshot = _snapshot_output_files(config.benchmark_root)
     runner = subprocess.run if command_runner is None else command_runner
     completed = runner(
         command,
@@ -428,12 +608,20 @@ def run(
         check=False,
     )
     exit_code = int(completed.returncode)
+    if config.evaluate:
+        artifacts = _resolve_official_artifact_paths(
+            config.benchmark_root,
+            config=config,
+            before_snapshot=before_snapshot,
+        )
+        official_metrics = _extract_official_metrics(artifacts)
     write_metadata(
         run_dir,
         config,
         command,
         status="passed" if exit_code == 0 else "failed",
         exit_code=exit_code,
+        official_metrics=official_metrics,
     )
     write_summary(
         summary_path,
@@ -441,7 +629,17 @@ def run(
         command=command,
         run_dir=run_dir,
         exit_code=exit_code,
+        official_metrics=official_metrics,
     )
+    if official_metrics.get("official_metrics_available"):
+        print(
+            "[livecodebench] official_pass@1="
+            f"{official_metrics.get('official_pass_at_1')}"
+        )
+        print(
+            "[livecodebench] official_pass@5="
+            f"{official_metrics.get('official_pass_at_5')}"
+        )
     return exit_code
 
 

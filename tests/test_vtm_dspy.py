@@ -292,6 +292,21 @@ def test_rlm_agent_constructs_dspy_rlm_when_tools_are_available(
     assert calls == [("task, context -> response", program.kwargs["tools"])]
 
 
+def test_rlm_agent_handles_known_dspy_none_code_bug(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeProgram:
+        def __call__(self, *, task: str, context: dict[str, object]) -> object:
+            raise AttributeError("'NoneType' object has no attribute 'strip'")
+
+    agent = VTMRLMCodingAgent(kernel=None, scopes=())
+    monkeypatch.setattr(agent, "create_program", lambda *, signature="task, context -> response": FakeProgram())
+
+    result = agent.run("Solve it")
+
+    assert result["response"]["response"] == ""
+    assert "code=None" in result["response"]["error"]
+    assert "execution_error" in result["trajectory"]
+
+
 def test_livecodebench_dspy_vtm_runtime_exposes_memory_tools() -> None:
     runtime = describe_method_runtime(
         "dspy_vtm",
@@ -321,6 +336,21 @@ def test_livecodebench_dspy_rlm_vtm_runtime_exposes_memory_tools() -> None:
     assert runtime.rlm_available is True
     assert "search_verified_memory" in runtime.tool_names
     assert "verify_memory" in runtime.tool_names
+
+
+def test_livecodebench_dspy_rlm_baseline_runtime_hides_memory_tools() -> None:
+    runtime = describe_method_runtime(
+        "dspy_rlm_baseline",
+        model="qwen/qwen3-coder-next",
+        base_url="https://openrouter.example/api/v1",
+        api_key="openrouter-test-key",
+    )
+
+    assert runtime.uses_dspy is True
+    assert runtime.uses_vtm_memory is False
+    assert runtime.memory_tools_enabled is False
+    assert runtime.rlm_available is True
+    assert runtime.tool_names == ()
 
 
 def test_livecodebench_dspy_baseline_runtime_hides_memory_tools() -> None:

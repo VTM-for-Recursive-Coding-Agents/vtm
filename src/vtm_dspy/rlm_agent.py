@@ -104,7 +104,28 @@ class VTMRLMCodingAgent:
         resolved_query = (query or task).strip()
         context = self.context_adapter.build_context(resolved_query)
         program = self.create_program(signature=signature)
-        prediction = program(task=task, context=context)
+        try:
+            prediction = program(task=task, context=context)
+        except AttributeError as exc:
+            if not _is_known_dspy_rlm_none_code_bug(exc):
+                raise
+            error_message = (
+                "DSPy RLM emitted an action with code=None before final extraction. "
+                f"{exc}"
+            )
+            return {
+                "response": {
+                    "response": "",
+                    "error": error_message,
+                },
+                "trajectory": {
+                    **self.describe(),
+                    "task": task,
+                    "query": resolved_query,
+                    "context_card_count": len(context["memory_cards"]),
+                    "execution_error": error_message,
+                },
+            }
         return {
             "response": self._serialize_prediction(prediction),
             "trajectory": {
@@ -123,6 +144,10 @@ class VTMRLMCodingAgent:
         if hasattr(prediction, "__dict__"):
             return dict(prediction.__dict__)
         return prediction
+
+
+def _is_known_dspy_rlm_none_code_bug(exc: AttributeError) -> bool:
+    return "'NoneType' object has no attribute 'strip'" in str(exc)
 
 
 __all__ = ["VTMRLMCodingAgent"]
