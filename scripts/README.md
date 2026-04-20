@@ -5,6 +5,8 @@ Purpose: reserved location for developer and maintenance automation that should 
 Maintained optional paper-adjacent scripts:
 
 - `run_longcot_pilot.py`: isolated external LongCoT pilot runner; not part of the main VTM benchmark matrix
+- `run_controlled_coding_drift.sh`: maintained strong-signal VTM regression wrapper for the controlled coding-drift matrix plus report export
+- `run_maintained_regression_bundle.sh`: maintained regression bundle wrapper for retrieval, drifted retrieval, drift, controlled coding-drift, and paper-table exports
 - `run_livecodebench_baseline.sh`: external LiveCodeBench baseline wrapper using the repo's OpenRouter conventions
 - `run_livecodebench_dspy_pilot.py`: small LiveCodeBench pilot comparing direct, DSPy baseline, and DSPy plus VTM memory
 - `run_livecodebench_dspy_pilot_batch.sh`: helper wrapper for fixed-size LiveCodeBench DSPy pilot batches; defaults to 25 problems per batch

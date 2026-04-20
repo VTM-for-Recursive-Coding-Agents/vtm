@@ -16,6 +16,8 @@ from vtm.retrieval import RetrieveCandidate, RetrieveExplanation, RetrieveReques
 from vtm.verification import VerificationResult
 from vtm_dspy.config import DSPyOpenRouterConfig
 from vtm_dspy.react_agent import VTMReActCodingAgent
+from vtm_dspy.rlm_adapter import VTMRLMContextAdapter, make_vtm_rlm
+from vtm_dspy.rlm_agent import VTMRLMCodingAgent
 from vtm_dspy.tools import VTMMemoryTools
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -155,6 +157,141 @@ def test_react_agent_constructs_tools_without_running_a_model(
     assert description["workspace_root"] == str(tmp_path.resolve())
 
 
+def test_react_agent_uses_plain_predict_when_no_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    class FakeProgram:
+        def __init__(self, kind: str) -> None:
+            self.kind = kind
+            self.lm = None
+
+        def set_lm(self, lm) -> None:
+            self.lm = lm
+
+    class FakeDSPy:
+        @staticmethod
+        def Predict(signature: str) -> FakeProgram:
+            calls.append(f"predict:{signature}")
+            return FakeProgram("predict")
+
+        @staticmethod
+        def ReAct(signature: str, tools: list[object]) -> FakeProgram:
+            calls.append(f"react:{signature}:{len(tools)}")
+            return FakeProgram("react")
+
+    agent = VTMReActCodingAgent(kernel=None, scopes=(), workspace_root=None)
+    monkeypatch.setattr("vtm_dspy.react_agent.require_dspy", lambda: FakeDSPy)
+    monkeypatch.setattr(agent, "create_lm", lambda: object())
+
+    program = agent.create_program()
+
+    assert isinstance(program, FakeProgram)
+    assert program.kind == "predict"
+    assert calls == ["predict:task -> response"]
+
+
+def test_react_agent_uses_react_when_tools_are_available(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+
+    class FakeProgram:
+        def __init__(self, kind: str) -> None:
+            self.kind = kind
+            self.lm = None
+
+        def set_lm(self, lm) -> None:
+            self.lm = lm
+
+    class FakeDSPy:
+        @staticmethod
+        def Predict(signature: str) -> FakeProgram:
+            calls.append(f"predict:{signature}")
+            return FakeProgram("predict")
+
+        @staticmethod
+        def ReAct(signature: str, tools: list[object]) -> FakeProgram:
+            calls.append(f"react:{signature}:{len(tools)}")
+            return FakeProgram("react")
+
+    agent = VTMReActCodingAgent(kernel=None, scopes=(), workspace_root=tmp_path)
+    monkeypatch.setattr("vtm_dspy.react_agent.require_dspy", lambda: FakeDSPy)
+    monkeypatch.setattr(agent, "create_lm", lambda: object())
+
+    program = agent.create_program()
+
+    assert isinstance(program, FakeProgram)
+    assert program.kind == "react"
+    assert calls == ["react:task -> response:4"]
+
+
+def test_make_vtm_rlm_constructs_dspy_rlm(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeProgram:
+        def __init__(self, signature: str, **kwargs: object) -> None:
+            calls.append((signature, kwargs))
+
+    class FakeDSPy:
+        @staticmethod
+        def RLM(signature: str, **kwargs: object) -> FakeProgram:
+            return FakeProgram(signature, **kwargs)
+
+    adapter = VTMRLMContextAdapter.from_kernel(kernel=None, scopes=())
+    monkeypatch.setattr("vtm_dspy.rlm_adapter.require_dspy", lambda: FakeDSPy)
+
+    program = make_vtm_rlm(adapter=adapter, signature="task, context -> response", query="parser")
+
+    assert isinstance(program, FakeProgram)
+    assert calls == [("task, context -> response", {"tools": []})]
+
+
+def test_rlm_agent_constructs_dspy_rlm_when_tools_are_available(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_factory,
+    dep_fp: DependencyFingerprint,
+    scope,
+) -> None:
+    item = memory_factory()
+    kernel = FakeKernel(item=item, dep_fp=dep_fp)
+    calls: list[tuple[str, object]] = []
+
+    class FakeProgram:
+        def __init__(self, signature: str, **kwargs: object) -> None:
+            self.signature = signature
+            self.kwargs = kwargs
+            self.lm = None
+            calls.append((signature, kwargs.get("tools")))
+
+        def set_lm(self, lm) -> None:
+            self.lm = lm
+
+    class FakeDSPy:
+        @staticmethod
+        def RLM(signature: str, **kwargs: object) -> FakeProgram:
+            return FakeProgram(signature, **kwargs)
+
+    agent = VTMRLMCodingAgent(
+        kernel=kernel,
+        scopes=(scope,),
+        dependency_provider=lambda: dep_fp,
+        memory_lookup=lambda memory_id: item if memory_id == item.memory_id else None,
+    )
+    monkeypatch.setattr("vtm_dspy.rlm_adapter.require_dspy", lambda: FakeDSPy)
+    monkeypatch.setattr("vtm_dspy.rlm_agent.require_dspy", lambda: FakeDSPy)
+    monkeypatch.setattr(agent, "create_lm", lambda: object())
+
+    program = agent.create_program()
+
+    assert isinstance(program, FakeProgram)
+    assert program.signature == "task, context -> response"
+    assert program.kwargs["max_iterations"] == 8
+    assert program.kwargs["max_llm_calls"] == 16
+    assert len(program.kwargs["tools"]) == 4
+    assert calls == [("task, context -> response", program.kwargs["tools"])]
+
+
 def test_livecodebench_dspy_vtm_runtime_exposes_memory_tools() -> None:
     runtime = describe_method_runtime(
         "dspy_vtm",
@@ -170,6 +307,22 @@ def test_livecodebench_dspy_vtm_runtime_exposes_memory_tools() -> None:
     assert "verify_memory" in runtime.tool_names
 
 
+def test_livecodebench_dspy_rlm_vtm_runtime_exposes_memory_tools() -> None:
+    runtime = describe_method_runtime(
+        "dspy_rlm_vtm",
+        model="qwen/qwen3-coder-next",
+        base_url="https://openrouter.example/api/v1",
+        api_key="openrouter-test-key",
+    )
+
+    assert runtime.uses_dspy is True
+    assert runtime.uses_vtm_memory is True
+    assert runtime.memory_tools_enabled is True
+    assert runtime.rlm_available is True
+    assert "search_verified_memory" in runtime.tool_names
+    assert "verify_memory" in runtime.tool_names
+
+
 def test_livecodebench_dspy_baseline_runtime_hides_memory_tools() -> None:
     runtime = describe_method_runtime(
         "dspy_baseline",
@@ -181,6 +334,7 @@ def test_livecodebench_dspy_baseline_runtime_hides_memory_tools() -> None:
     assert runtime.uses_dspy is True
     assert runtime.uses_vtm_memory is False
     assert runtime.memory_tools_enabled is False
+    assert runtime.rlm_available is False
     assert runtime.tool_names == ()
 
 

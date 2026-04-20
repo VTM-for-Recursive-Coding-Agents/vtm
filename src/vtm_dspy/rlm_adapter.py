@@ -73,27 +73,21 @@ class VTMRLMContextAdapter:
 def make_vtm_rlm(
     *,
     adapter: VTMRLMContextAdapter,
+    signature: str = "task, context -> response",
     query: str,
     tools: Sequence[Callable[..., Any]] | None = None,
     **kwargs: Any,
 ) -> Any:
-    """Instantiate `dspy.RLM` with VTM memory cards when DSPy exposes that surface."""
+    """Instantiate `dspy.RLM` with VTM memory tools when DSPy exposes that surface."""
     dspy = require_dspy()
     if not hasattr(dspy, "RLM"):
         raise RuntimeError("installed DSPy does not expose dspy.RLM")
-    context = adapter.build_context(query)
     constructor_kwargs = dict(kwargs)
-    constructor_kwargs.setdefault("context", context["memory_cards"])
-    constructor_kwargs.setdefault("instructions", context["instructions"])
-    constructor_kwargs.setdefault("sandbox_note", context["sandbox_note"])
-    constructor_kwargs.setdefault("tools", list(tools) if tools is not None else [])
-    constructor_kwargs.setdefault("api_base", adapter.model_config.base_url)
-    constructor_kwargs.setdefault("api_key", adapter.model_config.require_api_key())
-    model_name = adapter.model_config.lm_model_name()
-    try:
-        return dspy.RLM(model=model_name, **constructor_kwargs)
-    except TypeError:
-        return dspy.RLM(model_name, **constructor_kwargs)
+    constructor_kwargs.setdefault(
+        "tools",
+        list(tools) if tools is not None else list(adapter.memory_tools.tool_mapping().values()),
+    )
+    return dspy.RLM(signature, **constructor_kwargs)
 
 
 __all__ = ["RLM_SANDBOX_NOTE", "VTMRLMContextAdapter", "make_vtm_rlm"]

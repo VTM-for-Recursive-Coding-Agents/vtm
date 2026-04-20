@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -294,10 +295,10 @@ def test_livecodebench_dspy_pilot_dry_run_supports_all_methods(
     assert exit_code == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["dry_run"] is True
-    assert payload["methods"] == ["direct", "dspy_baseline", "dspy_vtm"]
+    assert payload["methods"] == ["direct", "dspy_baseline", "dspy_vtm", "dspy_rlm_vtm"]
     assert payload["problem_offset"] == 0
     assert payload["problem_count"] == 1
-    assert len(payload["runs"]) == 3
+    assert len(payload["runs"]) == 4
     assert all(
         str(tmp_path / ".benchmarks" / "livecodebench-dspy") in run["run_dir"]
         for run in payload["runs"]
@@ -329,9 +330,11 @@ def test_livecodebench_dspy_summary_aggregation_handles_missing_retrieval_metric
     assert summary["evaluation_available_count"] == 2
     assert summary["pass_rate"] == 0.5
     assert summary["retrieval_usage_rate"] == 0.0
+    assert summary["retrieval_hit_rate"] == 0.0
     assert summary["mean_verified_count"] == 0.0
     assert summary["mean_stale_filtered_count"] == 0.0
     assert summary["mean_tool_calls"] == 0.0
+    assert summary["pilot_limitations"]
 
 
 def test_livecodebench_dspy_discovers_explicit_source_backends(tmp_path: Path) -> None:
@@ -424,6 +427,33 @@ def test_livecodebench_dspy_evaluate_functional_public_tests() -> None:
     assert evaluation["passed_test_count"] == 1
 
 
+def test_livecodebench_dspy_evaluate_functional_public_tests_accepts_solution_wrapper() -> None:
+    source = ProblemFileSource(Path("/tmp/public-problems.jsonl"))
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-functional-solution-wrapper",
+        scenario="code_generation",
+        prompt="Implement add(a, b).",
+        evaluator_payload={
+            "public_tests": [
+                {"input": "[2, 3]", "output": "5", "testtype": "functional"},
+            ],
+            "problem_metadata": {"func_name": "add"},
+        },
+    )
+
+    evaluation = source.evaluate(
+        problem,
+        response_text="class Solution:\n    def add(self, a, b):\n        return a + b\n",
+        extracted_code="class Solution:\n    def add(self, a, b):\n        return a + b\n",
+    )
+
+    assert evaluation is not None
+    assert evaluation["available"] is True
+    assert evaluation["passed"] is True
+    assert evaluation["pass_rate"] == 1.0
+    assert evaluation["passed_test_count"] == 1
+
+
 def test_livecodebench_dspy_prompt_omits_gold_and_hidden_fields(tmp_path: Path) -> None:
     problem_file = tmp_path / "problems.jsonl"
     hidden_solution = "def solve():\n    return 42\n"
@@ -455,6 +485,20 @@ def test_livecodebench_dspy_prompt_omits_gold_and_hidden_fields(tmp_path: Path) 
     assert "Sample case expects 42." in prompt
 
 
+def test_livecodebench_dspy_prompt_uses_agent_contract_for_dspy() -> None:
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-dspy-contract",
+        scenario="code_generation",
+        prompt="Implement add(a, b).",
+    )
+
+    prompt = build_attempt_prompt(problem, attempt_index=1, agent_mode="dspy")
+
+    assert "Return the final answer as a single ```python fenced code block and nothing else." not in prompt
+    assert "Use tools only if needed." in prompt
+    assert "final `response` field as a single ```python fenced code block" in prompt
+
+
 def test_livecodebench_dspy_self_repair_prompt_includes_previous_code_and_feedback() -> None:
     problem = LiveCodeBenchProblem(
         problem_id="lcb-repair",
@@ -478,6 +522,122 @@ def test_livecodebench_dspy_self_repair_prompt_includes_previous_code_and_feedba
     assert "return a - b" in prompt
     assert "Functional public test mismatch: expected=5 actual=4" in prompt
     assert "This is repair attempt 2. Fix the previous attempt." in prompt
+
+
+def test_livecodebench_dspy_prompt_includes_function_contract_for_functional_problems() -> None:
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-functional-contract",
+        scenario="code_generation",
+        prompt="Implement add(a, b).",
+        evaluator_payload={
+            "public_tests": [
+                {"input": "[2, 3]", "output": "5", "testtype": "functional"},
+            ],
+            "problem_metadata": {"func_name": "add"},
+        },
+    )
+
+    prompt = build_attempt_prompt(problem, attempt_index=1)
+
+    assert "Implementation Contract:" in prompt
+    assert "Define a top-level function named `add`" in prompt
+    assert "Do not rely on a `class Solution` wrapper" in prompt
+
+
+def test_livecodebench_dspy_counts_tool_calls_from_trajectory_mapping() -> None:
+    payload = {
+        "trajectory": {
+            "thought_0": "inspect",
+            "tool_name_0": "search_verified_memory",
+            "tool_args_0": {"query": "parser"},
+            "observation_0": [],
+            "tool_name_1": "finish",
+            "tool_args_1": {},
+        }
+    }
+
+    assert livecodebench_dspy_pilot._count_serialized_tool_calls(payload) == 2
+
+
+def test_livecodebench_dspy_counts_tool_calls_from_outer_result_when_response_has_none() -> None:
+    result = {
+        "trajectory": {
+            "tool_name_0": "search_verified_memory",
+            "tool_name_1": "expand_memory_evidence",
+        }
+    }
+
+    assert livecodebench_dspy_pilot._count_result_tool_calls(result, {}) == 2
+
+
+def test_livecodebench_dspy_summary_uses_retrieval_invocation_rate_not_hit_rate() -> None:
+    summary = aggregate_summary(
+        [
+            {
+                "problem_id": "lcb-1",
+                "method": "dspy_vtm",
+                "evaluation": {"available": True, "passed": True, "syntax_error": False},
+                "retrieval": {
+                    "invoked": True,
+                    "used": False,
+                    "verified_count": 0,
+                    "stale_filtered_count": 0,
+                },
+                "tool_calls": 1,
+            }
+        ],
+        method="dspy_vtm",
+        scenario="self_repair",
+        model="qwen/qwen3-coder-next",
+    )
+
+    assert summary["retrieval_usage_rate"] == 1.0
+    assert summary["retrieval_hit_rate"] == 0.0
+
+
+def test_livecodebench_dspy_rlm_attempt_uses_rlm_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeAgent:
+        def __init__(self, **kwargs) -> None:
+            captured["init"] = kwargs
+
+        def run(self, prompt: str, *, query: str | None = None) -> dict[str, object]:
+            captured["prompt"] = prompt
+            captured["query"] = query
+            return {
+                "response": {
+                    "response": "```python\nprint('ok')\n```",
+                    "trajectory": [{"reasoning": "inspect", "code": "print(1)"}],
+                },
+                "trajectory": {"execution_mode": "rlm"},
+            }
+
+    monkeypatch.setattr(livecodebench_dspy_pilot, "VTMRLMCodingAgent", FakeAgent)
+    session = SimpleNamespace(
+        kernel=object(),
+        scope=object(),
+        dependency=object(),
+        metadata_store=SimpleNamespace(get_memory_item=lambda _memory_id: None),
+    )
+
+    payload = livecodebench_dspy_pilot.run_dspy_attempt(
+        prompt="Solve it",
+        method="dspy_rlm_vtm",
+        session=session,
+        model_config=livecodebench_dspy_pilot.DSPyOpenRouterConfig.from_env(
+            base_url_value="https://openrouter.example/api/v1",
+            api_key_value="openrouter-test-key",
+            execution_model_name="qwen/qwen3-coder-next",
+            dspy_model_name="qwen/qwen3-coder-next",
+        ),
+        memory_query="lcb-123 | public feedback",
+    )
+
+    assert payload["response_text"] == "```python\nprint('ok')\n```"
+    assert payload["tool_calls"] == 1
+    assert captured["prompt"] == "Solve it"
+    assert captured["query"] == "lcb-123 | public feedback"
 
 
 def test_livecodebench_dspy_output_paths_stay_under_pilot_root(tmp_path: Path) -> None:

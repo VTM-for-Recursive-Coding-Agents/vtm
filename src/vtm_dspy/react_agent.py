@@ -79,24 +79,36 @@ class VTMReActCodingAgent:
         lm_kwargs.setdefault("api_key", self.model_config.require_api_key())
         return dspy.LM(self.model_config.lm_model_name(), **lm_kwargs)
 
-    def create_program(self, *, signature: str = "task -> response") -> Any:
-        """Construct a minimal DSPy ReAct agent without executing it."""
+    def create_program(self, *, signature: str = "task -> response", force_plain: bool = False) -> Any:
+        """Construct a DSPy program suitable for the configured tool surface."""
         dspy = require_dspy()
         lm = self.create_lm()
-        react = dspy.ReAct(signature, tools=list(self.tool_mapping().values()))
-        if hasattr(react, "set_lm"):
-            react.set_lm(lm)
-            return react
+        tools = list(self.tool_mapping().values())
+        program = dspy.Predict(signature) if force_plain or not tools else dspy.ReAct(signature, tools=tools)
+        if hasattr(program, "set_lm"):
+            program.set_lm(lm)
+            return program
         if hasattr(dspy, "configure"):
             dspy.configure(lm=lm)
-        return react
+        return program
 
     def run(self, task: str, *, signature: str = "task -> response") -> dict[str, Any]:
         """Execute one DSPy ReAct trajectory and capture the resulting patch metadata."""
         if not task.strip():
             raise ValueError("task must be non-empty")
+        uses_tools = bool(self.tool_mapping())
+        execution_mode = "react" if uses_tools else "predict"
+        fallback_error: str | None = None
         program = self.create_program(signature=signature)
-        prediction = program(task=task)
+        try:
+            prediction = program(task=task)
+        except Exception as exc:
+            if not uses_tools or not self._looks_like_react_schema_failure(exc):
+                raise
+            program = self.create_program(signature=signature, force_plain=True)
+            prediction = program(task=task)
+            execution_mode = "predict_fallback"
+            fallback_error = str(exc)
         diff_payload = self.workspace_tools.git_diff() if self.workspace_tools is not None else None
         return {
             "response": self._serialize_prediction(prediction),
@@ -104,6 +116,8 @@ class VTMReActCodingAgent:
             "trajectory": {
                 **self.describe(),
                 "task": task,
+                "execution_mode": execution_mode,
+                "fallback_error": fallback_error,
             },
         }
 
@@ -115,6 +129,10 @@ class VTMReActCodingAgent:
         if hasattr(prediction, "__dict__"):
             return dict(prediction.__dict__)
         return prediction
+
+    def _looks_like_react_schema_failure(self, exc: Exception) -> bool:
+        message = str(exc)
+        return "next_tool_name" in message or "Adapter" in exc.__class__.__name__
 
 
 __all__ = ["VTMReActCodingAgent"]

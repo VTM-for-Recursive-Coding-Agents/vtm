@@ -38,11 +38,12 @@ from vtm.services.verifier import BasicVerifier
 from vtm.stores.artifact_store import FilesystemArtifactStore
 from vtm.stores.cache_store import SqliteCacheStore
 from vtm.stores.sqlite_store import SqliteMetadataStore
-from vtm_dspy import dspy_available
+from vtm_dspy import dspy_available, require_dspy
 from vtm_dspy.config import DSPyOpenRouterConfig
 from vtm_dspy.react_agent import VTMReActCodingAgent
+from vtm_dspy.rlm_agent import VTMRLMCodingAgent
 
-PilotMethod = Literal["direct", "dspy_baseline", "dspy_vtm"]
+PilotMethod = Literal["direct", "dspy_baseline", "dspy_vtm", "dspy_rlm_vtm"]
 
 PROJECT_ROOT: Final[Path] = Path(__file__).resolve().parents[3]
 DEFAULT_OUTPUT_ROOT: Final[Path] = PROJECT_ROOT / ".benchmarks" / "livecodebench-dspy"
@@ -52,7 +53,17 @@ DEFAULT_MAX_TOKENS: Final[int] = 8192
 DEFAULT_TEMPERATURE: Final[float] = 0.0
 DEFAULT_SCENARIO: Final[PilotScenario] = "self_repair"
 DEFAULT_DIRECT_EMPTY_RESPONSE_RETRIES: Final[int] = 2
-METHODS: Final[tuple[PilotMethod, ...]] = ("direct", "dspy_baseline", "dspy_vtm")
+METHODS: Final[tuple[PilotMethod, ...]] = (
+    "direct",
+    "dspy_baseline",
+    "dspy_vtm",
+    "dspy_rlm_vtm",
+)
+PILOT_LIMITATION_NOTES: Final[tuple[str, ...]] = (
+    "LiveCodeBench DSPy output is a scaffolded pilot, not the maintained VTM regression surface.",
+    "Pilot scoring uses repo-local public tests instead of the official hidden LiveCodeBench evaluation loop.",
+    "Use controlled_coding_drift for VTM regression checks and repo-memory comparisons.",
+)
 CODE_BLOCK_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"```(?:python)?\s*\n(.*?)```",
     re.DOTALL | re.IGNORECASE,
@@ -111,6 +122,7 @@ class MethodRuntime:
     uses_vtm_memory: bool
     tool_names: tuple[str, ...]
     dspy_available: bool
+    rlm_available: bool
     memory_tools_enabled: bool
 
 
@@ -135,12 +147,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Run a small LiveCodeBench pilot comparing direct OpenRouter, DSPy, "
-            "and DSPy plus VTM verified memory."
+            "DSPy plus VTM verified memory, and an experimental DSPy RLM variant."
         )
     )
     parser.add_argument(
         "--method",
-        choices=("direct", "dspy_baseline", "dspy_vtm", "all"),
+        choices=("direct", "dspy_baseline", "dspy_vtm", "dspy_rlm_vtm", "all"),
         default="all",
     )
     parser.add_argument(
@@ -271,7 +283,7 @@ def describe_method_runtime(
         execution_model_name=model,
         dspy_model_name=model,
     )
-    if method == "dspy_vtm":
+    if method in {"dspy_vtm", "dspy_rlm_vtm"}:
         with TemporaryDirectory(prefix="vtm-lcb-dspy-dry-run-") as temp_dir:
             session = open_memory_session(
                 state_root=Path(temp_dir),
@@ -279,16 +291,26 @@ def describe_method_runtime(
                 workspace_root=PROJECT_ROOT,
             )
             try:
-                agent = VTMReActCodingAgent(
-                    kernel=session.kernel,
-                    scopes=(session.scope,),
-                    workspace_root=None,
-                    dependency_provider=lambda: session.dependency,
-                    memory_lookup=session.metadata_store.get_memory_item,
-                    model_config=model_config,
-                )
+                if method == "dspy_vtm":
+                    agent = VTMReActCodingAgent(
+                        kernel=session.kernel,
+                        scopes=(session.scope,),
+                        workspace_root=None,
+                        dependency_provider=lambda: session.dependency,
+                        memory_lookup=session.metadata_store.get_memory_item,
+                        model_config=model_config,
+                    )
+                    memory_tools_enabled = agent.memory_tools.enabled
+                else:
+                    agent = VTMRLMCodingAgent(
+                        kernel=session.kernel,
+                        scopes=(session.scope,),
+                        dependency_provider=lambda: session.dependency,
+                        memory_lookup=session.metadata_store.get_memory_item,
+                        model_config=model_config,
+                    )
+                    memory_tools_enabled = agent.context_adapter.memory_tools.enabled
                 tool_names = agent.tool_names()
-                memory_tools_enabled = agent.memory_tools.enabled
             finally:
                 session.close()
         return MethodRuntime(
@@ -297,6 +319,7 @@ def describe_method_runtime(
             uses_vtm_memory=True,
             tool_names=tool_names,
             dspy_available=dspy_available(),
+            rlm_available=_dspy_rlm_available(),
             memory_tools_enabled=memory_tools_enabled,
         )
     if method == "dspy_baseline":
@@ -312,6 +335,7 @@ def describe_method_runtime(
             uses_vtm_memory=False,
             tool_names=agent.tool_names(),
             dspy_available=dspy_available(),
+            rlm_available=False,
             memory_tools_enabled=agent.memory_tools.enabled,
         )
     return MethodRuntime(
@@ -320,6 +344,7 @@ def describe_method_runtime(
         uses_vtm_memory=False,
         tool_names=(),
         dspy_available=dspy_available(),
+        rlm_available=False,
         memory_tools_enabled=False,
     )
 
@@ -328,18 +353,42 @@ def build_attempt_prompt(
     problem: LiveCodeBenchProblem,
     *,
     attempt_index: int,
+    agent_mode: Literal["direct", "dspy"] = "direct",
     memory_cards: Sequence[Mapping[str, Any]] = (),
     visible_feedback: Sequence[str] = (),
     repair_context: RepairContext | None = None,
 ) -> str:
+    required_func_name = _required_function_name(problem)
     sections = [
         "Solve the following LiveCodeBench problem.",
-        "Return the final answer as a single ```python fenced code block and nothing else.",
+        (
+            "Return the final answer as a single ```python fenced code block and nothing else."
+            if agent_mode == "direct"
+            else (
+                "Use tools only if needed. When you finish, put the solution in the final "
+                "`response` field as a single ```python fenced code block."
+            )
+        ),
         f"Problem ID: {problem.problem_id}",
         "",
         "Problem Statement:",
         problem.prompt.strip(),
     ]
+    if required_func_name is not None:
+        sections.extend(
+            [
+                "",
+                "Implementation Contract:",
+                (
+                    f"Define a top-level function named `{required_func_name}` that matches "
+                    "the expected signature."
+                ),
+                (
+                    "Do not rely on a `class Solution` wrapper unless you also expose the same "
+                    "callable at module scope."
+                ),
+            ]
+        )
     if problem.starter_code:
         sections.extend(["", "Starter Code:", "```python", problem.starter_code.strip(), "```"])
     if problem.prompt_metadata:
@@ -431,6 +480,16 @@ def aggregate_summary(
         sum(
             1
             for row in rows
+            if isinstance(row.get("retrieval"), Mapping) and row["retrieval"].get("invoked")
+        )
+        / total
+        if total
+        else 0.0
+    )
+    retrieval_hit_rate = (
+        sum(
+            1
+            for row in rows
             if isinstance(row.get("retrieval"), Mapping) and row["retrieval"].get("used")
         )
         / total
@@ -466,9 +525,11 @@ def aggregate_summary(
         "accuracy": round(pass_rate, 6) if pass_rate is not None else None,
         "syntax_error_count": syntax_error_count,
         "retrieval_usage_rate": round(retrieval_usage_rate, 6),
+        "retrieval_hit_rate": round(retrieval_hit_rate, 6),
         "mean_verified_count": round(mean_verified_count, 6),
         "mean_stale_filtered_count": round(mean_stale_filtered_count, 6),
         "mean_tool_calls": round(mean_tool_calls, 6),
+        "pilot_limitations": list(PILOT_LIMITATION_NOTES),
     }
 
 
@@ -504,6 +565,7 @@ def run_pilot(
         "problem_source_error": source_error,
         "problem_count": len(problems),
         "scenario_semantics": _scenario_semantics(config.resolved_scenario),
+        "pilot_limitations": list(PILOT_LIMITATION_NOTES),
         "direct_reference_command": _reference_command(config),
         "runs": [],
     }
@@ -533,6 +595,8 @@ def run_pilot(
             continue
         if method != "direct" and not runtime.dspy_available:
             raise RuntimeError(f"{method} requires the optional 'dspy' extra")
+        if method == "dspy_rlm_vtm" and not runtime.rlm_available:
+            raise RuntimeError(f"{method} requires a DSPy build that exposes dspy.RLM")
         rows = execute_method(
             method,
             config=config,
@@ -648,6 +712,11 @@ def execute_problem(
     usage: dict[str, Any] | None = None
     evaluation: dict[str, Any] | None = None
     retrieval_payload: dict[str, Any] | None = None
+    retrieval_invocation_count = 0
+    retrieval_hit_count = 0
+    retrieval_verified_count = 0
+    retrieval_stale_filtered_count = 0
+    retrieval_queries: list[str] = []
     dspy_tool_calls = 0
     direct_retry_count = 0
     direct_response_error: str | None = None
@@ -660,7 +729,7 @@ def execute_problem(
                 problem_id=problem.problem_id,
                 workspace_root=PROJECT_ROOT,
             )
-            if method == "dspy_vtm"
+            if method in {"dspy_vtm", "dspy_rlm_vtm"}
             else None
         )
         try:
@@ -668,15 +737,25 @@ def execute_problem(
                 seed_problem_memory(session, problem)
             for attempt_index in range(1, max_attempts + 1):
                 memory_cards: Sequence[Mapping[str, Any]] = ()
+                retrieval_query = build_retrieval_query(problem, visible_feedback)
                 if session is not None:
                     retrieval_payload = retrieve_verified_memory(
                         session,
-                        query=build_retrieval_query(problem, visible_feedback),
+                        query=retrieval_query,
+                    )
+                    retrieval_invocation_count += 1
+                    retrieval_queries.append(retrieval_query)
+                    if retrieval_payload["used"]:
+                        retrieval_hit_count += 1
+                    retrieval_verified_count += int(retrieval_payload["verified_count"])
+                    retrieval_stale_filtered_count += int(
+                        retrieval_payload["stale_filtered_count"]
                     )
                     memory_cards = tuple(retrieval_payload["cards"])
                 prompt = build_attempt_prompt(
                     problem,
                     attempt_index=attempt_index,
+                    agent_mode="direct" if method == "direct" else "dspy",
                     memory_cards=memory_cards,
                     visible_feedback=visible_feedback,
                     repair_context=repair_context,
@@ -698,6 +777,7 @@ def execute_problem(
                         method=method,
                         session=session,
                         model_config=model_config,
+                        memory_query=retrieval_query if session is not None else None,
                     )
                     response_text = response_payload["response_text"]
                     dspy_tool_calls += int(response_payload["tool_calls"])
@@ -735,11 +815,21 @@ def execute_problem(
             if session is not None:
                 session.close()
 
-    total_tool_calls = dspy_tool_calls + (
-        int(retrieval_payload["tool_calls"])
-        if isinstance(retrieval_payload, Mapping)
-        else 0
-    )
+    total_tool_calls = dspy_tool_calls + retrieval_invocation_count
+    retrieval_summary = None
+    if retrieval_invocation_count:
+        retrieval_summary = {
+            "invoked": True,
+            "used": retrieval_hit_count > 0,
+            "query": retrieval_queries[-1],
+            "query_history": retrieval_queries,
+            "cards": retrieval_payload["cards"] if isinstance(retrieval_payload, Mapping) else [],
+            "verified_count": retrieval_verified_count,
+            "stale_filtered_count": retrieval_stale_filtered_count,
+            "tool_calls": retrieval_invocation_count,
+            "attempt_count": retrieval_invocation_count,
+            "hit_count": retrieval_hit_count,
+        }
     return {
         "problem_id": problem.problem_id,
         "method": method,
@@ -755,7 +845,7 @@ def execute_problem(
         "extracted_code": extracted_code,
         "evaluation": evaluation,
         "usage": usage,
-        "retrieval": retrieval_payload,
+        "retrieval": retrieval_summary,
         "tool_calls": total_tool_calls,
         "direct_retry_count": direct_retry_count,
         "response_error": direct_response_error,
@@ -833,6 +923,7 @@ def run_dspy_attempt(
     method: PilotMethod,
     session: PilotMemorySession | None,
     model_config: DSPyOpenRouterConfig,
+    memory_query: str | None = None,
 ) -> dict[str, Any]:
     if method == "dspy_vtm":
         assert session is not None
@@ -844,6 +935,17 @@ def run_dspy_attempt(
             memory_lookup=session.metadata_store.get_memory_item,
             model_config=model_config,
         )
+        result = agent.run(prompt)
+    elif method == "dspy_rlm_vtm":
+        assert session is not None
+        agent = VTMRLMCodingAgent(
+            kernel=session.kernel,
+            scopes=(session.scope,),
+            dependency_provider=lambda: session.dependency,
+            memory_lookup=session.metadata_store.get_memory_item,
+            model_config=model_config,
+        )
+        result = agent.run(prompt, query=memory_query)
     else:
         agent = VTMReActCodingAgent(
             kernel=None,
@@ -851,11 +953,11 @@ def run_dspy_attempt(
             workspace_root=None,
             model_config=model_config,
         )
-    result = agent.run(prompt)
+        result = agent.run(prompt)
     response_payload = result.get("response")
     return {
         "response_text": _coerce_response_text(response_payload),
-        "tool_calls": _count_serialized_tool_calls(response_payload),
+        "tool_calls": _count_result_tool_calls(result, response_payload),
         "trajectory": result.get("trajectory"),
         "usage": None,
     }
@@ -1147,6 +1249,17 @@ def compact_text(raw: str | None, *, limit: int = 240) -> str:
     return normalized[: max(0, limit - 3)].rstrip() + "..."
 
 
+def _required_function_name(problem: LiveCodeBenchProblem) -> str | None:
+    metadata = problem.evaluator_payload.get("problem_metadata")
+    if not isinstance(metadata, Mapping):
+        return None
+    func_name = metadata.get("func_name")
+    if not isinstance(func_name, str):
+        return None
+    stripped = func_name.strip()
+    return stripped or None
+
+
 def _slugify(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-") or "model"
 
@@ -1192,6 +1305,15 @@ def _normalize_usage(raw_usage: Any) -> dict[str, Any] | None:
     return {"raw": raw_usage}
 
 
+def _dspy_rlm_available() -> bool:
+    if not dspy_available():
+        return False
+    try:
+        return hasattr(require_dspy(), "RLM")
+    except ImportError:
+        return False
+
+
 def _coerce_response_text(payload: Any) -> str:
     if isinstance(payload, str):
         return payload
@@ -1210,8 +1332,23 @@ def _count_serialized_tool_calls(payload: Any) -> int:
             value = payload.get(key)
             if isinstance(value, Sequence) and not isinstance(value, str | bytes):
                 return len(value)
+            if isinstance(value, Mapping):
+                tool_call_count = sum(
+                    1 for item_key in value if str(item_key).startswith("tool_name_")
+                )
+                if tool_call_count:
+                    return tool_call_count
             if isinstance(value, int):
                 return value
+    return 0
+
+
+def _count_result_tool_calls(result: Any, response_payload: Any) -> int:
+    response_count = _count_serialized_tool_calls(response_payload)
+    if response_count:
+        return response_count
+    if isinstance(result, Mapping):
+        return _count_serialized_tool_calls(result)
     return 0
 
 

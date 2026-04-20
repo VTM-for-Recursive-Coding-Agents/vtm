@@ -110,6 +110,10 @@ uv run --extra dspy python scripts/run_dspy_vtm_smoke.py --run-model
 
 `scripts/run_livecodebench_dspy_pilot.py` is a small scaffolded pilot for external LiveCodeBench tasks. It compares a direct OpenRouter baseline, a DSPy baseline without VTM memory, and DSPy with VTM verified-memory tools.
 
+An experimental `dspy_rlm_vtm` method is also available for inspection. It keeps the
+same VTM verified-memory session but swaps the DSPy orchestration surface from ReAct
+to DSPy RLM. It is exploratory only and does not replace the ReAct path.
+
 It is deliberately separate from the maintained VTM evidence:
 
 - LiveCodeBench is an external coding benchmark.

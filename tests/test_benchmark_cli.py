@@ -179,6 +179,20 @@ def test_run_cli_help_marks_legacy_docker_backend() -> None:
     assert "legacy/non-" in help_text
 
 
+def test_maintained_regression_bundle_script_help() -> None:
+    completed = _run_subprocess(
+        ["bash", "scripts/run_maintained_regression_bundle.sh", "--help"],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert "Runs the maintained VTM regression bundle" in completed.stdout
+    assert "--execution-model MODEL" in completed.stdout
+
+
 def test_subset_manifest_cli_parser_accepts_repeated_case_ids() -> None:
     args = subset_manifest.build_parser().parse_args(
         [
