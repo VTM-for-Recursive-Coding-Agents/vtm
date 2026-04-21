@@ -89,22 +89,33 @@ CODE_BLOCK_PATTERN: Final[re.Pattern[str]] = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 PROMPT_CARD_ROLE_PRIORITY: Final[dict[str, int]] = {
-    "feedback_item": 0,
-    "feedback": 1,
-    "canonical_repair_lesson": 2,
-    "repair_lesson": 3,
-    "public_tests": 4,
-    "function_contract": 5,
-    "refuted_answer": 6,
-    "attempt_summary": 7,
-    "successful_solution": 8,
+    "repair_handoff": 0,
+    "repair_constraint": 1,
+    "feedback_item": 2,
+    "feedback": 3,
+    "canonical_repair_lesson": 4,
+    "repair_lesson": 5,
+    "public_tests": 6,
+    "function_contract": 7,
+    "refuted_answer": 8,
+    "attempt_summary": 9,
+    "successful_solution": 10,
     "problem_summary": 20,
 }
 ATTEMPT_ONE_MEMORY_ROLES: Final[frozenset[str]] = frozenset({"function_contract", "public_tests"})
 REPAIR_LOCAL_MEMORY_ROLES: Final[frozenset[str]] = frozenset(
-    {"feedback_item", "feedback", "refuted_answer", "attempt_summary"}
+    {
+        "repair_handoff",
+        "repair_constraint",
+        "feedback_item",
+        "feedback",
+        "refuted_answer",
+        "attempt_summary",
+    }
 )
-CHEAP_REPAIR_LOCAL_MEMORY_ROLES: Final[frozenset[str]] = frozenset({"feedback_item", "feedback"})
+CHEAP_REPAIR_LOCAL_MEMORY_ROLES: Final[frozenset[str]] = frozenset(
+    {"repair_handoff", "repair_constraint", "feedback_item", "feedback"}
+)
 REPAIR_PERSISTENT_MEMORY_ROLES: Final[frozenset[str]] = frozenset(
     {
         "canonical_repair_lesson",
@@ -117,27 +128,6 @@ REPAIR_PERSISTENT_MEMORY_ROLES: Final[frozenset[str]] = frozenset(
 CHEAP_REPAIR_PERSISTENT_MEMORY_ROLES: Final[frozenset[str]] = frozenset(
     {"canonical_repair_lesson", "repair_lesson"}
 )
-ATTEMPT_ONE_PROMPT_ROLE_LIMITS: Final[dict[str, int]] = {
-    "function_contract": 1,
-    "public_tests": 1,
-}
-REPAIR_PROMPT_ROLE_LIMITS: Final[dict[str, int]] = {
-    "feedback_item": 1,
-    "feedback": 1,
-    "canonical_repair_lesson": 1,
-    "repair_lesson": 1,
-    "successful_solution": 1,
-    "function_contract": 1,
-    "public_tests": 1,
-    "refuted_answer": 1,
-    "attempt_summary": 1,
-}
-CHEAP_REPAIR_PROMPT_ROLE_LIMITS: Final[dict[str, int]] = {
-    "feedback_item": 1,
-    "feedback": 1,
-    "canonical_repair_lesson": 1,
-    "repair_lesson": 1,
-}
 ATTEMPT_ONE_PROMPT_CARD_LIMIT: Final[int] = 2
 REPAIR_PROMPT_CARD_LIMIT: Final[int] = 4
 CHEAP_REPAIR_PROMPT_CARD_LIMIT: Final[int] = 3
@@ -152,12 +142,24 @@ class RetrievalPlan:
 
 
 @dataclass(frozen=True)
-class RepairContext:
-    """Public self-repair context carried across attempts."""
+class RepairHandoff:
+    """Public self-repair handoff carried across attempts."""
 
-    previous_response: str
-    previous_code: str | None
-    visible_feedback: tuple[str, ...]
+    previous_response: str = ""
+    previous_code: str | None = None
+    visible_feedback: tuple[str, ...] = ()
+    attempt_index: int = 1
+    failure_signature: str = ""
+    failure_kind: str = "generic_feedback_guided_repair"
+    bug_class: str = "unknown"
+    repair_objective: str = ""
+    preserve_constraints: tuple[str, ...] = ()
+    public_signal_summary: str = ""
+    local_query: str = ""
+    persistent_query: str = ""
+
+
+RepairContext = RepairHandoff
 
 
 @dataclass(frozen=True)
@@ -165,10 +167,19 @@ class FailureSignature:
     """Compact parsed failure features used in prompts and retrieval queries."""
 
     summary: str
+    failure_kind: str
+    bug_class: str
     exception_type: str | None
     expected_value: str | None
     actual_value: str | None
     function_name: str | None
+    missing_symbol: str | None
+    wrong_callable_shape: bool
+    output_format_issue: bool
+    empty_or_missing_output: bool
+    syntax_error: bool
+    timeout_or_runtime_abort: bool
+    repair_target: str | None
     keywords: tuple[str, ...]
     raw_feedback: tuple[str, ...]
 
@@ -629,11 +640,15 @@ def build_attempt_prompt(
     suggested_memory_query: str | None = None,
     memory_cards: Sequence[Mapping[str, Any]] = (),
     visible_feedback: Sequence[str] = (),
-    repair_context: RepairContext | None = None,
+    repair_context: RepairHandoff | None = None,
     compact_repair: bool = False,
 ) -> str:
     required_func_name = _required_function_name(problem)
-    parsed_failure = _parse_failure_signature(problem, visible_feedback)
+    parsed_failure = (
+        _parse_failure_signature(problem, visible_feedback)
+        if repair_context is None
+        else _failure_signature_from_handoff(problem, repair_context)
+    )
     sections = [
         (
             "Repair the previous LiveCodeBench attempt using the visible failure signal."
@@ -679,15 +694,42 @@ def build_attempt_prompt(
                 "Do not skip memory lookup on repair attempts when memory tools are available.",
             ]
         )
-        if suggested_memory_query:
-            sections.append(f"Suggested memory query: {suggested_memory_query}")
+        if attempt_index > 1 and repair_context is not None:
+            sections.extend(
+                [
+                    "",
+                    "Repair Plan:",
+                    (
+                        "Before writing code, produce a 3-line repair plan in your reasoning "
+                        "or tool flow."
+                    ),
+                    "Line 1: `failure kind: ...`",
+                    "Line 2: `likely cause: ...`",
+                    "Line 3: `smallest fix: ...` and preserve constraints.",
+                    (
+                        "Use retrieved memory and the repair handoff to ground the plan before "
+                        "you change the code."
+                    ),
+                    (
+                        "Do not include the repair plan in the final `response`; the final "
+                        "response must remain only the Python solution."
+                    ),
+                ]
+            )
     if not compact_repair:
-        sections.extend(
-            [
-                "",
-                "Problem Statement:",
-                problem.prompt.strip(),
-            ]
+        _append_repair_handoff_section(
+            sections,
+            repair_context=repair_context,
+            memory_cards=memory_cards,
+            suggested_memory_query=suggested_memory_query,
+        )
+        sections.extend(["", "Problem Statement:", problem.prompt.strip()])
+    else:
+        _append_repair_handoff_section(
+            sections,
+            repair_context=repair_context,
+            memory_cards=memory_cards,
+            suggested_memory_query=suggested_memory_query,
         )
     if required_func_name is not None and not compact_repair:
         sections.extend(
@@ -714,6 +756,9 @@ def build_attempt_prompt(
                 json.dumps(problem.prompt_metadata, indent=2, sort_keys=True),
             ]
         )
+    if compact_repair:
+        _append_minimal_contract_snapshot(sections, problem=problem, memory_cards=memory_cards)
+        _append_public_test_snapshot(sections, problem=problem, memory_cards=memory_cards)
     if repair_context is not None:
         sections.append("")
         sections.append("Previous Candidate:")
@@ -759,12 +804,24 @@ def build_attempt_prompt(
     if attempt_index > 1 and repair_context is not None:
         sections.append("")
         if compact_repair:
-            sections.append(
-                f"This is final short repair attempt {attempt_index}. "
-                "Make the smallest correction that resolves the visible failure."
+            sections.extend(
+                [
+                    f"This is final short repair attempt {attempt_index}. "
+                    "Make the smallest correction that resolves the visible failure.",
+                    (
+                        "Do not rewrite from scratch unless the prior candidate is empty, "
+                        "malformed, or syntactically broken."
+                    ),
+                    "Preserve any behavior not contradicted by the visible failure.",
+                ]
             )
         else:
-            sections.append(f"This is repair attempt {attempt_index}. Fix the previous attempt.")
+            sections.extend(
+                [
+                    f"This is repair attempt {attempt_index}. Fix the previous attempt.",
+                    "Preserve any behavior not contradicted by the visible failure.",
+                ]
+            )
     return "\n".join(sections).strip() + "\n"
 
 
@@ -874,6 +931,40 @@ def aggregate_summary(
         if total
         else 0.0
     )
+    repair_handoff_hit_rate = (
+        sum(1 for row in rows if bool(row.get("repair_handoff_memory_hit"))) / total
+        if total
+        else 0.0
+    )
+    repair_handoff_success_rate = (
+        sum(
+            1
+            for row in rows
+            if bool(row.get("repair_handoff_memory_hit"))
+            and isinstance(row.get("evaluation"), Mapping)
+            and row["evaluation"].get("passed") is True
+        )
+        / max(1, sum(1 for row in rows if bool(row.get("repair_handoff_memory_hit"))))
+    )
+    repair_handoff_card_in_prompt_rate = (
+        sum(1 for row in rows if bool(row.get("repair_handoff_card_in_prompt"))) / total
+        if total
+        else 0.0
+    )
+    contract_card_in_prompt_rate = (
+        sum(1 for row in rows if bool(row.get("contract_card_in_prompt"))) / total
+        if total
+        else 0.0
+    )
+    public_test_card_in_prompt_rate = (
+        sum(1 for row in rows if bool(row.get("public_test_card_in_prompt"))) / total
+        if total
+        else 0.0
+    )
+    top_prompt_memory_role_distribution = _value_distribution(
+        row.get("top_prompt_memory_role")
+        for row in rows
+    )
     used_candidate_selection = any(int(row.get("candidates_per_attempt", 1)) > 1 for row in rows)
     attempt1_pass_at_1_count = sum(1 for row in rows if _attempt1_candidate_passed(row, candidate_index=1))
     attempt1_pass_at_k_count = sum(1 for row in rows if _attempt1_any_candidate_passed(row))
@@ -883,8 +974,13 @@ def aggregate_summary(
     attempt2_pass_at_k_count = sum(1 for row in rows if _attempt_any_candidate_passed(row, attempt_index=2))
     attempt2_pass_at_1 = (attempt2_pass_at_1_count / total) if total else None
     attempt2_pass_at_k = (attempt2_pass_at_k_count / total) if total else None
+    attempt3_pass_at_1_count = sum(1 for row in rows if _attempt_candidate_passed(row, attempt_index=3, candidate_index=1))
+    attempt3_pass_at_k_count = sum(1 for row in rows if _attempt_any_candidate_passed(row, attempt_index=3))
+    attempt3_pass_at_1 = (attempt3_pass_at_1_count / total) if total else None
+    attempt3_pass_at_k = (attempt3_pass_at_k_count / total) if total else None
     attempt1_pass_curve = _attempt_pass_curve(rows, attempt_index=1)
     attempt2_pass_curve = _attempt_pass_curve(rows, attempt_index=2)
+    attempt3_pass_curve = _attempt_pass_curve(rows, attempt_index=3)
     return {
         "benchmark": "livecodebench",
         "kind": "dspy_pilot",
@@ -912,6 +1008,12 @@ def aggregate_summary(
         "canonical_memory_hit_rate": round(canonical_memory_hit_rate, 6),
         "total_consolidated_memory_card_count": total_consolidated_memory_card_count,
         "consolidated_memory_card_rate": round(consolidated_memory_card_rate, 6),
+        "repair_handoff_hit_rate": round(repair_handoff_hit_rate, 6),
+        "repair_handoff_success_rate": round(repair_handoff_success_rate, 6),
+        "repair_handoff_card_in_prompt_rate": round(repair_handoff_card_in_prompt_rate, 6),
+        "contract_card_in_prompt_rate": round(contract_card_in_prompt_rate, 6),
+        "public_test_card_in_prompt_rate": round(public_test_card_in_prompt_rate, 6),
+        "top_prompt_memory_role_distribution": top_prompt_memory_role_distribution,
         "candidate_selection_mode": (
             "best_of_k_public_tests" if used_candidate_selection else "single_sample"
         ),
@@ -933,10 +1035,109 @@ def aggregate_summary(
             round(attempt2_pass_at_k, 6) if attempt2_pass_at_k is not None else None
         ),
         "attempt2_public_test_pass_curve": attempt2_pass_curve,
+        "attempt3_public_test_pass_at_1_count": attempt3_pass_at_1_count,
+        "attempt3_public_test_pass_at_1": (
+            round(attempt3_pass_at_1, 6) if attempt3_pass_at_1 is not None else None
+        ),
+        "attempt3_public_test_pass_at_k_count": attempt3_pass_at_k_count,
+        "attempt3_public_test_pass_at_k": (
+            round(attempt3_pass_at_k, 6) if attempt3_pass_at_k is not None else None
+        ),
+        "attempt3_public_test_pass_curve": attempt3_pass_curve,
         "attempt2_delta_over_attempt1": (
             round(attempt2_pass_at_1 - attempt1_pass_at_1, 6)
             if attempt2_pass_at_1 is not None and attempt1_pass_at_1 is not None
             else None
+        ),
+        "attempt3_delta_over_attempt2": (
+            round(attempt3_pass_at_1 - attempt2_pass_at_1, 6)
+            if attempt3_pass_at_1 is not None and attempt2_pass_at_1 is not None
+            else None
+        ),
+        "attempt3_total_delta_over_attempt1": (
+            round(attempt3_pass_at_1 - attempt1_pass_at_1, 6)
+            if attempt3_pass_at_1 is not None and attempt1_pass_at_1 is not None
+            else None
+        ),
+        "attempt2_success_with_canonical_hit_rate": round(
+            _conditional_attempt_success_rate(
+                rows,
+                attempt_index=2,
+                predicate=lambda row: 2 in tuple(row.get("canonical_memory_hit_attempts", ())),
+            ),
+            6,
+        ),
+        "attempt2_success_without_canonical_hit_rate": round(
+            _conditional_attempt_success_rate(
+                rows,
+                attempt_index=2,
+                predicate=lambda row: 2 not in tuple(row.get("canonical_memory_hit_attempts", ())),
+            ),
+            6,
+        ),
+        "attempt3_success_with_canonical_hit_rate": round(
+            _conditional_attempt_success_rate(
+                rows,
+                attempt_index=3,
+                predicate=lambda row: 3 in tuple(row.get("canonical_memory_hit_attempts", ())),
+            ),
+            6,
+        ),
+        "attempt3_success_without_canonical_hit_rate": round(
+            _conditional_attempt_success_rate(
+                rows,
+                attempt_index=3,
+                predicate=lambda row: 3 not in tuple(row.get("canonical_memory_hit_attempts", ())),
+            ),
+            6,
+        ),
+        "attempt2_success_when_repair_card_in_prompt": round(
+            _conditional_attempt_success_rate(
+                rows,
+                attempt_index=2,
+                predicate=lambda row: bool(row.get("attempt2_repair_card_in_prompt")),
+            ),
+            6,
+        ),
+        "attempt2_success_when_no_repair_card_in_prompt": round(
+            _conditional_attempt_success_rate(
+                rows,
+                attempt_index=2,
+                predicate=lambda row: not bool(row.get("attempt2_repair_card_in_prompt")),
+            ),
+            6,
+        ),
+        "attempt3_success_when_repair_card_in_prompt": round(
+            _conditional_attempt_success_rate(
+                rows,
+                attempt_index=3,
+                predicate=lambda row: bool(row.get("attempt3_repair_card_in_prompt")),
+            ),
+            6,
+        ),
+        "attempt3_success_when_no_repair_card_in_prompt": round(
+            _conditional_attempt_success_rate(
+                rows,
+                attempt_index=3,
+                predicate=lambda row: not bool(row.get("attempt3_repair_card_in_prompt")),
+            ),
+            6,
+        ),
+        "attempt2_success_when_handoff_in_prompt": round(
+            _conditional_attempt_success_rate(
+                rows,
+                attempt_index=2,
+                predicate=lambda row: bool(row.get("attempt2_handoff_card_in_prompt")),
+            ),
+            6,
+        ),
+        "attempt3_success_when_handoff_in_prompt": round(
+            _conditional_attempt_success_rate(
+                rows,
+                attempt_index=3,
+                predicate=lambda row: bool(row.get("attempt3_handoff_card_in_prompt")),
+            ),
+            6,
         ),
         "pilot_limitations": list(PILOT_LIMITATION_NOTES),
     }
@@ -1018,6 +1219,12 @@ def skipped_summary(
         "canonical_memory_hit_rate": 0.0,
         "total_consolidated_memory_card_count": 0,
         "consolidated_memory_card_rate": 0.0,
+        "repair_handoff_hit_rate": 0.0,
+        "repair_handoff_success_rate": 0.0,
+        "repair_handoff_card_in_prompt_rate": 0.0,
+        "contract_card_in_prompt_rate": 0.0,
+        "public_test_card_in_prompt_rate": 0.0,
+        "top_prompt_memory_role_distribution": {},
         "attempt1_public_test_pass_at_1_count": 0,
         "attempt1_public_test_pass_at_1": None,
         "attempt1_public_test_pass_at_k_count": 0,
@@ -1028,7 +1235,24 @@ def skipped_summary(
         "attempt2_public_test_pass_at_k_count": 0,
         "attempt2_public_test_pass_at_k": None,
         "attempt2_public_test_pass_curve": {},
+        "attempt3_public_test_pass_at_1_count": 0,
+        "attempt3_public_test_pass_at_1": None,
+        "attempt3_public_test_pass_at_k_count": 0,
+        "attempt3_public_test_pass_at_k": None,
+        "attempt3_public_test_pass_curve": {},
         "attempt2_delta_over_attempt1": None,
+        "attempt3_delta_over_attempt2": None,
+        "attempt3_total_delta_over_attempt1": None,
+        "attempt2_success_with_canonical_hit_rate": 0.0,
+        "attempt2_success_without_canonical_hit_rate": 0.0,
+        "attempt3_success_with_canonical_hit_rate": 0.0,
+        "attempt3_success_without_canonical_hit_rate": 0.0,
+        "attempt2_success_when_repair_card_in_prompt": 0.0,
+        "attempt2_success_when_no_repair_card_in_prompt": 0.0,
+        "attempt3_success_when_repair_card_in_prompt": 0.0,
+        "attempt3_success_when_no_repair_card_in_prompt": 0.0,
+        "attempt2_success_when_handoff_in_prompt": 0.0,
+        "attempt3_success_when_handoff_in_prompt": 0.0,
         "skip_reason": reason,
         "pilot_limitations": list(PILOT_LIMITATION_NOTES),
     }
@@ -1310,7 +1534,7 @@ def execute_problem(
     dspy_tool_calls = 0
     direct_retry_count = 0
     response_error: str | None = None
-    repair_context: RepairContext | None = None
+    repair_context: RepairHandoff | None = None
     attempts_executed = 0
     selected_candidate_indices: list[int] = []
     candidate_batches: list[dict[str, Any]] = []
@@ -1318,6 +1542,19 @@ def execute_problem(
     canonical_memory_hit_count = 0
     canonical_memory_hit_attempts: list[int] = []
     consolidated_memory_card_count = 0
+    repair_handoff_memory_hit = False
+    handoff_failure_kind: str | None = None
+    handoff_bug_class: str | None = None
+    handoff_guardrail_count = 0
+    attempt3_contract_snapshot_included = False
+    attempt3_public_test_snapshot_included = False
+    final_prompt_stats = _prompt_memory_stats(())
+    prompt_stats_by_attempt: dict[int, dict[str, Any]] = {}
+    attempt2_retrieval_required_satisfied = False
+    attempt3_retrieval_required_satisfied = False
+    local_repair_retrieval_attempted = False
+    persistent_repair_retrieval_attempted = False
+    repair_retrieval_success_by_attempt: dict[int, bool] = {}
 
     with TemporaryDirectory(prefix=f"vtm-lcb-{problem.problem_id}-") as temp_dir:
         local_session = (
@@ -1340,15 +1577,30 @@ def execute_problem(
                     if local_session is not None
                     else persistent_session
                 )
-                local_retrieval_query = build_retrieval_query(
-                    problem,
-                    visible_feedback,
-                    store_kind="local",
+                failure_signature = (
+                    _failure_signature_from_handoff(problem, repair_context)
+                    if repair_context is not None
+                    else _parse_failure_signature(problem, visible_feedback)
                 )
-                persistent_retrieval_query = build_retrieval_query(
-                    problem,
-                    visible_feedback,
-                    store_kind="persistent",
+                local_retrieval_query = (
+                    repair_context.local_query
+                    if repair_context is not None and repair_context.local_query
+                    else build_retrieval_query(
+                        problem,
+                        visible_feedback,
+                        store_kind="local",
+                        failure_signature=failure_signature,
+                    )
+                )
+                persistent_retrieval_query = (
+                    repair_context.persistent_query
+                    if repair_context is not None and repair_context.persistent_query
+                    else build_retrieval_query(
+                        problem,
+                        visible_feedback,
+                        store_kind="persistent",
+                        failure_signature=failure_signature,
+                    )
                 )
                 local_cards: Sequence[Mapping[str, Any]] = ()
                 persistent_cards: Sequence[Mapping[str, Any]] = ()
@@ -1358,6 +1610,8 @@ def execute_problem(
                     store_kind="persistent",
                 )
                 if local_session is not None and local_plan is not None:
+                    if attempt_index > 1:
+                        local_repair_retrieval_attempted = True
                     retrieval_payload = retrieve_verified_memory(
                         local_session,
                         query=local_retrieval_query,
@@ -1365,6 +1619,9 @@ def execute_problem(
                         allowed_roles=local_plan.allowed_roles,
                         limit=local_plan.limit,
                         expand_top_k=1 if attempt_index > 1 else 0,
+                        failure_signature=failure_signature,
+                        store_kind="local",
+                        interface_mode=_interface_mode(problem),
                     )
                     retrieval_invocation_count += 1
                     retrieval_queries.append(f"local:{local_retrieval_query}")
@@ -1376,6 +1633,8 @@ def execute_problem(
                     )
                     local_cards = tuple(retrieval_payload["cards"])
                 if persistent_session is not None and persistent_plan is not None:
+                    if attempt_index > 1:
+                        persistent_repair_retrieval_attempted = True
                     persistent_payload = retrieve_verified_memory(
                         persistent_session,
                         query=persistent_retrieval_query,
@@ -1383,6 +1642,9 @@ def execute_problem(
                         allowed_roles=persistent_plan.allowed_roles,
                         limit=persistent_plan.limit,
                         expand_top_k=2 if attempt_index > 1 else 0,
+                        failure_signature=failure_signature,
+                        store_kind="persistent",
+                        interface_mode=_interface_mode(problem),
                     )
                     retrieval_invocation_count += 1
                     retrieval_queries.append(f"persistent:{persistent_retrieval_query}")
@@ -1400,6 +1662,16 @@ def execute_problem(
                         attempt_index=attempt_index,
                     )
                 )
+                final_prompt_stats = _prompt_memory_stats(memory_cards)
+                prompt_stats_by_attempt[attempt_index] = dict(final_prompt_stats)
+                if attempt_index > 1:
+                    repair_retrieval_success_by_attempt[attempt_index] = bool(
+                        local_cards or persistent_cards
+                    )
+                    if attempt_index == 2:
+                        attempt2_retrieval_required_satisfied = bool(local_cards or persistent_cards)
+                    if attempt_index == 3:
+                        attempt3_retrieval_required_satisfied = bool(local_cards or persistent_cards)
                 canonical_hits_this_attempt = sum(
                     1
                     for card in memory_cards
@@ -1408,6 +1680,9 @@ def execute_problem(
                 canonical_memory_hit_count += canonical_hits_this_attempt
                 if canonical_hits_this_attempt:
                     canonical_memory_hit_attempts.append(attempt_index)
+                repair_handoff_memory_hit = repair_handoff_memory_hit or any(
+                    _memory_card_role(card) == "repair_handoff" for card in memory_cards
+                )
                 retrieved_memory_cards = tuple(memory_cards)
                 prompt = build_attempt_prompt(
                     problem,
@@ -1432,6 +1707,9 @@ def execute_problem(
                     repair_context=repair_context,
                     compact_repair=attempt_index >= 3 and repair_context is not None,
                 )
+                if attempt_index >= 3 and repair_context is not None:
+                    attempt3_contract_snapshot_included = "Minimal Contract Snapshot:" in prompt
+                    attempt3_public_test_snapshot_included = "Public-Test Snapshot:" in prompt
                 candidate_count = max(1, config.candidates_per_attempt)
                 attempt_candidates: list[AttemptCandidate] = []
                 for _candidate_index in range(1, candidate_count + 1):
@@ -1492,6 +1770,33 @@ def execute_problem(
                     candidate.dspy_tool_calls for candidate in attempt_candidates
                 )
                 response_error = selected_candidate.response_error
+                selected_failure_signature = _parse_failure_signature(
+                    problem,
+                    evaluation.get("failure_feedback", ()) if isinstance(evaluation, Mapping) else (),
+                    response_text=response_text,
+                    extracted_code=extracted_code,
+                    evaluation=evaluation,
+                )
+                next_repair_context = (
+                    _build_repair_handoff(
+                        problem,
+                        attempt_index=attempt_index,
+                        response_text=response_text,
+                        extracted_code=extracted_code,
+                        visible_feedback=tuple(
+                            str(item).strip()
+                            for item in (
+                                evaluation.get("failure_feedback", ())
+                                if isinstance(evaluation, Mapping)
+                                else ()
+                            )
+                            if str(item).strip()
+                        ),
+                        failure_signature=selected_failure_signature,
+                    )
+                    if evaluation is not None and evaluation.get("passed") is not True
+                    else None
+                )
                 if local_session is not None:
                     record_attempt_memory(
                         local_session,
@@ -1500,6 +1805,7 @@ def execute_problem(
                         response_text=response_text,
                         extracted_code=extracted_code,
                         evaluation=evaluation,
+                        repair_context=next_repair_context,
                     )
                 if (
                     method_uses_persistent_memory(method)
@@ -1531,11 +1837,11 @@ def execute_problem(
                 feedback_items = evaluation.get("failure_feedback")
                 if isinstance(feedback_items, list):
                     visible_feedback = [str(item) for item in feedback_items if str(item).strip()]
-                repair_context = RepairContext(
-                    previous_response=response_text,
-                    previous_code=extracted_code,
-                    visible_feedback=tuple(visible_feedback),
-                )
+                repair_context = next_repair_context
+                if repair_context is not None:
+                    handoff_failure_kind = repair_context.failure_kind
+                    handoff_bug_class = repair_context.bug_class
+                    handoff_guardrail_count = len(repair_context.preserve_constraints)
         finally:
             if local_session is not None:
                 local_session.close()
@@ -1588,6 +1894,43 @@ def execute_problem(
         "canonical_memory_hit_count": canonical_memory_hit_count,
         "canonical_memory_hit_attempts": canonical_memory_hit_attempts,
         "consolidated_memory_card_count": consolidated_memory_card_count,
+        "handoff_failure_kind": handoff_failure_kind,
+        "handoff_bug_class": handoff_bug_class,
+        "handoff_guardrail_count": handoff_guardrail_count,
+        "repair_handoff_memory_hit": repair_handoff_memory_hit,
+        "attempt3_contract_snapshot_included": attempt3_contract_snapshot_included,
+        "attempt3_public_test_snapshot_included": attempt3_public_test_snapshot_included,
+        "attempt2_retrieval_required_satisfied": attempt2_retrieval_required_satisfied,
+        "attempt3_retrieval_required_satisfied": attempt3_retrieval_required_satisfied,
+        "local_repair_retrieval_attempted": local_repair_retrieval_attempted,
+        "persistent_repair_retrieval_attempted": persistent_repair_retrieval_attempted,
+        "attempt2_repair_retrieval_success": repair_retrieval_success_by_attempt.get(2, False),
+        "attempt3_repair_retrieval_success": repair_retrieval_success_by_attempt.get(3, False),
+        **final_prompt_stats,
+        "attempt2_repair_card_in_prompt": bool(
+            prompt_stats_by_attempt.get(2, {}).get("repair_memory_card_count", 0)
+        ),
+        "attempt3_repair_card_in_prompt": bool(
+            prompt_stats_by_attempt.get(3, {}).get("repair_memory_card_count", 0)
+        ),
+        "attempt2_handoff_card_in_prompt": bool(
+            prompt_stats_by_attempt.get(2, {}).get("repair_handoff_card_in_prompt", False)
+        ),
+        "attempt3_handoff_card_in_prompt": bool(
+            prompt_stats_by_attempt.get(3, {}).get("repair_handoff_card_in_prompt", False)
+        ),
+        "attempt2_contract_card_in_prompt": bool(
+            prompt_stats_by_attempt.get(2, {}).get("contract_card_in_prompt", False)
+        ),
+        "attempt3_contract_card_in_prompt": bool(
+            prompt_stats_by_attempt.get(3, {}).get("contract_card_in_prompt", False)
+        ),
+        "attempt2_public_test_card_in_prompt": bool(
+            prompt_stats_by_attempt.get(2, {}).get("public_test_card_in_prompt", False)
+        ),
+        "attempt3_public_test_card_in_prompt": bool(
+            prompt_stats_by_attempt.get(3, {}).get("public_test_card_in_prompt", False)
+        ),
     }
 
 
@@ -2035,6 +2378,7 @@ def record_attempt_memory(
     response_text: str,
     extracted_code: str | None,
     evaluation: Mapping[str, Any] | None,
+    repair_context: RepairHandoff | None = None,
 ) -> None:
     response_record = session.kernel.capture_artifact(
         response_text.encode("utf-8"),
@@ -2114,6 +2458,93 @@ def record_attempt_memory(
     )
     if feedback_summaries:
         feedback_summary = compact_text(" ".join(feedback_summaries), limit=220)
+        failure_signature = (
+            _failure_signature_from_handoff(problem, repair_context)
+            if repair_context is not None
+            else _parse_failure_signature(
+                problem,
+                feedback_summaries,
+                response_text=response_text,
+                extracted_code=extracted_code,
+                evaluation=evaluation,
+            )
+        )
+        if repair_context is not None:
+            session.kernel.stage_memory_item(
+                tx.tx_id,
+                MemoryItem(
+                    kind=MemoryKind.CLAIM,
+                    title=f"Repair Handoff From Attempt {attempt_index}",
+                    summary=compact_text(
+                        " ".join(
+                            part
+                            for part in (
+                                f"Attempt {attempt_index} failed and needs repair.",
+                                f"Failure kind: {repair_context.failure_kind}.",
+                                f"Repair objective: {repair_context.repair_objective}",
+                                "Preserve: "
+                                + "; ".join(repair_context.preserve_constraints[:2])
+                                if repair_context.preserve_constraints
+                                else "",
+                                f"Visible failure: {repair_context.public_signal_summary}.",
+                            )
+                            if part
+                        ),
+                        limit=260,
+                    ),
+                    payload=ClaimPayload(
+                        claim=(
+                            f"Attempt {attempt_index} requires a structured repair handoff "
+                            f"for {problem.problem_id}."
+                        ),
+                        strength=ClaimStrength.TENTATIVE,
+                    ),
+                    evidence=tuple(evidence),
+                    tags=("livecodebench", "repair_handoff", failure_signature.failure_kind),
+                    visibility=session.scope,
+                    validity=ValidityState(
+                        status=ValidityStatus.VERIFIED,
+                        dependency_fingerprint=session.dependency,
+                        reason="Repair handoff distilled from visible public feedback for the current run",
+                    ),
+                    metadata={
+                        "problem_id": problem.problem_id,
+                        "memory_role": "repair_handoff",
+                        "attempt_index": attempt_index,
+                        "failure_kind": repair_context.failure_kind,
+                        "bug_class": repair_context.bug_class,
+                        "function_name": failure_signature.function_name,
+                        "feedback_signature": repair_context.failure_signature,
+                    },
+                ),
+            )
+            for constraint_index, constraint in enumerate(repair_context.preserve_constraints[:3], start=1):
+                session.kernel.stage_memory_item(
+                    tx.tx_id,
+                    MemoryItem(
+                        kind=MemoryKind.CLAIM,
+                        title=f"Attempt {attempt_index} repair constraint {constraint_index}",
+                        summary=compact_text(constraint, limit=220),
+                        payload=ClaimPayload(
+                            claim=constraint,
+                            strength=ClaimStrength.SUPPORTED,
+                        ),
+                        evidence=tuple(evidence),
+                        tags=("livecodebench", "repair_constraint"),
+                        visibility=session.scope,
+                        validity=ValidityState(
+                            status=ValidityStatus.VERIFIED,
+                            dependency_fingerprint=session.dependency,
+                            reason="Repair constraints derived from the current public contract and failure",
+                        ),
+                        metadata={
+                            "problem_id": problem.problem_id,
+                            "memory_role": "repair_constraint",
+                            "attempt_index": attempt_index,
+                            "constraint_index": constraint_index,
+                        },
+                    ),
+                )
         session.kernel.stage_memory_item(
             tx.tx_id,
             MemoryItem(
@@ -2203,6 +2634,13 @@ def write_persistent_success_memory(
         return None
 
     required_func_name = _required_function_name(problem)
+    failure_signature = _parse_failure_signature(
+        problem,
+        visible_feedback,
+        response_text=response_text,
+        extracted_code=resolved_code,
+        evaluation=evaluation,
+    )
     response_record = session.kernel.capture_artifact(
         response_text.encode("utf-8"),
         content_type="text/plain",
@@ -2305,6 +2743,9 @@ def write_persistent_success_memory(
             "difficulty": difficulty_name,
             "interface_mode": interface_mode,
             "repair_kind": repair_kind,
+            "failure_kind": failure_signature.failure_kind,
+            "bug_class": failure_signature.bug_class,
+            "repair_target": failure_signature.repair_target,
             "transfer_terms": transfer_terms,
         },
     )
@@ -2316,6 +2757,7 @@ def write_persistent_success_memory(
         attempt_index=attempt_index,
         code=resolved_code,
         visible_feedback=visible_feedback,
+        failure_signature=failure_signature,
         response_record=response_record,
         code_record=code_record,
         evaluation_record=evaluation_record,
@@ -2416,6 +2858,7 @@ def _persistent_repair_memory(
     attempt_index: int,
     code: str,
     visible_feedback: Sequence[str],
+    failure_signature: FailureSignature,
     response_record: Any,
     code_record: Any,
     evaluation_record: Any,
@@ -2447,6 +2890,11 @@ def _persistent_repair_memory(
         tags.append(difficulty_name)
     tags.append(interface_mode)
     tags.append(repair_kind)
+    tags.append(failure_signature.failure_kind)
+    if failure_signature.bug_class and failure_signature.bug_class != "unknown":
+        tags.append(failure_signature.bug_class)
+    if failure_signature.repair_target:
+        tags.append(str(failure_signature.repair_target))
     tags.extend(_feedback_signature_tags(visible_feedback))
     tags.extend(transfer_terms)
     return MemoryItem(
@@ -2489,6 +2937,9 @@ def _persistent_repair_memory(
             "difficulty": difficulty_name,
             "interface_mode": interface_mode,
             "repair_kind": repair_kind,
+            "failure_kind": failure_signature.failure_kind,
+            "bug_class": failure_signature.bug_class,
+            "repair_target": failure_signature.repair_target,
             "transfer_terms": transfer_terms,
             "feedback_signature": " | ".join(
                 compact_text(str(item), limit=160)
@@ -2512,6 +2963,7 @@ def _stage_agent_memory_write_proposals(
     memory_write_proposals: Sequence[Mapping[str, Any]],
 ) -> list[str]:
     promoted_ids: list[str] = []
+    failure_signature = _parse_failure_signature(problem, visible_feedback)
     for proposal in _validated_agent_memory_write_proposals(
         problem,
         attempt_index=attempt_index,
@@ -2590,6 +3042,8 @@ def _stage_agent_memory_write_proposals(
                 "difficulty": _difficulty_name(problem),
                 "interface_mode": proposal["interface_mode"],
                 "repair_kind": proposal["repair_kind"],
+                "failure_kind": failure_signature.failure_kind,
+                "repair_target": failure_signature.repair_target,
                 "transfer_terms": proposal["transfer_terms"],
                 "feedback_signature": proposal["failure_signature"],
                 "agent_memory_proposal": True,
@@ -2615,6 +3069,7 @@ def _validated_agent_memory_write_proposals(
     default_interface_mode = _interface_mode(problem)
     default_repair_kind = _repair_kind(problem, visible_feedback)
     default_transfer_terms = _persistent_transfer_terms(problem, visible_feedback)
+    default_failure_signature = _parse_failure_signature(problem, visible_feedback)
     accepted: list[dict[str, Any]] = []
     for raw_proposal in memory_write_proposals[:3]:
         if not isinstance(raw_proposal, Mapping):
@@ -2644,7 +3099,10 @@ def _validated_agent_memory_write_proposals(
             str(raw_proposal.get("function_name") or default_function_name or "").strip(),
             limit=64,
         )
-        bug_class = compact_text(str(raw_proposal.get("bug_class") or "").strip(), limit=64)
+        bug_class = compact_text(
+            str(raw_proposal.get("bug_class") or default_failure_signature.bug_class).strip(),
+            limit=64,
+        )
         transfer_terms = _normalize_agent_transfer_terms(raw_proposal.get("transfer_terms"))
         merged_transfer_terms = tuple(
             dict.fromkeys(
@@ -2817,14 +3275,16 @@ def _canonical_repair_group_key(memory: MemoryItem) -> tuple[str, ...] | None:
     scenario = str(metadata.get("scenario") or "").strip().lower() or "self_repair"
     interface_mode = str(metadata.get("interface_mode") or "").strip().lower()
     repair_kind = str(metadata.get("repair_kind") or "").strip().lower()
+    failure_kind = str(metadata.get("failure_kind") or "").strip().lower()
     bug_class = str(metadata.get("bug_class") or "").strip().lower()
     function_name = str(metadata.get("function_name") or "").strip().lower()
-    if not interface_mode or not repair_kind:
+    if not interface_mode or not repair_kind or not failure_kind:
         return None
     return (
         scenario,
         interface_mode,
         repair_kind,
+        failure_kind,
         bug_class,
         function_name,
     )
@@ -2841,7 +3301,7 @@ def _build_canonical_repair_summary_card(
     group_key: tuple[str, ...],
     memories: Sequence[MemoryItem],
 ) -> MemoryItem:
-    scenario, interface_mode, repair_kind, bug_class, function_name = group_key
+    scenario, interface_mode, repair_kind, failure_kind, bug_class, function_name = group_key
     supporting_ids = tuple(memory.memory_id for memory in memories)
     top_terms = _top_group_transfer_terms(memories)
     title = f"Canonical repair lesson: {repair_kind} on {interface_mode}"
@@ -2850,6 +3310,7 @@ def _build_canonical_repair_summary_card(
     summary_parts = [
         "Canonical repair lesson distilled from verified LiveCodeBench repairs.",
         f"Repair kind: {repair_kind}.",
+        f"Failure kind: {failure_kind}.",
         f"Interface mode: {interface_mode}.",
         f"Supports {len(memories)} related repairs.",
     ]
@@ -2876,6 +3337,7 @@ def _build_canonical_repair_summary_card(
     rationale_lines = [
         f"Scenario: {scenario}",
         f"Repair kind: {repair_kind}",
+        f"Failure kind: {failure_kind}",
         f"Interface mode: {interface_mode}",
         f"Supporting memories: {', '.join(supporting_ids)}",
     ]
@@ -2906,6 +3368,7 @@ def _build_canonical_repair_summary_card(
                     "livecodebench",
                     "canonical_repair_lesson",
                     repair_kind,
+                    failure_kind,
                     interface_mode,
                     *top_terms[:10],
                 ]
@@ -2926,6 +3389,7 @@ def _build_canonical_repair_summary_card(
             "difficulty": str(memories[0].metadata.get("difficulty") or "").strip() or None,
             "interface_mode": interface_mode,
             "repair_kind": repair_kind,
+            "failure_kind": failure_kind,
             "bug_class": bug_class or None,
             "transfer_terms": top_terms,
             "canonical_support_count": len(memories),
@@ -3105,6 +3569,7 @@ def _persistent_transfer_terms(
     problem: LiveCodeBenchProblem,
     visible_feedback: Sequence[str],
 ) -> tuple[str, ...]:
+    failure_signature = _parse_failure_signature(problem, visible_feedback)
     parts: list[str] = []
     function_name = _required_function_name(problem)
     if function_name:
@@ -3117,6 +3582,11 @@ def _persistent_transfer_terms(
         parts.append(difficulty_name)
     parts.append(_interface_mode(problem))
     parts.append(_repair_kind(problem, visible_feedback))
+    parts.append(failure_signature.failure_kind)
+    if failure_signature.bug_class and failure_signature.bug_class != "unknown":
+        parts.append(failure_signature.bug_class)
+    if failure_signature.repair_target:
+        parts.append(failure_signature.repair_target)
     parts.extend(_public_test_modes(problem))
     parts.extend(_feedback_signature_tags(visible_feedback, limit=6))
     parts.extend(_prompt_transfer_terms(problem, limit=8))
@@ -3166,10 +3636,20 @@ def _interface_mode(problem: LiveCodeBenchProblem) -> str:
 
 def _repair_kind(problem: LiveCodeBenchProblem, visible_feedback: Sequence[str]) -> str:
     signature = _parse_failure_signature(problem, visible_feedback)
-    if signature.exception_type is not None:
+    if signature.failure_kind == "runtime_exception" and signature.exception_type is not None:
         return f"runtime_{signature.exception_type.lower()}"
-    if signature.expected_value is not None or signature.actual_value is not None:
+    if signature.failure_kind == "public_test_logic_mismatch":
         return "public_test_logic_mismatch"
+    if signature.failure_kind == "syntax_error":
+        return "syntax_error_repair"
+    if signature.failure_kind == "missing_top_level_function":
+        return "missing_top_level_function"
+    if signature.failure_kind == "wrong_interface_shape":
+        return "wrong_interface_shape"
+    if signature.failure_kind == "output_format_mismatch":
+        return "output_format_mismatch"
+    if signature.failure_kind == "empty_response_or_no_code":
+        return "empty_response_or_no_code"
     if visible_feedback:
         return "feedback_guided_repair"
     return "successful_initial_solution"
@@ -3219,8 +3699,9 @@ def build_retrieval_query(
     visible_feedback: Sequence[str],
     *,
     store_kind: Literal["local", "persistent"] = "local",
+    failure_signature: FailureSignature | None = None,
 ) -> str:
-    failure_signature = _parse_failure_signature(problem, visible_feedback)
+    failure_signature = failure_signature or _parse_failure_signature(problem, visible_feedback)
     interface_mode = _interface_mode(problem)
     platform_name = _platform_name(problem)
     difficulty_name = _difficulty_name(problem)
@@ -3249,6 +3730,12 @@ def build_retrieval_query(
             query_parts.append(f"actual {failure_signature.actual_value}")
     if failure_signature.summary:
         query_parts.append(failure_signature.summary)
+    if failure_signature.failure_kind:
+        query_parts.append(f"failure_kind {failure_signature.failure_kind}")
+    if failure_signature.bug_class and failure_signature.bug_class != "unknown":
+        query_parts.append(f"bug_class {failure_signature.bug_class}")
+    if failure_signature.repair_target:
+        query_parts.append(f"repair_target {failure_signature.repair_target}")
     if failure_signature.keywords:
         query_parts.append(" ".join(failure_signature.keywords))
     if store_kind == "persistent":
@@ -3285,6 +3772,9 @@ def retrieve_verified_memory(
     allowed_roles: frozenset[str] | None = None,
     limit: int = 5,
     expand_top_k: int = 0,
+    failure_signature: FailureSignature | None = None,
+    store_kind: Literal["local", "persistent"] | None = None,
+    interface_mode: str | None = None,
 ) -> dict[str, Any]:
     candidate_limit = max(limit * 3, 6) if allowed_roles else max(limit, 5)
     result = session.kernel.retrieve(
@@ -3303,6 +3793,9 @@ def retrieve_verified_memory(
         attempt_index=attempt_index,
         allowed_roles=allowed_roles,
         limit=limit,
+        failure_signature=failure_signature,
+        store_kind=store_kind,
+        interface_mode=interface_mode,
     )
     serialized_cards = [
         _serialize_candidate(candidate) for candidate in selected_candidates
@@ -3342,6 +3835,61 @@ def compact_text(raw: str | None, *, limit: int = 240) -> str:
     if len(normalized) <= limit:
         return normalized
     return normalized[: max(0, limit - 3)].rstrip() + "..."
+
+
+def _failure_signature_from_handoff(
+    problem: LiveCodeBenchProblem,
+    repair_context: RepairHandoff,
+) -> FailureSignature:
+    return _parse_failure_signature(
+        problem,
+        repair_context.visible_feedback,
+        response_text=repair_context.previous_response,
+        extracted_code=repair_context.previous_code,
+    )
+
+
+def _build_repair_handoff(
+    problem: LiveCodeBenchProblem,
+    *,
+    attempt_index: int,
+    response_text: str,
+    extracted_code: str | None,
+    visible_feedback: Sequence[str],
+    failure_signature: FailureSignature,
+) -> RepairHandoff:
+    preserve_constraints = _preserve_constraints(problem)
+    repair_target = failure_signature.repair_target or failure_signature.function_name or "the previous solution"
+    preserve_summary = (
+        compact_text("; ".join(preserve_constraints[:2]), limit=90)
+        if preserve_constraints
+        else "the public contract"
+    )
+    repair_objective = f"Fix {repair_target} while preserving {preserve_summary}."
+    return RepairHandoff(
+        previous_response=response_text,
+        previous_code=extracted_code,
+        visible_feedback=tuple(str(item).strip() for item in visible_feedback if str(item).strip()),
+        attempt_index=attempt_index,
+        failure_signature=failure_signature.summary,
+        failure_kind=failure_signature.failure_kind,
+        bug_class=failure_signature.bug_class,
+        repair_objective=compact_text(repair_objective, limit=220),
+        preserve_constraints=preserve_constraints,
+        public_signal_summary=compact_text(" ".join(str(item) for item in visible_feedback), limit=180),
+        local_query=build_retrieval_query(
+            problem,
+            visible_feedback,
+            store_kind="local",
+            failure_signature=failure_signature,
+        ),
+        persistent_query=build_retrieval_query(
+            problem,
+            visible_feedback,
+            store_kind="persistent",
+            failure_signature=failure_signature,
+        ),
+    )
 
 
 def _required_function_name(problem: LiveCodeBenchProblem) -> str | None:
@@ -3571,6 +4119,33 @@ def _attempt_pass_curve(
     return curve
 
 
+def _conditional_attempt_success_rate(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    attempt_index: int,
+    predicate: Any,
+) -> float:
+    filtered = [
+        row
+        for row in rows
+        if _attempt_candidates(row, attempt_index=attempt_index) and predicate(row)
+    ]
+    if not filtered:
+        return 0.0
+    passed = sum(1 for row in filtered if _attempt_any_candidate_passed(row, attempt_index=attempt_index))
+    return passed / len(filtered)
+
+
+def _value_distribution(values: Iterable[Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        normalized = str(value or "").strip()
+        if not normalized:
+            continue
+        counts[normalized] = counts.get(normalized, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 def _count_serialized_tool_calls(payload: Any) -> int:
     if isinstance(payload, Mapping):
         for key in ("trajectory", "tool_calls", "trace"):
@@ -3623,6 +4198,9 @@ def _serialize_candidate(candidate: Any) -> dict[str, Any]:
         "function_name": str(memory.metadata.get("function_name") or "").strip(),
         "feedback_signature": str(memory.metadata.get("feedback_signature") or "").strip(),
         "repair_kind": str(memory.metadata.get("repair_kind") or "").strip(),
+        "failure_kind": str(memory.metadata.get("failure_kind") or "").strip(),
+        "bug_class": str(memory.metadata.get("bug_class") or "").strip(),
+        "repair_target": str(memory.metadata.get("repair_target") or "").strip(),
         "interface_mode": str(memory.metadata.get("interface_mode") or "").strip(),
         "platform": str(memory.metadata.get("platform") or "").strip(),
         "difficulty": str(memory.metadata.get("difficulty") or "").strip(),
@@ -3641,40 +4219,63 @@ def _expand_memory_cards(
 ) -> list[dict[str, Any]]:
     if attempt_index <= 1 or limit <= 0:
         return [dict(card) for card in cards]
-    remaining = limit
+    prioritized_roles = (
+        "canonical_repair_lesson",
+        "repair_lesson",
+        "function_contract",
+        "public_tests",
+        "successful_solution",
+    )
+    prioritized_ids: list[str] = []
+    for role in prioritized_roles:
+        for raw_card in cards:
+            if _memory_card_role(raw_card) != role:
+                continue
+            memory_id = str(raw_card.get("id") or "").strip()
+            if memory_id and memory_id not in prioritized_ids:
+                prioritized_ids.append(memory_id)
+            if len(prioritized_ids) >= limit:
+                break
+        if len(prioritized_ids) >= limit:
+            break
+    expanded_ids: set[str] = set(prioritized_ids)
+    remaining = max(0, limit - len(expanded_ids))
     expanded_cards: list[dict[str, Any]] = []
     for raw_card in cards:
         card = dict(raw_card)
         role = _memory_card_role(card)
-        if remaining > 0 and role in {"canonical_repair_lesson", "repair_lesson", "successful_solution"}:
-            memory_id = str(card.get("id") or "").strip()
-            if memory_id:
-                memory_item = session.metadata_store.get_memory_item(memory_id)
-                payload = getattr(memory_item, "payload", None)
-                rationale = getattr(payload, "rationale", None)
-                if isinstance(rationale, str) and rationale.strip():
-                    card["rationale_preview"] = compact_text(rationale, limit=220)
-                elif role == "canonical_repair_lesson":
-                    rationale_preview = str(
-                        getattr(memory_item, "metadata", {}).get("rationale_preview")
-                        if memory_item is not None
-                        else ""
-                    ).strip()
-                    if rationale_preview:
-                        card["rationale_preview"] = rationale_preview
-                evidence = session.kernel.expand(memory_id)
-                extra_summaries = [
-                    ref.summary or ref.ref_id
-                    for ref in evidence
-                    if (ref.summary or ref.ref_id)
-                ]
-                if extra_summaries:
-                    merged = list(card.get("evidence_summary") or [])
-                    for summary in extra_summaries[:3]:
-                        if summary not in merged:
-                            merged.append(summary)
-                    card["evidence_summary"] = merged[:4]
-                remaining -= 1
+        memory_id = str(card.get("id") or "").strip()
+        should_expand = memory_id in expanded_ids
+        if not should_expand and remaining > 0 and role in prioritized_roles:
+            should_expand = True
+            expanded_ids.add(memory_id)
+            remaining -= 1
+        if should_expand and memory_id:
+            memory_item = session.metadata_store.get_memory_item(memory_id)
+            payload = getattr(memory_item, "payload", None)
+            rationale = getattr(payload, "rationale", None)
+            if isinstance(rationale, str) and rationale.strip():
+                card["rationale_preview"] = compact_text(rationale, limit=220)
+            elif role == "canonical_repair_lesson":
+                rationale_preview = str(
+                    getattr(memory_item, "metadata", {}).get("rationale_preview")
+                    if memory_item is not None
+                    else ""
+                ).strip()
+                if rationale_preview:
+                    card["rationale_preview"] = rationale_preview
+            evidence = session.kernel.expand(memory_id)
+            extra_summaries = [
+                ref.summary or ref.ref_id
+                for ref in evidence
+                if (ref.summary or ref.ref_id)
+            ]
+            if extra_summaries:
+                merged = list(card.get("evidence_summary") or [])
+                for summary in extra_summaries[:3]:
+                    if summary not in merged:
+                        merged.append(summary)
+                card["evidence_summary"] = merged[:4]
         expanded_cards.append(card)
     return expanded_cards
 
@@ -3702,6 +4303,8 @@ def _render_memory_card(*, index: int, card: Mapping[str, Any]) -> list[str]:
         lines.append(f"support_count: {canonical_support_count}")
     facets = [
         ("repair_kind", str(card.get("repair_kind") or "").strip()),
+        ("failure_kind", str(card.get("failure_kind") or "").strip()),
+        ("bug_class", str(card.get("bug_class") or "").strip()),
         ("interface_mode", str(card.get("interface_mode") or "").strip()),
         ("platform", str(card.get("platform") or "").strip()),
         ("difficulty", str(card.get("difficulty") or "").strip()),
@@ -3761,22 +4364,121 @@ def _public_tests_claim(problem: LiveCodeBenchProblem) -> str | None:
     return "\n".join(lines) if lines else None
 
 
+def _missing_symbol_from_feedback(feedback_text: str) -> str | None:
+    patterns = (
+        r"name ['\"]?([A-Za-z_]\w*)['\"]? is not defined",
+        r"undefined symbol ['\"]?([A-Za-z_]\w*)['\"]?",
+        r"missing callable ['\"]?([A-Za-z_]\w*)['\"]?",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, feedback_text, re.IGNORECASE)
+        if match is not None:
+            return match.group(1)
+    return None
+
+
+def _bug_class_from_feedback(feedback_text: str, exception_type: str | None) -> str:
+    normalized_exception = (exception_type or "").lower()
+    if "indexerror" in normalized_exception or "out of range" in feedback_text:
+        return "indexing/bounds"
+    if "keyerror" in normalized_exception:
+        return "indexing/bounds"
+    if "exception" in normalized_exception or normalized_exception.endswith("error"):
+        return "exception handling"
+    if any(token in feedback_text for token in ("mutate", "modified input", "in-place")):
+        return "state mutation"
+    if any(token in feedback_text for token in ("parse", "format", "newline", "whitespace")):
+        return "parsing/formatting"
+    if any(token in feedback_text for token in ("branch", "condition", "case", "else", "loop")):
+        return "control flow"
+    if any(token in feedback_text for token in ("expected=", "actual=", "mismatch", "off by", "sum", "difference")):
+        return "arithmetic/logic"
+    return "unknown"
+
+
+def _preserve_constraints(problem: LiveCodeBenchProblem) -> tuple[str, ...]:
+    constraints: list[str] = []
+    required_func_name = _required_function_name(problem)
+    if required_func_name:
+        constraints.append(f"Keep a top-level callable named `{required_func_name}`.")
+    interface_mode = _interface_mode(problem)
+    if interface_mode:
+        constraints.append(f"Preserve interface mode `{interface_mode}`.")
+    public_test_modes = _public_test_modes(problem)
+    if public_test_modes:
+        constraints.append(
+            "Preserve public evaluation mode(s): " + ", ".join(public_test_modes) + "."
+        )
+    constraints.append("Preserve behavior not contradicted by the visible failure.")
+    return tuple(dict.fromkeys(constraints))
+
+
 def _parse_failure_signature(
     problem: LiveCodeBenchProblem,
     visible_feedback: Sequence[str],
+    *,
+    response_text: str | None = None,
+    extracted_code: str | None = None,
+    evaluation: Mapping[str, Any] | None = None,
 ) -> FailureSignature:
     raw_feedback = tuple(str(item).strip() for item in visible_feedback if str(item).strip())
+    joined = " | ".join(raw_feedback)
+    joined_lower = joined.lower()
+    resolved_code = (extracted_code or extract_code(response_text or "") or response_text or "").strip()
+    required_func_name = _required_function_name(problem)
+    missing_symbol = _missing_symbol_from_feedback(joined)
+    syntax_error = bool(
+        (isinstance(evaluation, Mapping) and evaluation.get("syntax_error"))
+        or "syntaxerror" in joined_lower
+        or "indentationerror" in joined_lower
+    )
+    timeout_or_runtime_abort = any(
+        token in joined_lower for token in ("timed out", "timeout", "time limit", "killed", "abort")
+    )
+    output_format_issue = any(
+        token in joined_lower
+        for token in (
+            "wrong answer format",
+            "output format",
+            "format mismatch",
+            "stdout",
+            "newline",
+            "whitespace",
+        )
+    )
+    empty_or_missing_output = (not resolved_code and not raw_feedback) or any(
+        token in joined_lower
+        for token in ("empty response", "no code", "no output", "empty output", "missing output")
+    )
+    wrong_callable_shape = bool(
+        required_func_name
+        and resolved_code
+        and required_func_name not in resolved_code
+        and any(token in resolved_code.lower() for token in ("class solution", "def solve", "def main"))
+    )
     if not raw_feedback:
         return FailureSignature(
             summary="",
+            failure_kind=(
+                "empty_response_or_no_code"
+                if empty_or_missing_output
+                else "generic_feedback_guided_repair"
+            ),
+            bug_class="function contract violation" if wrong_callable_shape else "unknown",
             exception_type=None,
             expected_value=None,
             actual_value=None,
-            function_name=_required_function_name(problem),
+            function_name=required_func_name,
+            missing_symbol=missing_symbol,
+            wrong_callable_shape=wrong_callable_shape,
+            output_format_issue=output_format_issue,
+            empty_or_missing_output=empty_or_missing_output,
+            syntax_error=syntax_error,
+            timeout_or_runtime_abort=timeout_or_runtime_abort,
+            repair_target=required_func_name or missing_symbol,
             keywords=(),
             raw_feedback=(),
         )
-    joined = " | ".join(raw_feedback)
     exception_match = re.search(
         r"\b([A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt))\b",
         joined,
@@ -3794,8 +4496,69 @@ def _parse_failure_signature(
     if exception_match is not None:
         summary_parts.append(exception_match.group(1))
     summary = compact_text(" | ".join(part for part in summary_parts if part), limit=220)
+    missing_top_level_function = bool(
+        required_func_name
+        and (
+            missing_symbol == required_func_name
+            or any(
+                token in joined_lower
+                for token in (
+                    f"name '{required_func_name.lower()}' is not defined",
+                    f"{required_func_name.lower()} is not defined",
+                    f"missing {required_func_name.lower()}",
+                    f"undefined symbol {required_func_name.lower()}",
+                )
+            )
+        )
+    )
+    wrong_callable_shape = wrong_callable_shape or bool(
+        required_func_name
+        and not missing_top_level_function
+        and any(
+            token in joined_lower
+            for token in ("class solution", "top-level callable", "module scope", "wrong signature")
+        )
+    )
+    if syntax_error:
+        failure_kind = "syntax_error"
+        bug_class = "parsing/formatting"
+    elif empty_or_missing_output:
+        failure_kind = "empty_response_or_no_code"
+        bug_class = "unknown"
+    elif missing_top_level_function:
+        failure_kind = "missing_top_level_function"
+        bug_class = "function contract violation"
+    elif wrong_callable_shape:
+        failure_kind = "wrong_interface_shape"
+        bug_class = "function contract violation"
+    elif output_format_issue:
+        failure_kind = "output_format_mismatch"
+        bug_class = "parsing/formatting"
+    elif exception_match is not None or timeout_or_runtime_abort:
+        failure_kind = "runtime_exception"
+        bug_class = _bug_class_from_feedback(
+            joined_lower,
+            exception_match.group(1) if exception_match is not None else None,
+        )
+    elif expected_match is not None or actual_match is not None:
+        failure_kind = "public_test_logic_mismatch"
+        bug_class = _bug_class_from_feedback(joined_lower, None)
+    else:
+        failure_kind = "generic_feedback_guided_repair"
+        bug_class = _bug_class_from_feedback(joined_lower, None)
+    repair_target = required_func_name or missing_symbol
+    if failure_kind == "output_format_mismatch":
+        repair_target = "the output format"
+    elif failure_kind == "public_test_logic_mismatch":
+        repair_target = repair_target or "the failing logic"
+    elif failure_kind == "runtime_exception":
+        repair_target = repair_target or (
+            exception_match.group(1) if exception_match is not None else "the runtime failure"
+        )
     return FailureSignature(
         summary=summary,
+        failure_kind=failure_kind,
+        bug_class=bug_class,
         exception_type=exception_match.group(1) if exception_match is not None else None,
         expected_value=(
             compact_text(expected_match.group(1).strip().strip("'\""), limit=40)
@@ -3807,7 +4570,14 @@ def _parse_failure_signature(
             if actual_match is not None
             else None
         ),
-        function_name=_required_function_name(problem),
+        function_name=required_func_name,
+        missing_symbol=missing_symbol,
+        wrong_callable_shape=wrong_callable_shape,
+        output_format_issue=output_format_issue,
+        empty_or_missing_output=empty_or_missing_output,
+        syntax_error=syntax_error,
+        timeout_or_runtime_abort=timeout_or_runtime_abort,
+        repair_target=repair_target,
         keywords=keywords,
         raw_feedback=raw_feedback,
     )
@@ -3838,8 +4608,11 @@ def _card_dedupe_key(card: Mapping[str, Any]) -> tuple[str, ...]:
             role,
             function_name,
             str(card.get("repair_kind") or "").strip().lower(),
+            str(card.get("failure_kind") or "").strip().lower(),
             str(card.get("interface_mode") or "").strip().lower(),
         )
+    if role == "repair_handoff":
+        return (role, str(card.get("id") or "").strip().lower(), problem_id)
     if role == "successful_solution":
         return (role, problem_id, function_name, _normalized_card_text(card))
     return (role, _normalized_card_text(card))
@@ -3858,12 +4631,87 @@ def _normalized_card_text(card: Mapping[str, Any], *, limit: int = 16) -> str:
     return " ".join(tokens)
 
 
-def _prompt_role_limits(attempt_index: int) -> tuple[dict[str, int], int]:
-    if attempt_index <= 1:
-        return ATTEMPT_ONE_PROMPT_ROLE_LIMITS, ATTEMPT_ONE_PROMPT_CARD_LIMIT
-    if attempt_index >= 3:
-        return CHEAP_REPAIR_PROMPT_ROLE_LIMITS, CHEAP_REPAIR_PROMPT_CARD_LIMIT
-    return REPAIR_PROMPT_ROLE_LIMITS, REPAIR_PROMPT_CARD_LIMIT
+def _card_metadata_match(card: Mapping[str, Any], key: str, expected: str | None) -> bool:
+    if not expected:
+        return False
+    return str(card.get(key) or "").strip().lower() == expected.strip().lower()
+
+
+def _candidate_metadata_match(candidate: Any, key: str, expected: str | None) -> bool:
+    memory = getattr(candidate, "memory", None)
+    metadata = getattr(memory, "metadata", None)
+    if not isinstance(metadata, Mapping):
+        return False
+    if not expected:
+        return False
+    return str(metadata.get(key) or "").strip().lower() == expected.strip().lower()
+
+
+def _repair_relevance_score(
+    candidate: Any,
+    *,
+    attempt_index: int,
+    failure_signature: FailureSignature | None,
+    store_kind: Literal["local", "persistent"] | None,
+    interface_mode: str | None,
+) -> tuple[Any, ...]:
+    role = _memory_role(candidate.memory)
+    memory = getattr(candidate, "memory", None)
+    metadata = getattr(memory, "metadata", {}) if memory is not None else {}
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+    if attempt_index <= 1 or failure_signature is None:
+        return (
+            PROMPT_CARD_ROLE_PRIORITY.get(role, 10),
+            -float(candidate.score),
+            getattr(candidate.memory, "title", "") or "",
+        )
+    local_store_priority = {
+        "repair_handoff": 0,
+        "repair_constraint": 1,
+        "feedback_item": 2,
+        "feedback": 3,
+        "public_tests": 4,
+        "function_contract": 5,
+        "repair_lesson": 6,
+        "canonical_repair_lesson": 7,
+        "successful_solution": 8,
+    }
+    persistent_store_priority = {
+        "canonical_repair_lesson": 0,
+        "repair_lesson": 1,
+        "function_contract": 2,
+        "public_tests": 3,
+        "repair_handoff": 4,
+        "repair_constraint": 5,
+        "feedback_item": 6,
+        "feedback": 7,
+        "successful_solution": 8,
+    }
+    role_priority = (
+        local_store_priority.get(role, PROMPT_CARD_ROLE_PRIORITY.get(role, 10))
+        if store_kind == "local"
+        else (
+            persistent_store_priority.get(role, PROMPT_CARD_ROLE_PRIORITY.get(role, 10))
+            if store_kind == "persistent"
+            else PROMPT_CARD_ROLE_PRIORITY.get(role, 10)
+        )
+    )
+    interface_match = _candidate_metadata_match(candidate, "interface_mode", interface_mode)
+    failure_kind_match = _candidate_metadata_match(candidate, "failure_kind", failure_signature.failure_kind)
+    bug_class_match = _candidate_metadata_match(candidate, "bug_class", failure_signature.bug_class)
+    repair_target_match = _candidate_metadata_match(candidate, "repair_target", failure_signature.repair_target)
+    function_match = _candidate_metadata_match(candidate, "function_name", failure_signature.function_name)
+    return (
+        role_priority,
+        0 if failure_kind_match else 1,
+        0 if bug_class_match else 1,
+        0 if repair_target_match else 1,
+        0 if function_match else 1,
+        0 if interface_match else 1,
+        -float(candidate.score),
+        getattr(candidate.memory, "title", "") or "",
+    )
 
 
 def _budget_memory_cards(
@@ -3872,34 +4720,72 @@ def _budget_memory_cards(
     attempt_index: int,
     limit: int,
 ) -> list[dict[str, Any]]:
-    role_limits, default_limit = _prompt_role_limits(attempt_index)
-    resolved_limit = min(limit, default_limit)
+    resolved_limit = min(
+        limit,
+        ATTEMPT_ONE_PROMPT_CARD_LIMIT
+        if attempt_index <= 1
+        else (CHEAP_REPAIR_PROMPT_CARD_LIMIT if attempt_index >= 3 else REPAIR_PROMPT_CARD_LIMIT),
+    )
     has_repair_lesson = any(
         _memory_card_role(card) in {"canonical_repair_lesson", "repair_lesson"} for card in cards
     )
     selected: list[dict[str, Any]] = []
     seen_dedupe_keys: set[tuple[str, ...]] = set()
-    role_counts: dict[str, int] = {}
 
-    for raw_card in cards:
+    def try_add(raw_card: Mapping[str, Any]) -> bool:
         role = _memory_card_role(raw_card)
         if role == "successful_solution" and has_repair_lesson:
-            continue
-        if role == "repair_lesson" and any(
-            _memory_card_role(existing) == "canonical_repair_lesson" for existing in selected
-        ):
-            continue
-        role_limit = role_limits.get(role)
-        if role_limit is not None and role_counts.get(role, 0) >= role_limit:
-            continue
+            return False
         dedupe_key = _card_dedupe_key(raw_card)
         if dedupe_key in seen_dedupe_keys:
-            continue
-        card = dict(raw_card)
-        selected.append(card)
+            return False
+        selected.append(dict(raw_card))
         seen_dedupe_keys.add(dedupe_key)
-        role_counts[role] = role_counts.get(role, 0) + 1
+        return True
+
+    if attempt_index <= 1:
+        for raw_card in cards:
+            if _memory_card_role(raw_card) not in {"function_contract", "public_tests"}:
+                continue
+            if try_add(raw_card) and len(selected) >= resolved_limit:
+                return selected
+        return selected
+
+    reserved_groups = (
+        (
+            frozenset({"function_contract", "public_tests"}),
+            1,
+        ),
+        (
+            frozenset({"canonical_repair_lesson", "repair_lesson"}),
+            1,
+        ),
+        (
+            frozenset({"repair_handoff", "repair_constraint", "feedback_item", "feedback"}),
+            1,
+        ),
+    )
+    if attempt_index >= 3:
+        reserved_groups = (
+            (frozenset({"repair_handoff", "repair_constraint", "feedback_item", "feedback"}), 1),
+            (frozenset({"canonical_repair_lesson", "repair_lesson"}), 1),
+            (frozenset({"function_contract", "public_tests"}), 1),
+        )
+
+    for roles, reserved_count in reserved_groups:
+        added = 0
+        for raw_card in cards:
+            if _memory_card_role(raw_card) not in roles:
+                continue
+            if try_add(raw_card):
+                added += 1
+            if added >= reserved_count or len(selected) >= resolved_limit:
+                break
         if len(selected) >= resolved_limit:
+            return selected
+
+    for raw_card in cards:
+        if try_add(raw_card) and len(selected) >= resolved_limit:
             break
     return selected
 
@@ -3909,6 +4795,23 @@ def _memory_cards_for_roles(
     roles: frozenset[str],
 ) -> list[Mapping[str, Any]]:
     return [card for card in memory_cards if _memory_card_role(card) in roles]
+
+
+def _prompt_memory_stats(memory_cards: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    roles = [_memory_card_role(card) for card in memory_cards]
+    top_card = memory_cards[0] if memory_cards else {}
+    repair_roles = {"canonical_repair_lesson", "repair_lesson"}
+    return {
+        "repair_memory_card_count": sum(1 for role in roles if role in repair_roles),
+        "repair_lesson_card_count": sum(1 for role in roles if role == "repair_lesson"),
+        "canonical_repair_card_count": sum(1 for role in roles if role == "canonical_repair_lesson"),
+        "contract_card_in_prompt": any(role == "function_contract" for role in roles),
+        "public_test_card_in_prompt": any(role == "public_tests" for role in roles),
+        "repair_handoff_card_in_prompt": any(role == "repair_handoff" for role in roles),
+        "top_prompt_memory_role": _memory_card_role(top_card) or None,
+        "top_prompt_memory_failure_kind": str(top_card.get("failure_kind") or "").strip() or None,
+        "top_prompt_memory_bug_class": str(top_card.get("bug_class") or "").strip() or None,
+    }
 
 
 def _append_memory_section(
@@ -3944,6 +4847,26 @@ def _append_contract_section(
     )
 
 
+def _append_minimal_contract_snapshot(
+    sections: list[str],
+    *,
+    problem: LiveCodeBenchProblem,
+    memory_cards: Sequence[Mapping[str, Any]],
+) -> bool:
+    contract_cards = _memory_cards_for_roles(memory_cards, frozenset({"function_contract"}))
+    contract_claim = _function_contract_claim(problem)
+    if not contract_cards and not contract_claim:
+        return False
+    sections.append("")
+    sections.append("Minimal Contract Snapshot:")
+    if contract_claim:
+        for line in contract_claim.splitlines():
+            sections.append(f"- {line}")
+    for index, card in enumerate(contract_cards[:1], start=1):
+        sections.extend(_render_memory_card(index=index, card=card))
+    return True
+
+
 def _append_public_test_section(
     sections: list[str],
     *,
@@ -3961,6 +4884,29 @@ def _append_public_test_section(
         sections.extend(_render_memory_card(index=index, card=card))
 
 
+def _append_public_test_snapshot(
+    sections: list[str],
+    *,
+    problem: LiveCodeBenchProblem,
+    memory_cards: Sequence[Mapping[str, Any]],
+) -> bool:
+    public_test_cards = _memory_cards_for_roles(memory_cards, frozenset({"public_tests"}))
+    public_tests_claim = _public_tests_claim(problem)
+    visible_public_feedback = [str(item).strip() for item in problem.public_feedback if str(item).strip()]
+    if not public_test_cards and not public_tests_claim and not visible_public_feedback:
+        return False
+    sections.append("")
+    sections.append("Public-Test Snapshot:")
+    for feedback in visible_public_feedback[:2]:
+        sections.append(f"- {feedback}")
+    if public_tests_claim:
+        for line in public_tests_claim.splitlines()[:2]:
+            sections.append(f"- {line}")
+    for index, card in enumerate(public_test_cards[:1], start=1):
+        sections.extend(_render_memory_card(index=index, card=card))
+    return True
+
+
 def _append_visible_failure_section(
     sections: list[str],
     *,
@@ -3975,6 +4921,44 @@ def _append_visible_failure_section(
         sections.append(f"summary: {parsed_failure.summary}")
     for feedback in visible_feedback:
         sections.append(f"- {feedback}")
+
+
+def _append_repair_handoff_section(
+    sections: list[str],
+    *,
+    repair_context: RepairHandoff | None,
+    memory_cards: Sequence[Mapping[str, Any]],
+    suggested_memory_query: str | None,
+) -> None:
+    handoff_cards = _memory_cards_for_roles(
+        memory_cards,
+        frozenset({"repair_handoff", "repair_constraint"}),
+    )
+    if repair_context is None and not handoff_cards and not suggested_memory_query:
+        return
+    sections.append("")
+    sections.append("Repair Handoff:")
+    if repair_context is not None:
+        sections.append(f"Previous attempt: {repair_context.attempt_index}")
+        if repair_context.failure_kind:
+            sections.append(f"failure_kind: {repair_context.failure_kind}")
+        if repair_context.bug_class:
+            sections.append(f"bug_class: {repair_context.bug_class}")
+        if repair_context.repair_objective:
+            sections.append(f"repair_objective: {repair_context.repair_objective}")
+        if repair_context.public_signal_summary:
+            sections.append(f"public_signal_summary: {repair_context.public_signal_summary}")
+        if repair_context.preserve_constraints:
+            sections.append("Preserve Constraints:")
+            for constraint in repair_context.preserve_constraints:
+                sections.append(f"- {constraint}")
+    for index, card in enumerate(handoff_cards[:2], start=1):
+        sections.extend(_render_memory_card(index=index, card=card))
+    resolved_query = suggested_memory_query
+    if repair_context is not None:
+        resolved_query = resolved_query or repair_context.persistent_query or repair_context.local_query
+    if resolved_query:
+        sections.append(f"Suggested memory query: {resolved_query}")
 
 
 def _append_repair_lesson_section(
@@ -4004,6 +4988,8 @@ def _append_supporting_memory_section(
         for card in memory_cards
         if _memory_card_role(card)
         not in {
+            "repair_handoff",
+            "repair_constraint",
             "function_contract",
             "public_tests",
             "feedback",
@@ -4027,6 +5013,9 @@ def _select_prompt_candidates(
     attempt_index: int,
     allowed_roles: frozenset[str] | None = None,
     limit: int = 5,
+    failure_signature: FailureSignature | None = None,
+    store_kind: Literal["local", "persistent"] | None = None,
+    interface_mode: str | None = None,
 ) -> list[Any]:
     if not candidates:
         return []
@@ -4038,11 +5027,14 @@ def _select_prompt_candidates(
             return []
     role_ranked = sorted(
         candidates,
-        key=lambda candidate: (
-            PROMPT_CARD_ROLE_PRIORITY.get(_memory_role(candidate.memory), 10),
-            -float(candidate.score),
-            candidate.memory.title or "",
-        ),
+        key=lambda candidate:
+            _repair_relevance_score(
+                candidate,
+                attempt_index=attempt_index,
+                failure_signature=failure_signature,
+                store_kind=store_kind,
+                interface_mode=interface_mode,
+            ),
     )
     non_summary = [
         candidate

@@ -471,10 +471,27 @@ def test_export_dspy_pilot_results_surfaces_memory_attribution_and_pass_curves(
                 "attempt2_public_test_pass_at_k": 0.6,
                 "attempt2_public_test_pass_curve": {"1": 0.4, "2": 0.6},
                 "attempt2_delta_over_attempt1": 0.15,
+                "attempt3_public_test_pass_at_1": 0.45,
+                "attempt3_public_test_pass_at_k": 0.65,
+                "attempt3_public_test_pass_curve": {"1": 0.45, "2": 0.65},
+                "attempt3_delta_over_attempt2": 0.05,
                 "candidate_selection_mode": "best_of_k_public_tests",
                 "candidates_per_attempt": 2,
                 "retrieval_usage_rate": 1.0,
                 "canonical_memory_hit_rate": 0.5,
+                "repair_handoff_hit_rate": 0.75,
+                "repair_handoff_success_rate": 0.5,
+                "repair_handoff_card_in_prompt_rate": 0.5,
+                "contract_card_in_prompt_rate": 0.75,
+                "public_test_card_in_prompt_rate": 0.75,
+                "attempt2_success_with_canonical_hit_rate": 0.7,
+                "attempt2_success_without_canonical_hit_rate": 0.3,
+                "attempt3_success_with_canonical_hit_rate": 0.8,
+                "attempt3_success_without_canonical_hit_rate": 0.4,
+                "attempt2_success_when_repair_card_in_prompt": 0.7,
+                "attempt2_success_when_no_repair_card_in_prompt": 0.2,
+                "attempt3_success_when_repair_card_in_prompt": 0.8,
+                "attempt3_success_when_no_repair_card_in_prompt": 0.25,
                 "agent_memory_write_rate": 0.25,
                 "mean_agent_memory_write_count": 0.25,
                 "consolidated_memory_card_rate": 0.25,
@@ -494,13 +511,19 @@ def test_export_dspy_pilot_results_surfaces_memory_attribution_and_pass_curves(
 
     assert rows[0]["attempt2_pass_at_k"] == 0.6
     assert rows[0]["attempt1_pass_curve"] == {"1": 0.25, "2": 0.5}
+    assert rows[0]["attempt3_pass_curve"] == {"1": 0.45, "2": 0.65}
     assert rows[0]["canonical_memory_hit_rate"] == 0.5
+    assert rows[0]["repair_handoff_card_in_prompt_rate"] == 0.5
     assert "Pass Curve (A1)" in markdown
     assert "Pass Curve (A2)" in markdown
+    assert "Pass Curve (A3)" in markdown
     assert "Canonical Hit Rate" in markdown
+    assert "Repair Handoff Hit Rate" in markdown
+    assert "Handoff In Prompt Rate" in markdown
     assert "Agent Write Rate" in markdown
     assert "1:0.250, 2:0.500" in markdown
     assert "1:0.400, 2:0.600" in markdown
+    assert "1:0.450, 2:0.650" in markdown
 
 
 def test_livecodebench_checkout_resolves_custom_openrouter_model(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1106,6 +1129,12 @@ def test_livecodebench_dspy_vtm_repair_prompt_requires_memory_workflow() -> None
     assert "search_verified_memory" in prompt
     assert "expand_memory_evidence" in prompt
     assert "Do not skip memory lookup on repair attempts" in prompt
+    assert "Repair Plan:" in prompt
+    assert "Line 1: `failure kind: ...`" in prompt
+    assert "Line 2: `likely cause: ...`" in prompt
+    assert "Line 3: `smallest fix: ...` and preserve constraints." in prompt
+    assert "Do not include the repair plan in the final `response`" in prompt
+    assert "Repair Handoff:" in prompt
     assert "Suggested memory query:" in prompt
 
 
@@ -1129,9 +1158,11 @@ def test_livecodebench_dspy_self_repair_prompt_includes_previous_code_and_feedba
     )
 
     assert "Previous Candidate:" in prompt
+    assert "Repair Handoff:" in prompt
     assert "return a - b" in prompt
     assert "Functional public test mismatch: expected=5 actual=4" in prompt
     assert "This is repair attempt 2. Fix the previous attempt." in prompt
+    assert "Preserve any behavior not contradicted by the visible failure." in prompt
 
 
 def test_livecodebench_dspy_prompt_groups_memory_by_role() -> None:
@@ -1181,6 +1212,7 @@ def test_livecodebench_dspy_prompt_groups_memory_by_role() -> None:
     assert "Public-Test Signals:" in prompt
     assert "Visible Failure:" in prompt
     assert "Verified Repair Lessons:" in prompt
+    assert "Repair Handoff:" in prompt
     assert "Verified Memory Cards:" not in prompt
 
 
@@ -1189,11 +1221,19 @@ def test_livecodebench_dspy_compact_repair_prompt_focuses_on_failure_and_one_les
         problem_id="lcb-compact-repair",
         scenario="self_repair",
         prompt="Implement add(a, b).",
+        public_feedback=("Public sample: input='[2, 3]' output='5'",),
+        evaluator_payload={
+            "public_tests": [{"input": "[2, 3]", "output": "5", "testtype": "functional"}],
+            "problem_metadata": {"func_name": "add"},
+        },
     )
 
     prompt = build_attempt_prompt(
         problem,
         attempt_index=3,
+        agent_mode="dspy",
+        require_memory_tooling=True,
+        suggested_memory_query="self_repair | top_level_function | function add | expected 5 actual 4",
         compact_repair=True,
         memory_cards=(
             {
@@ -1220,12 +1260,17 @@ def test_livecodebench_dspy_compact_repair_prompt_focuses_on_failure_and_one_les
     )
 
     assert "Problem Statement:" not in prompt
+    assert "Repair Handoff:" in prompt
+    assert "Repair Plan:" in prompt
+    assert "Minimal Contract Snapshot:" in prompt
+    assert "Public-Test Snapshot:" in prompt
     assert "Previous Candidate:" in prompt
     assert "Visible Failure:" in prompt
     assert "Verified Repair Lessons:" in prompt
     assert "Lesson one" in prompt
     assert "Lesson two" not in prompt
     assert "final short repair attempt 3" in prompt
+    assert "Do not rewrite from scratch unless the prior candidate is empty" in prompt
 
 
 def test_livecodebench_dspy_extract_code_prefers_final_fenced_block() -> None:
@@ -1243,6 +1288,45 @@ def solve():
 """.strip()
 
     assert extract_code(response) == 'def solve():\n    print("ok")'
+
+
+@pytest.mark.parametrize(
+    ("feedback", "response_text", "extracted_code", "evaluation", "expected_kind"),
+    [
+        (("Functional public test mismatch: expected=5 actual=4",), "```python\ndef add(a, b):\n    return a - b\n```", "def add(a, b):\n    return a - b\n", {}, "public_test_logic_mismatch"),
+        (("NameError: name 'add' is not defined",), "```python\ndef solve():\n    return 0\n```", "def solve():\n    return 0\n", {}, "missing_top_level_function"),
+        (("Output format mismatch: expected newline-terminated stdout",), "```python\nprint(5)\n```", "print(5)\n", {}, "output_format_mismatch"),
+        ((), "", None, {"syntax_error": True}, "empty_response_or_no_code"),
+        (("SyntaxError: invalid syntax",), "```python\ndef add(a, b)\n    return a + b\n```", "def add(a, b)\n    return a + b\n", {"syntax_error": True}, "syntax_error"),
+        (("TypeError: unsupported operand type(s)",), "```python\ndef add(a, b):\n    return a + 'x'\n```", "def add(a, b):\n    return a + 'x'\n", {}, "runtime_exception"),
+    ],
+)
+def test_livecodebench_dspy_failure_signature_normalizes_feedback(
+    feedback: tuple[str, ...],
+    response_text: str,
+    extracted_code: str | None,
+    evaluation: dict[str, object],
+    expected_kind: str,
+) -> None:
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-failure-signature",
+        scenario="self_repair",
+        prompt="Implement add(a, b).",
+        evaluator_payload={
+            "public_tests": [{"input": "[2, 3]", "output": "5", "testtype": "functional"}],
+            "problem_metadata": {"func_name": "add"},
+        },
+    )
+
+    signature = livecodebench_dspy_pilot._parse_failure_signature(
+        problem,
+        feedback,
+        response_text=response_text,
+        extracted_code=extracted_code,
+        evaluation=evaluation,
+    )
+
+    assert signature.failure_kind == expected_kind
 
 
 def test_livecodebench_dspy_prompt_includes_function_contract_for_functional_problems() -> None:
@@ -1285,6 +1369,19 @@ def test_livecodebench_dspy_retrieval_prioritizes_repair_feedback_cards(
     )
     try:
         seed_problem_memory(session, problem)
+        repair_handoff = livecodebench_dspy_pilot._build_repair_handoff(
+            problem,
+            attempt_index=1,
+            response_text="```python\nprint(3)\n```",
+            extracted_code="print(3)\n",
+            visible_feedback=("Public stdin test mismatch: expected='4' actual='3'",),
+            failure_signature=livecodebench_dspy_pilot._parse_failure_signature(
+                problem,
+                ("Public stdin test mismatch: expected='4' actual='3'",),
+                response_text="```python\nprint(3)\n```",
+                extracted_code="print(3)\n",
+            ),
+        )
         record_attempt_memory(
             session,
             problem=problem,
@@ -1296,6 +1393,7 @@ def test_livecodebench_dspy_retrieval_prioritizes_repair_feedback_cards(
                     "Public stdin test mismatch: expected='4' actual='3'",
                 ]
             },
+            repair_context=repair_handoff,
         )
 
         payload = retrieve_verified_memory(
@@ -1309,7 +1407,7 @@ def test_livecodebench_dspy_retrieval_prioritizes_repair_feedback_cards(
     roles = [card.get("role") for card in payload["cards"]]
 
     assert payload["used"] is True
-    assert roles[0] == "feedback_item"
+    assert roles[0] == "repair_handoff"
     assert "problem_summary" not in roles
 
 
@@ -1363,7 +1461,10 @@ def test_livecodebench_dspy_merge_memory_cards_budgets_and_dedupes_repair_cards(
         attempt_index=2,
     )
 
-    assert [card["id"] for card in cards] == ["feedback-1", "repair-1"]
+    assert cards[0]["id"] == "repair-1"
+    assert any(card["id"] == "feedback-1" for card in cards)
+    assert all(card["id"] != "repair-2" for card in cards)
+    assert all(card["role"] != "successful_solution" for card in cards)
 
 
 def test_livecodebench_dspy_merge_memory_cards_attempt_one_stays_compact() -> None:
@@ -1402,6 +1503,66 @@ def test_livecodebench_dspy_merge_memory_cards_attempt_one_stays_compact() -> No
     )
 
     assert [card["id"] for card in cards] == ["tests-1", "contract-1"]
+
+
+def test_livecodebench_dspy_select_prompt_candidates_prefers_exact_repair_metadata_match() -> None:
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-rerank",
+        scenario="self_repair",
+        prompt="Implement add(a, b).",
+        evaluator_payload={
+            "public_tests": [{"input": "[2, 3]", "output": "5", "testtype": "functional"}],
+            "problem_metadata": {"func_name": "add"},
+        },
+    )
+    failure_signature = livecodebench_dspy_pilot._parse_failure_signature(
+        problem,
+        ("NameError: name 'List' is not defined",),
+        response_text="```python\ndef add(a, b):\n    return a + b\n```",
+        extracted_code="def add(a, b):\n    return a + b\n",
+    )
+    exact_match = SimpleNamespace(
+        score=0.5,
+        memory=SimpleNamespace(
+            memory_id="exact",
+            title="Exact repair lesson",
+            metadata={
+                "memory_role": "repair_lesson",
+                "failure_kind": "runtime_exception",
+                "bug_class": "exception handling",
+                "function_name": "add",
+                "interface_mode": "top_level_function",
+                "repair_target": "add",
+            },
+        ),
+    )
+    weaker_match = SimpleNamespace(
+        score=0.99,
+        memory=SimpleNamespace(
+            memory_id="weaker",
+            title="Weaker repair lesson",
+            metadata={
+                "memory_role": "repair_lesson",
+                "failure_kind": "public_test_logic_mismatch",
+                "bug_class": "arithmetic/logic",
+                "function_name": "add",
+                "interface_mode": "top_level_function",
+                "repair_target": "add",
+            },
+        ),
+    )
+
+    selected = livecodebench_dspy_pilot._select_prompt_candidates(
+        [weaker_match, exact_match],
+        attempt_index=2,
+        allowed_roles=frozenset({"repair_lesson"}),
+        limit=2,
+        failure_signature=failure_signature,
+        store_kind="persistent",
+        interface_mode=livecodebench_dspy_pilot._interface_mode(problem),
+    )
+
+    assert [candidate.memory.memory_id for candidate in selected][:1] == ["exact"]
 
 
 def test_livecodebench_dspy_attempt_one_retrieval_uses_contract_cards_only(
@@ -1566,6 +1727,8 @@ def test_livecodebench_dspy_persistent_repair_lesson_is_retrievable_across_sessi
     assert payload["cards"][0]["title"] == "Repair lesson: runtime_nameerror on top_level_function"
     assert "resolved visible feedback" in str(payload["cards"][0]["summary"]).lower()
     assert payload["cards"][0]["repair_kind"] == "runtime_nameerror"
+    assert payload["cards"][0]["failure_kind"] == "runtime_exception"
+    assert payload["cards"][0]["bug_class"] == "exception handling"
     assert payload["cards"][0]["interface_mode"] == "top_level_function"
     assert payload["cards"][0]["platform"] == "leetcode"
     assert payload["cards"][0]["difficulty"] == "easy"
@@ -1809,6 +1972,8 @@ def test_livecodebench_dspy_retrieval_query_includes_failure_signature_fields() 
     assert "function add" in query
     assert "NameError" in query
     assert "expected 5 actual 4" in query
+    assert "failure_kind runtime_exception" in query
+    assert "bug_class exception handling" in query
 
 
 def test_livecodebench_dspy_persistent_retrieval_query_avoids_problem_specific_tokens() -> None:
@@ -1841,6 +2006,8 @@ def test_livecodebench_dspy_persistent_retrieval_query_avoids_problem_specific_t
     assert "platform leetcode" in query
     assert "difficulty easy" in query
     assert "repair_kind runtime_nameerror" in query
+    assert "failure_kind runtime_exception" in query
+    assert "bug_class exception handling" in query
     assert "integers" in query
 
 
@@ -1930,6 +2097,8 @@ def test_livecodebench_dspy_self_repair_uses_short_third_attempt(
     assert row["cheap_repair_used"] is True
     assert len(prompts) == 3
     assert "Problem Statement:" not in prompts[-1]
+    assert "Minimal Contract Snapshot:" in prompts[-1]
+    assert "Public-Test Snapshot:" in prompts[-1]
     assert "final short repair attempt 3" in prompts[-1]
 
 
@@ -2190,6 +2359,13 @@ def test_livecodebench_dspy_memory_ablation_routes_correct_memory_sources(
     assert retrieval_kinds == expected_retrieval_kinds
     assert all(kind == expected_agent_session_kind for kind in agent_session_kinds)
     assert len(prompts) == 2
+    assert row["attempt2_retrieval_required_satisfied"] is False
+    assert row["local_repair_retrieval_attempted"] is (
+        method in {"dspy_vtm_local_only", "dspy_vtm"}
+    )
+    assert row["persistent_repair_retrieval_attempted"] is (
+        method in {"dspy_vtm_persistent_only", "dspy_vtm"}
+    )
 
 
 def test_livecodebench_dspy_counts_tool_calls_from_trajectory_mapping() -> None:
@@ -2259,7 +2435,21 @@ def test_livecodebench_dspy_summary_reports_attempt2_repair_metrics() -> None:
                         "attempt_index": 2,
                         "candidates": [{"candidate_index": 1, "passed": True}],
                     },
+                    {
+                        "attempt_index": 3,
+                        "candidates": [{"candidate_index": 1, "passed": True}],
+                    },
                 ],
+                "repair_handoff_memory_hit": True,
+                "canonical_memory_hit_attempts": [2, 3],
+                "repair_handoff_card_in_prompt": True,
+                "contract_card_in_prompt": True,
+                "public_test_card_in_prompt": True,
+                "top_prompt_memory_role": "repair_handoff",
+                "attempt2_repair_card_in_prompt": True,
+                "attempt3_repair_card_in_prompt": True,
+                "attempt2_handoff_card_in_prompt": True,
+                "attempt3_handoff_card_in_prompt": False,
             }
         ],
         method="dspy_vtm",
@@ -2269,7 +2459,19 @@ def test_livecodebench_dspy_summary_reports_attempt2_repair_metrics() -> None:
 
     assert summary["attempt1_public_test_pass_at_1"] == 0.0
     assert summary["attempt2_public_test_pass_at_1"] == 1.0
+    assert summary["attempt3_public_test_pass_at_1"] == 1.0
     assert summary["attempt2_delta_over_attempt1"] == 1.0
+    assert summary["attempt3_delta_over_attempt2"] == 0.0
+    assert summary["repair_handoff_hit_rate"] == 1.0
+    assert summary["repair_handoff_card_in_prompt_rate"] == 1.0
+    assert summary["contract_card_in_prompt_rate"] == 1.0
+    assert summary["public_test_card_in_prompt_rate"] == 1.0
+    assert summary["top_prompt_memory_role_distribution"] == {"repair_handoff": 1}
+    assert summary["attempt2_success_with_canonical_hit_rate"] == 1.0
+    assert summary["attempt3_success_with_canonical_hit_rate"] == 1.0
+    assert summary["attempt2_success_when_repair_card_in_prompt"] == 1.0
+    assert summary["attempt3_success_when_repair_card_in_prompt"] == 1.0
+    assert summary["attempt2_success_when_handoff_in_prompt"] == 1.0
 
 
 def test_livecodebench_dspy_vtm_attempt_exposes_dynamic_memory_tools(
