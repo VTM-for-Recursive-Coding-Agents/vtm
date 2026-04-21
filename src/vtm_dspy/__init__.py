@@ -17,11 +17,8 @@ _EXPORT_TO_MODULE = {
     "resolve_dspy_model": "vtm_dspy.config",
     "resolve_dspy_lm_model": "vtm_dspy.config",
     "VTMReActCodingAgent": "vtm_dspy.react_agent",
-    "VTMRLMCodingAgent": "vtm_dspy.rlm_agent",
     "VTMMemoryTools": "vtm_dspy.tools",
     "WorkspaceTools": "vtm_dspy.tools",
-    "VTMRLMContextAdapter": "vtm_dspy.rlm_adapter",
-    "make_vtm_rlm": "vtm_dspy.rlm_adapter",
 }
 
 __all__ = [
@@ -29,12 +26,9 @@ __all__ = [
     "DSPyOpenRouterConfig",
     "OPTIONAL_DEPENDENCY_MESSAGE",
     "VTMReActCodingAgent",
-    "VTMRLMCodingAgent",
     "VTMMemoryTools",
-    "VTMRLMContextAdapter",
     "WorkspaceTools",
     "dspy_available",
-    "make_vtm_rlm",
     "require_dspy",
     "resolve_dspy_lm_model",
     "resolve_dspy_model",

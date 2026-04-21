@@ -15,7 +15,6 @@ BenchmarkMode = Literal[
     "no_memory",
     "naive_lexical",
     "verified_lexical",
-    "lexical_rlm_rerank",
 ]
 RepoSourceKind = Literal[
     "git",
@@ -24,7 +23,7 @@ RepoSourceKind = Literal[
 ]
 CodingEvaluationBackend = Literal["local_subprocess"]
 CodingExecutionStyle = Literal["mixed_patch", "shell_command"]
-CodingExecutionEngine = Literal["vendored_rlm"]
+CodingExecutionEngine = Literal["dspy_react"]
 WorkspaceBackendName = Literal["local_workspace", "docker_workspace"]
 DockerNetworkMode = Literal["none", "bridge"]
 
@@ -171,15 +170,14 @@ class BenchmarkRunConfig(VTMModel):
     pair_filters: tuple[str, ...] = Field(default_factory=tuple)
     seed_on_base_query_on_head: bool = False
     workspace_backend: WorkspaceBackendName = "local_workspace"
-    coding_engine: CodingExecutionEngine = "vendored_rlm"
+    coding_engine: CodingExecutionEngine = "dspy_react"
     docker_image: str | None = None
     docker_binary: str = "docker"
     docker_network: DockerNetworkMode = "none"
     attempt_count: int = Field(default=1, ge=1, le=32)
     pass_k_values: tuple[int, ...] = (1,)
-    rlm_model_id: str | None = None
-    rlm_max_iterations: int = Field(default=12, ge=1, le=128)
-    rlm_max_runtime_seconds: int = Field(default=600, ge=1, le=7200)
+    execution_model_id: str | None = None
+    agent_max_iterations: int = Field(default=12, ge=1, le=128)
     workspace_command_timeout_seconds: int = Field(default=120, ge=1, le=3600)
     workspace_max_output_chars: int = Field(default=20000, ge=256, le=200000)
 

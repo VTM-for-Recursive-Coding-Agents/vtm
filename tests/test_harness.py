@@ -6,13 +6,14 @@ from pathlib import Path
 
 import pytest
 
+from vtm.harness.executors import DSPyReActBenchmarkExecutor, ExecutorMemoryRuntime
 from vtm.harness.models import (
     ExecutorRequest,
     ExecutorResult,
     HarnessTaskPack,
     TaskMemoryContextItem,
 )
-from vtm.harness.workspace import LocalWorkspaceBackend, LocalWorkspaceDriver
+from vtm.harness.workspace import LocalWorkspaceBackend, LocalWorkspaceDriver, PreparedWorkspace
 from vtm.harness.workspace_docker import DockerWorkspaceBackend, DockerWorkspaceDriver
 
 
@@ -45,6 +46,49 @@ def _build_repo_with_second_commit(repo: Path) -> tuple[str, str]:
     _run(repo, "git", "commit", "-m", "head")
     head = _run(repo, "git", "rev-parse", "HEAD")
     return base, head
+
+
+def _build_executor_fixture(tmp_path: Path) -> tuple[ExecutorRequest, PreparedWorkspace]:
+    workspace_root = tmp_path / "workspace"
+    artifact_root = tmp_path / "artifacts"
+    _build_repo(workspace_root)
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    driver = LocalWorkspaceDriver(
+        workspace_root=workspace_root,
+        artifact_root=artifact_root,
+        default_max_output_chars=200,
+    )
+    prepared_workspace = PreparedWorkspace(
+        workspace_root=workspace_root,
+        artifact_root=artifact_root,
+        backend_name="local_workspace",
+        attempt_index=1,
+        command_events_path=driver.command_events_path,
+        driver=driver,
+    )
+    task_pack = HarnessTaskPack(
+        case_id="executor-memory-tools",
+        repo_name="repo",
+        commit_pair_id="pair",
+        evaluation_backend="local_subprocess",
+        base_ref="HEAD",
+        head_ref="HEAD",
+        task_statement="Inspect the repository and finish.",
+        execution_style="shell_command",
+        target_patch_digest="deadbeef",
+        memory_mode="verified_lexical",
+        top_k=3,
+    )
+    task_file = artifact_root / "task-pack.json"
+    task_file.write_text(task_pack.to_json(), encoding="utf-8")
+    request = ExecutorRequest(
+        case_id=task_pack.case_id,
+        task_file=str(task_file),
+        workspace=str(workspace_root),
+        artifact_root=str(artifact_root),
+        attempt_index=1,
+    )
+    return request, prepared_workspace
 
 
 def test_harness_models_round_trip() -> None:
@@ -95,7 +139,7 @@ def test_harness_models_round_trip() -> None:
     assert restored_request == executor_request
 
     executor_result = ExecutorResult(
-        command=("rlm",),
+        command=("dspy_react",),
         command_exit_code=0,
         command_stdout_path=None,
         command_stderr_path=None,
@@ -113,6 +157,97 @@ def test_harness_models_round_trip() -> None:
     )
     restored_result = ExecutorResult.from_json(executor_result.to_json())
     assert restored_result == executor_result
+
+
+def test_dspy_executor_exposes_dynamic_memory_tools_when_runtime_is_configured(
+    tmp_path: Path,
+    kernel,
+    metadata_store,
+    scope,
+    dep_fp,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request, prepared_workspace = _build_executor_fixture(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_run(self, agent, prompt: str):  # noqa: ANN001
+        del self, prompt
+        captured["tool_names"] = agent.tool_names()
+        captured["memory_tools_enabled"] = agent.memory_tools.enabled
+        return {
+            "response": {"response": "done"},
+            "trajectory": {
+                "execution_mode": "react",
+                "diagnostics": {
+                    "lm_call_count": 1,
+                    "tool_call_count": 0,
+                    "total_lm_duration_ms": 1.0,
+                    "total_prompt_tokens": 1,
+                    "total_completion_tokens": 1,
+                    "truncated_lm_call_count": 0,
+                },
+            },
+        }
+
+    monkeypatch.setattr(DSPyReActBenchmarkExecutor, "_run_agent", fake_run)
+
+    result = DSPyReActBenchmarkExecutor(model_id="fake-model").execute(
+        request=request,
+        prepared_workspace=prepared_workspace,
+        memory_runtime=ExecutorMemoryRuntime(
+            kernel=kernel,
+            scopes=(scope,),
+            dependency_provider=lambda: dep_fp,
+            memory_lookup=metadata_store.get_memory_item,
+        ),
+    )
+
+    assert captured["memory_tools_enabled"] is True
+    assert "search_verified_memory" in captured["tool_names"]
+    assert "search_naive_memory" in captured["tool_names"]
+    assert "expand_memory_evidence" in captured["tool_names"]
+    assert "verify_memory" in captured["tool_names"]
+    assert result.agent_metadata["memory_tools_enabled"] is True
+
+
+def test_dspy_executor_falls_back_cleanly_when_memory_runtime_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request, prepared_workspace = _build_executor_fixture(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fake_run(self, agent, prompt: str):  # noqa: ANN001
+        del self, prompt
+        captured["tool_names"] = agent.tool_names()
+        captured["memory_tools_enabled"] = agent.memory_tools.enabled
+        return {
+            "response": {"response": "done"},
+            "trajectory": {
+                "execution_mode": "react",
+                "diagnostics": {
+                    "lm_call_count": 1,
+                    "tool_call_count": 0,
+                    "total_lm_duration_ms": 1.0,
+                    "total_prompt_tokens": 1,
+                    "total_completion_tokens": 1,
+                    "truncated_lm_call_count": 0,
+                },
+            },
+        }
+
+    monkeypatch.setattr(DSPyReActBenchmarkExecutor, "_run_agent", fake_run)
+
+    result = DSPyReActBenchmarkExecutor(model_id="fake-model").execute(
+        request=request,
+        prepared_workspace=prepared_workspace,
+        memory_runtime=ExecutorMemoryRuntime(),
+    )
+
+    assert captured["memory_tools_enabled"] is False
+    assert "search_verified_memory" not in captured["tool_names"]
+    assert "verify_memory" not in captured["tool_names"]
+    assert result.agent_metadata["memory_tools_enabled"] is False
 
 
 def test_local_workspace_driver_preserves_blank_lines(tmp_path: Path) -> None:

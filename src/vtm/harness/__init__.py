@@ -20,15 +20,16 @@ from vtm.harness.workspace_docker import DockerWorkspaceBackend, DockerWorkspace
 __all__ = [
     "BenchmarkExecutor",
     "CommandResult",
+    "DSPyReActBenchmarkExecutor",
     "DockerWorkspaceBackend",
     "DockerWorkspaceDriver",
+    "ExecutorMemoryRuntime",
     "ExecutorRequest",
     "ExecutorResult",
     "HarnessTaskPack",
     "LocalWorkspaceBackend",
     "LocalWorkspaceDriver",
     "PreparedWorkspace",
-    "RLMBenchmarkExecutor",
     "TaskMemoryContextItem",
     "WorkspaceBackend",
     "WorkspaceDriver",
@@ -41,16 +42,19 @@ def __getattr__(name: str) -> object:
     """Lazily import executor implementations to keep base imports light."""
     if name not in {
         "BenchmarkExecutor",
-        "RLMBenchmarkExecutor",
+        "DSPyReActBenchmarkExecutor",
+        "ExecutorMemoryRuntime",
     }:
         raise AttributeError(name)
     from vtm.harness.executors import (
         BenchmarkExecutor,
-        RLMBenchmarkExecutor,
+        DSPyReActBenchmarkExecutor,
+        ExecutorMemoryRuntime,
     )
 
     mapping = {
         "BenchmarkExecutor": BenchmarkExecutor,
-        "RLMBenchmarkExecutor": RLMBenchmarkExecutor,
+        "DSPyReActBenchmarkExecutor": DSPyReActBenchmarkExecutor,
+        "ExecutorMemoryRuntime": ExecutorMemoryRuntime,
     }
     return mapping[name]

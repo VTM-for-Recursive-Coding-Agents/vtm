@@ -13,7 +13,6 @@ Verified lexical memory should outperform a no-memory baseline without relying o
 - `no_memory`
 - `naive_lexical`
 - `verified_lexical`
-- optional `lexical_rlm_rerank` as a thin secondary ablation
 
 ## Final maintained benchmark surface
 
@@ -50,7 +49,6 @@ These three layers isolate memory quality and memory freshness cleanly enough fo
 - The final maintained coding benchmark is `controlled_coding_drift`.
 - controlled_coding_drift remains the small maintained agent-loop benchmark.
 - DSPy ReAct and DSPy tools are the preferred future-facing workflow surface for using VTM memory.
-- DSPy RLM is optional long-context reasoning glue, not the maintained repo-editing executor.
 - LiveCodeBench remains a baseline model coding benchmark only.
 - SWE-bench Lite was attempted as an external agent pilot, but it produced empty patches and no resolved tasks.
 - The final paper should not claim SWE-bench improvement.
@@ -70,7 +68,4 @@ LiveCodeBench can stay in-tree as external baseline-model infrastructure without
 - Default base URL: `https://openrouter.ai/api/v1`
 - API key env var: `OPENROUTER_API_KEY`
 - Execution model env var: `VTM_EXECUTION_MODEL`
-- Rerank model env var: `VTM_RERANK_MODEL`
-- Smoke/dev rerank model: `nvidia/nemotron-3-nano-30b-a3b:free`
 - Default execution model: `google/gemma-4-31b-it:free`
-- Optional stronger ablation model: `nvidia/nemotron-3-super-120b-a12b:free`

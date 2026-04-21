@@ -7,9 +7,9 @@ It owns the contracts that should stay stable even when benchmark orchestration,
 ## Public contracts
 
 - `HarnessTaskPack`
-  - typed on-disk task definition used by the vendored-RLM coding executor
+  - typed on-disk task definition used by the maintained coding executor
   - includes `retrieval_query`, which is either author-provided or derived from visible task signals such as task text, tests, verifier output, and deterministic localization notes
-  - retains `execution_style` for task-pack compatibility, but the maintained paper path is the patch-oriented vendored-RLM executor
+  - retains `execution_style` for task-pack compatibility, but the maintained paper path is the DSPy ReAct executor
   - includes optional `verifier_output` and `localization_notes` for visible, non-oracle task context
 - `TaskMemoryContextItem`
   - normalized retrieval context embedded in a task pack
@@ -45,11 +45,11 @@ Legacy/non-maintained backend kept in-tree for compatibility:
 
 ## Executor contracts
 
-- `RLMBenchmarkExecutor`
-  - runs the vendored upstream `rlm` runtime against the local workspace contract
+- `DSPyReActBenchmarkExecutor`
+  - runs the maintained DSPy ReAct agent against the local workspace contract
   - is the only maintained built-in coding executor
 
-The RLM executor produces the stable case-local artifact backbone:
+The maintained executor produces the stable case-local artifact backbone:
 
 - `command-events.jsonl`
 - `final-git-status.txt`
@@ -57,7 +57,7 @@ The RLM executor produces the stable case-local artifact backbone:
 - `final-verification.stdout`
 - `final-verification.stderr`
 
-Vendored-RLM runs also populate benchmark-local artifacts under `rlm/`:
+DSPy runs also populate benchmark-local artifacts under `dspy-react/`:
 
 - `response.txt`
 - `completion.json`
@@ -93,7 +93,7 @@ For controlled coding-drift, benchmark preparation may expand the initial lexica
 pool, derive visible path/module/symbol/failure hints from non-oracle task inputs, rerank
 those candidates with those hints, and then truncate to the task pack's `top_k`.
 
-For controlled coding-drift and generic external-like coding tasks, `expected_changed_paths` stays in the canonical task pack for scoring, but prompt builders and the vendored-RLM `TASK` tool hide those oracle hints by default unless `debug_expected_changed_paths=True`.
+For controlled coding-drift and generic external-like coding tasks, `expected_changed_paths` stays in the canonical task pack for scoring, but prompt builders hide those oracle hints by default unless `debug_expected_changed_paths=True`.
 
 `HarnessTaskPack` stays canonical across attempts. Attempt-local data belongs in
 `ExecutorRequest`, `ExecutorResult`, and the benchmark runner outputs, not in
@@ -102,7 +102,6 @@ the on-disk task-pack file.
 ## Ownership boundary
 
 - `vtm.harness` owns typed execution contracts and local reference implementations.
-- `vtm_rlm` owns the vendored-RLM execution bridge and memory writeback behavior.
 - `vtm.benchmarks` owns suite selection, reporting, and manifest-driven orchestration.
 
 New code should import from `vtm.harness`.

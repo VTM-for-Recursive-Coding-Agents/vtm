@@ -39,10 +39,25 @@ def collect_rows(input_root: Path) -> list[dict[str, Any]]:
                 "model": payload.get("model", ""),
                 "problems": payload.get("total", 0),
                 "pass_rate": payload.get("public_test_pass_rate", payload.get("pass_rate")),
+                "attempt1_pass_at_1": payload.get("attempt1_public_test_pass_at_1"),
+                "attempt1_pass_at_k": payload.get("attempt1_public_test_pass_at_k"),
+                "attempt1_pass_curve": payload.get("attempt1_public_test_pass_curve", {}),
+                "attempt2_pass_at_1": payload.get("attempt2_public_test_pass_at_1"),
+                "attempt2_pass_at_k": payload.get("attempt2_public_test_pass_at_k"),
+                "attempt2_pass_curve": payload.get("attempt2_public_test_pass_curve", {}),
+                "attempt2_delta_over_attempt1": payload.get("attempt2_delta_over_attempt1"),
+                "candidate_selection_mode": payload.get("candidate_selection_mode", "single_sample"),
+                "candidates_per_attempt": payload.get("candidates_per_attempt", 1),
                 "retrieval_usage_rate": payload.get("retrieval_usage_rate", 0),
                 "mean_verified_count": payload.get("mean_verified_count", 0),
                 "mean_stale_filtered_count": payload.get("mean_stale_filtered_count", 0),
                 "mean_tool_calls": payload.get("mean_tool_calls", 0),
+                "canonical_memory_hit_rate": payload.get("canonical_memory_hit_rate", 0),
+                "mean_canonical_memory_hit_count": payload.get("mean_canonical_memory_hit_count", 0),
+                "agent_memory_write_rate": payload.get("agent_memory_write_rate", 0),
+                "mean_agent_memory_write_count": payload.get("mean_agent_memory_write_count", 0),
+                "total_agent_memory_write_count": payload.get("total_agent_memory_write_count", 0),
+                "consolidated_memory_card_rate": payload.get("consolidated_memory_card_rate", 0),
                 "summary_path": str(summary_path),
             }
         )
@@ -62,22 +77,54 @@ def write_markdown(path: Path, rows: list[dict[str, Any]]) -> None:
         "This DSPy plus VTM comparison is a scaffolded pilot, not a maintained VTM "
         "retrieval or drift benchmark.",
         "",
-        "| Scenario | Method | Model | Problems | Public Test Pass Rate | Retrieval Usage Rate | "
-        "Mean Verified Count | Mean Stale Filtered Count | Mean Tool Calls |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| Scenario | Method | Model | Problems | Public Test Pass Rate | Attempt1 Pass@1 | Attempt1 Pass@K | Attempt2 Pass@1 | Attempt2 Pass@K | Attempt2 Delta | Pass Curve (A1) | Pass Curve (A2) | Selection Mode | "
+        "Candidates/Attempt | Retrieval Usage Rate | Canonical Hit Rate | Agent Write Rate | Mean Agent Writes | Consolidated Card Rate | Mean Verified Count | Mean Stale Filtered Count | Mean Tool Calls |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in rows:
         pass_rate = "" if row["pass_rate"] is None else f"{float(row['pass_rate']):.3f}"
+        attempt1_pass_at_1 = (
+            "" if row["attempt1_pass_at_1"] is None else f"{float(row['attempt1_pass_at_1']):.3f}"
+        )
+        attempt1_pass_at_k = (
+            "" if row["attempt1_pass_at_k"] is None else f"{float(row['attempt1_pass_at_k']):.3f}"
+        )
+        attempt2_pass_at_1 = (
+            "" if row["attempt2_pass_at_1"] is None else f"{float(row['attempt2_pass_at_1']):.3f}"
+        )
+        attempt2_pass_at_k = (
+            "" if row["attempt2_pass_at_k"] is None else f"{float(row['attempt2_pass_at_k']):.3f}"
+        )
+        attempt2_delta = (
+            ""
+            if row["attempt2_delta_over_attempt1"] is None
+            else f"{float(row['attempt2_delta_over_attempt1']):.3f}"
+        )
         lines.append(
-            "| {scenario} | {method} | {model} | {problems} | {pass_rate} | "
-            "{retrieval_usage_rate:.3f} | {mean_verified_count:.3f} | "
-            "{mean_stale_filtered_count:.3f} | {mean_tool_calls:.3f} |".format(
+            "| {scenario} | {method} | {model} | {problems} | {pass_rate} | {attempt1_pass_at_1} | {attempt1_pass_at_k} | "
+            "{attempt2_pass_at_1} | {attempt2_pass_at_k} | {attempt2_delta} | {attempt1_pass_curve} | {attempt2_pass_curve} | "
+            "{candidate_selection_mode} | {candidates_per_attempt} | {retrieval_usage_rate:.3f} | "
+            "{canonical_memory_hit_rate:.3f} | {agent_memory_write_rate:.3f} | {mean_agent_memory_write_count:.3f} | "
+            "{consolidated_memory_card_rate:.3f} | {mean_verified_count:.3f} | {mean_stale_filtered_count:.3f} | {mean_tool_calls:.3f} |".format(
                 scenario=row["scenario"],
                 method=row["method"],
                 model=row["model"],
                 problems=row["problems"],
                 pass_rate=pass_rate,
+                attempt1_pass_at_1=attempt1_pass_at_1,
+                attempt1_pass_at_k=attempt1_pass_at_k,
+                attempt2_pass_at_1=attempt2_pass_at_1,
+                attempt2_pass_at_k=attempt2_pass_at_k,
+                attempt2_delta=attempt2_delta,
+                attempt1_pass_curve=_format_pass_curve(row["attempt1_pass_curve"]),
+                attempt2_pass_curve=_format_pass_curve(row["attempt2_pass_curve"]),
+                candidate_selection_mode=row["candidate_selection_mode"],
+                candidates_per_attempt=int(row["candidates_per_attempt"] or 1),
                 retrieval_usage_rate=float(row["retrieval_usage_rate"] or 0),
+                canonical_memory_hit_rate=float(row["canonical_memory_hit_rate"] or 0),
+                agent_memory_write_rate=float(row["agent_memory_write_rate"] or 0),
+                mean_agent_memory_write_count=float(row["mean_agent_memory_write_count"] or 0),
+                consolidated_memory_card_rate=float(row["consolidated_memory_card_rate"] or 0),
                 mean_verified_count=float(row["mean_verified_count"] or 0),
                 mean_stale_filtered_count=float(row["mean_stale_filtered_count"] or 0),
                 mean_tool_calls=float(row["mean_tool_calls"] or 0),
@@ -85,6 +132,17 @@ def write_markdown(path: Path, rows: list[dict[str, Any]]) -> None:
         )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _format_pass_curve(curve: Any) -> str:
+    if not isinstance(curve, dict):
+        return ""
+    parts = []
+    for key in sorted(curve, key=lambda value: int(str(value)) if str(value).isdigit() else str(value)):
+        value = curve.get(key)
+        if isinstance(value, int | float):
+            parts.append(f"{key}:{float(value):.3f}")
+    return ", ".join(parts)
 
 
 def main() -> int:

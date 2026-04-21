@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TypeVar
 
-from vtm.adapters.rlm import RLMAdapter
 from vtm.benchmarks.coding_suite import run_coding_suite
 from vtm.benchmarks.drift_suite import run_drift_suite
 from vtm.benchmarks.kernel_factory import BenchmarkKernelFactory
@@ -37,7 +36,6 @@ class BenchmarkSuiteExecutor:
         config: BenchmarkRunConfig,
         repo_manager: RepoWorkspaceManager,
         symbol_indexer: SymbolIndexer,
-        rlm_adapter: RLMAdapter | None = None,
     ) -> None:
         """Create a suite executor with shared repo and indexing utilities."""
         self._manifest = manifest
@@ -47,7 +45,6 @@ class BenchmarkSuiteExecutor:
         self._kernel_factory = BenchmarkKernelFactory(
             config=config,
             symbol_indexer=symbol_indexer,
-            rlm_adapter=rlm_adapter,
         )
 
     def run_retrieval_suite(

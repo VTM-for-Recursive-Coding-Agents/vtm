@@ -12,7 +12,6 @@ HarnessMemoryMode = Literal[
     "no_memory",
     "naive_lexical",
     "verified_lexical",
-    "lexical_rlm_rerank",
 ]
 HarnessEvaluationBackend = Literal["local_subprocess"]
 HarnessExecutionStyle = Literal["mixed_patch", "shell_command"]

@@ -8,11 +8,11 @@ For runnable benchmark commands, use [`docs/benchmark-recipes.md`](../../../docs
 Start here
 - `models.py`: the public task-pack and executor/result contracts.
 - `workspace.py`: local workspace preparation and the reference `WorkspaceDriver`.
-- `executors.py`: subprocess and vendored-RLM executor implementations.
+- `executors.py`: maintained DSPy benchmark executor implementation.
 
 Contents
 - `__init__.py`: Re-exports the public harness contracts and local reference implementations.
-- `executors.py`: Local subprocess and vendored-RLM executor implementations.
+- `executors.py`: DSPy ReAct benchmark executor implementation.
 - `models.py`: Typed task-pack plus executor request/result records.
 - `scoring.py`: Changed-path and patch-similarity helpers used by coding evaluation.
 - `workspace.py`: Local workspace backend, persistent workspace driver, and command-result records.
@@ -27,4 +27,4 @@ Important contract details
   - `task-packs/<case-id>.json`
   - `workspaces/<mode>/<case-id>/attempt-01`
   - `executor-artifacts/<case-id>/attempt-01`
-- Vendored-RLM runs reuse the same workspace contract and write benchmark-local artifacts under `executor-artifacts/<case-id>/attempt-01/rlm/`.
+- DSPy benchmark runs write benchmark-local artifacts under `executor-artifacts/<case-id>/attempt-01/dspy-react/`.

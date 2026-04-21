@@ -13,10 +13,10 @@ uv sync --dev
 Full eval environment:
 
 ```bash
-uv sync --dev --extra rlm
+uv sync --dev --extra dspy --extra openai
 ```
 
-The full eval environment is the maintained setup for OpenRouter-backed coding runs, rerank ablations, and paper-table export. If you only install the basic dev environment, vendored-RLM tests that import the optional `openai` package may skip.
+The full eval environment is the maintained setup for OpenRouter-backed coding runs and paper-table export.
 
 Optional DSPy environment:
 
@@ -32,14 +32,11 @@ All maintained inference and coding execution paths use OpenRouter's OpenAI-comp
 export OPENROUTER_API_KEY=...
 export VTM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 export VTM_EXECUTION_MODEL=google/gemma-4-31b-it:free
-export VTM_RERANK_MODEL=nvidia/nemotron-3-nano-30b-a3b:free
 ```
 
 Recommended models:
 
-- smoke or cheap rerank runs: `nvidia/nemotron-3-nano-30b-a3b:free`
 - main execution runs: `google/gemma-4-31b-it:free`
-- optional stronger ablation: `nvidia/nemotron-3-super-120b-a12b:free`
 - first paid coding model: `qwen/qwen3-coder-next`
 
 ## LiveCodeBench Baseline
@@ -112,6 +109,7 @@ uv run --extra dspy python scripts/run_livecodebench_dspy_pilot.py \
   --scenario self_repair \
   --problem-offset 0 \
   --max-problems 3 \
+  --candidates-per-attempt 3 \
   --model qwen/qwen3-coder-next \
   --execute
 ```
@@ -144,7 +142,7 @@ uv run python scripts/livecodebench/export_dspy_pilot_results.py \
   --output-root .benchmarks/paper-tables/livecodebench-dspy-pilot
 ```
 
-This pilot is not part of the maintained retrieval, drift verification, drifted retrieval, or controlled coding-drift result surface. `--method all` runs direct, DSPy ReAct baseline, DSPy ReAct plus VTM, DSPy RLM baseline, and DSPy RLM plus VTM.
+This pilot is not part of the maintained retrieval, drift verification, drifted retrieval, or controlled coding-drift result surface. `--method all` runs direct, DSPy ReAct baseline, and DSPy ReAct plus VTM. If you enable `--candidates-per-attempt K`, all methods use the same best-of-k public-test selection budget and the export marks that explicitly.
 
 ## DSPy Smoke
 
@@ -214,17 +212,6 @@ uv run python -m vtm.benchmarks.run \
   --mode naive_lexical \
   --seed-on-base-query-on-head \
   --output .benchmarks/retrieval-drifted-naive-lexical
-```
-
-Optional reranked ablation:
-
-```bash
-uv run python -m vtm.benchmarks.run \
-  --manifest benchmarks/manifests/synthetic-smoke.json \
-  --suite retrieval \
-  --mode lexical_rlm_rerank \
-  --output .benchmarks/retrieval-lexical-rlm \
-  --rerank-model "$VTM_RERANK_MODEL"
 ```
 
 Target one pinned OSS pair:
@@ -331,7 +318,7 @@ Nano smoke run:
 ```bash
 export VTM_EXECUTION_MODEL=nvidia/nemotron-3-nano-30b-a3b:free
 
-uv run --extra rlm python -m vtm.benchmarks.matrix \
+uv run --extra dspy --extra openai python -m vtm.benchmarks.matrix \
   --preset controlled_coding_drift \
   --output .benchmarks/controlled-coding-drift-nano \
   --execution-model "$VTM_EXECUTION_MODEL"
@@ -342,7 +329,7 @@ Nemotron Super run:
 ```bash
 export VTM_EXECUTION_MODEL=nvidia/nemotron-3-super-120b-a12b:free
 
-uv run --extra rlm python -m vtm.benchmarks.matrix \
+uv run --extra dspy --extra openai python -m vtm.benchmarks.matrix \
   --preset controlled_coding_drift \
   --output .benchmarks/controlled-coding-drift-super \
   --execution-model "$VTM_EXECUTION_MODEL"

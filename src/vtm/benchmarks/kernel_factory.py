@@ -7,10 +7,9 @@ from pathlib import Path
 
 from vtm.adapters.git import GitRepoFingerprintCollector
 from vtm.adapters.python_ast import PythonAstSyntaxAdapter
-from vtm.adapters.rlm import RLMAdapter
 from vtm.adapters.runtime import RuntimeEnvFingerprintCollector
 from vtm.adapters.tree_sitter import PythonTreeSitterSyntaxAdapter
-from vtm.benchmarks.models import BenchmarkRunConfig, CommitPair, resolved_benchmark_mode
+from vtm.benchmarks.models import BenchmarkRunConfig, CommitPair
 from vtm.benchmarks.symbol_index import SymbolIndexer, SymbolSnapshot
 from vtm.enums import MemoryKind, ScopeKind, ValidityStatus
 from vtm.memory_items import ClaimPayload, MemoryItem, ValidityState, VisibilityScope
@@ -18,7 +17,6 @@ from vtm.services import (
     BasicVerifier,
     DependencyFingerprintBuilder,
     LexicalRetriever,
-    RLMRerankingRetriever,
     TransactionalMemoryKernel,
 )
 from vtm.stores import FilesystemArtifactStore, SqliteCacheStore, SqliteMetadataStore
@@ -32,12 +30,10 @@ class BenchmarkKernelFactory:
         *,
         config: BenchmarkRunConfig,
         symbol_indexer: SymbolIndexer,
-        rlm_adapter: RLMAdapter | None = None,
     ) -> None:
-        """Bind run config plus optional retrieval adapters."""
+        """Bind run config and symbol index helpers."""
         self._config = config
         self._symbol_indexer = symbol_indexer
-        self._rlm_adapter = rlm_adapter
 
     def open_kernel(
         self,
@@ -54,7 +50,6 @@ class BenchmarkKernelFactory:
         VisibilityScope,
     ]:
         """Create a fresh benchmark-local kernel store topology."""
-        resolved_mode = resolved_benchmark_mode(self._config.mode)
         store_root = (
             output_dir
             / ".vtm"
@@ -72,18 +67,7 @@ class BenchmarkKernelFactory:
         artifacts = FilesystemArtifactStore(store_root / "artifacts")
         cache = SqliteCacheStore(store_root / "cache.sqlite", event_store=metadata)
         anchor_adapter = PythonTreeSitterSyntaxAdapter(fallback=PythonAstSyntaxAdapter())
-        retriever: LexicalRetriever | RLMRerankingRetriever = LexicalRetriever(metadata)
-        if resolved_mode == "lexical_rlm_rerank":
-            if self._rlm_adapter is None:
-                raise ValueError("lexical_rlm_rerank mode requires an RLM adapter")
-            retriever = RLMRerankingRetriever(
-                retriever,
-                self._rlm_adapter,
-                top_k_lexical=max(self._config.top_k * 2, self._config.top_k),
-                top_k_final=self._config.top_k,
-                cache_store=cache,
-                cache_repo_root=str(repo_root),
-            )
+        retriever = LexicalRetriever(metadata)
         kernel = TransactionalMemoryKernel(
             metadata_store=metadata,
             event_store=metadata,

@@ -178,10 +178,14 @@ class BenchmarkReporter:
         ]
         failure_breakdown: dict[str, int] = {}
         for result in results:
-            category = self._classify_coding_failure(result)
+            category = self._classify_coding_failure(
+                result,
+                attempts_by_case.get(result.case_id, []),
+            )
             if category is None:
                 continue
             failure_breakdown[category] = failure_breakdown.get(category, 0) + 1
+        attempt_failure_breakdown = self._summarize_attempt_failures(coding_attempts)
         agent_status_breakdown: dict[str, int] = {}
         for status in agent_statuses:
             agent_status_breakdown[status] = agent_status_breakdown.get(status, 0) + 1
@@ -255,10 +259,36 @@ class BenchmarkReporter:
             ),
             "agent_status_breakdown": agent_status_breakdown,
             "failure_breakdown": failure_breakdown,
+            "attempt_failure_breakdown": attempt_failure_breakdown,
             "evaluation_backend_breakdown": backends,
             "workspace_backend_breakdown": workspace_backends,
         }
         if suite == "coding":
+            attempt_1_pass_count = sum(
+                1
+                for result in results
+                if self._attempt_index_succeeded(
+                    attempts_by_case.get(result.case_id, []),
+                    attempt_index=1,
+                )
+            )
+            attempt_2_rescue_count, attempt_2_rescue_eligible = self._attempt_two_rescue_counts(
+                results,
+                attempts_by_case,
+            )
+            memory_used_case_count = sum(
+                1
+                for result in results
+                if self._case_memory_used(
+                    result,
+                    attempts_by_case.get(result.case_id, []),
+                )
+            )
+            memory_helped_case_count = sum(
+                1
+                for result in results
+                if self._case_memory_helped(attempts_by_case.get(result.case_id, []))
+            )
             requested_pass_k = tuple(sorted(set(pass_k_values)))
             for k in requested_pass_k:
                 summary[f"pass_at_{k}"] = self._attempt_success_rate(
@@ -278,6 +308,27 @@ class BenchmarkReporter:
                 )
             summary["median_attempt_runtime_ms"] = (
                 0.0 if not attempt_runtimes else median(attempt_runtimes)
+            )
+            summary["attempt_1_pass_rate"] = (
+                0.0 if not results else attempt_1_pass_count / len(results)
+            )
+            summary["attempt_2_rescue_rate"] = (
+                0.0
+                if attempt_2_rescue_eligible == 0
+                else attempt_2_rescue_count / attempt_2_rescue_eligible
+            )
+            summary["attempt_2_rescue_count"] = attempt_2_rescue_count
+            summary["attempt_2_rescue_eligible_count"] = attempt_2_rescue_eligible
+            summary["memory_used_rate"] = 0.0 if not results else memory_used_case_count / len(results)
+            summary["memory_used_case_count"] = memory_used_case_count
+            summary["memory_helped_rate"] = (
+                0.0 if not results else memory_helped_case_count / len(results)
+            )
+            summary["memory_helped_case_count"] = memory_helped_case_count
+            summary["memory_helped_when_used_rate"] = (
+                0.0
+                if memory_used_case_count == 0
+                else memory_helped_case_count / memory_used_case_count
             )
             summary["mean_attempts_executed"] = self._mean(
                 float(
@@ -428,6 +479,21 @@ class BenchmarkReporter:
             "",
             "## Metrics",
         ]
+        if result.suite == "coding":
+            lines.extend(
+                [
+                    "- attempt_1_pass_rate: "
+                    f"`{result.metrics.get('attempt_1_pass_rate', 0.0)}`",
+                    "- attempt_2_rescue_rate: "
+                    f"`{result.metrics.get('attempt_2_rescue_rate', 0.0)}`",
+                    "- memory_used_rate: "
+                    f"`{result.metrics.get('memory_used_rate', 0.0)}`",
+                    "- memory_helped_when_used_rate: "
+                    f"`{result.metrics.get('memory_helped_when_used_rate', 0.0)}`",
+                    "- attempt_failure_breakdown: "
+                    f"`{result.metrics.get('attempt_failure_breakdown', {})}`",
+                ]
+            )
         for key, value in sorted(result.metrics.items()):
             lines.append(f"- {key}: `{value}`")
         return "\n".join(lines) + "\n"
@@ -479,12 +545,20 @@ class BenchmarkReporter:
         }
 
         if baseline.suite == "coding":
+            baseline_attempts_by_case = self._group_attempts_by_case(baseline_attempts or [])
+            candidate_attempts_by_case = self._group_attempts_by_case(candidate_attempts or [])
             metrics["paired_attempt_binary_metrics"] = self._compare_attempt_success_metrics(
                 common_case_ids,
                 baseline.metrics,
                 candidate.metrics,
-                self._group_attempts_by_case(baseline_attempts or []),
-                self._group_attempts_by_case(candidate_attempts or []),
+                baseline_attempts_by_case,
+                candidate_attempts_by_case,
+            ) | self._compare_attempt_delta_metrics(
+                common_case_ids,
+                baseline_by_case,
+                candidate_by_case,
+                baseline_attempts_by_case,
+                candidate_attempts_by_case,
             )
 
         comparison_id = f"{baseline.run_id}-vs-{candidate.run_id}"
@@ -674,7 +748,16 @@ class BenchmarkReporter:
             breakdown[key] = item_summary
         return breakdown
 
-    def _classify_coding_failure(self, result: BenchmarkCaseResult) -> str | None:
+    def _classify_coding_failure(
+        self,
+        result: BenchmarkCaseResult,
+        attempts: list[BenchmarkAttemptResult],
+    ) -> str | None:
+        if attempts:
+            for attempt in reversed(attempts):
+                category = self._classify_attempt_failure(attempt)
+                if category is not None:
+                    return category
         metrics = result.metrics
         metadata = result.metadata
         if bool(metrics.get("infra_failure", False)):
@@ -690,7 +773,9 @@ class BenchmarkReporter:
         if metadata.get("agent_status") == "max_tool_failures" or int(
             metrics.get("tool_failure_count", 0)
         ) > 0:
-            return "tool"
+            return "tool_failure"
+        if not bool(metrics.get("produced_patch_nonempty", False)):
+            return "empty_patch"
         if bool(metrics.get("evaluated", False)):
             return "verification"
         return "infra"
@@ -830,6 +915,205 @@ class BenchmarkReporter:
                 ]
                 summary[f"{summary_prefix}{k}"] = self._paired_binary_metric_summary(pairs)
         return summary
+
+    def _compare_attempt_delta_metrics(
+        self,
+        common_case_ids: list[str],
+        baseline_by_case: dict[str, BenchmarkCaseResult],
+        candidate_by_case: dict[str, BenchmarkCaseResult],
+        baseline_attempts_by_case: dict[str, list[BenchmarkAttemptResult]],
+        candidate_attempts_by_case: dict[str, list[BenchmarkAttemptResult]],
+    ) -> dict[str, Any]:
+        if not baseline_attempts_by_case or not candidate_attempts_by_case:
+            return {}
+
+        metrics: dict[str, Any] = {}
+        metric_pairs = {
+            "attempt_1_pass": [
+                (
+                    self._attempt_index_succeeded(
+                        baseline_attempts_by_case.get(case_id, []),
+                        attempt_index=1,
+                    ),
+                    self._attempt_index_succeeded(
+                        candidate_attempts_by_case.get(case_id, []),
+                        attempt_index=1,
+                    ),
+                )
+                for case_id in common_case_ids
+            ],
+            "attempt_2_rescue": [
+                (
+                    self._case_attempt_two_rescued(baseline_attempts_by_case.get(case_id, [])),
+                    self._case_attempt_two_rescued(candidate_attempts_by_case.get(case_id, [])),
+                )
+                for case_id in common_case_ids
+            ],
+            "memory_used": [
+                (
+                    self._case_memory_used(
+                        baseline_by_case[case_id],
+                        baseline_attempts_by_case.get(case_id, []),
+                    ),
+                    self._case_memory_used(
+                        candidate_by_case[case_id],
+                        candidate_attempts_by_case.get(case_id, []),
+                    ),
+                )
+                for case_id in common_case_ids
+            ],
+            "memory_helped": [
+                (
+                    self._case_memory_helped(baseline_attempts_by_case.get(case_id, [])),
+                    self._case_memory_helped(candidate_attempts_by_case.get(case_id, [])),
+                )
+                for case_id in common_case_ids
+            ],
+            "failure_empty_patch": [
+                (
+                    self._classify_coding_failure(
+                        baseline_by_case[case_id],
+                        baseline_attempts_by_case.get(case_id, []),
+                    )
+                    == "empty_patch",
+                    self._classify_coding_failure(
+                        candidate_by_case[case_id],
+                        candidate_attempts_by_case.get(case_id, []),
+                    )
+                    == "empty_patch",
+                )
+                for case_id in common_case_ids
+            ],
+            "failure_tool_failure": [
+                (
+                    self._classify_coding_failure(
+                        baseline_by_case[case_id],
+                        baseline_attempts_by_case.get(case_id, []),
+                    )
+                    == "tool_failure",
+                    self._classify_coding_failure(
+                        candidate_by_case[case_id],
+                        candidate_attempts_by_case.get(case_id, []),
+                    )
+                    == "tool_failure",
+                )
+                for case_id in common_case_ids
+            ],
+            "failure_verification": [
+                (
+                    self._classify_coding_failure(
+                        baseline_by_case[case_id],
+                        baseline_attempts_by_case.get(case_id, []),
+                    )
+                    == "verification",
+                    self._classify_coding_failure(
+                        candidate_by_case[case_id],
+                        candidate_attempts_by_case.get(case_id, []),
+                    )
+                    == "verification",
+                )
+                for case_id in common_case_ids
+            ],
+        }
+        for name, pairs in metric_pairs.items():
+            metrics[name] = self._paired_binary_metric_summary(pairs)
+        return metrics
+
+    def _summarize_attempt_failures(
+        self,
+        attempts: list[BenchmarkAttemptResult],
+    ) -> dict[str, int]:
+        breakdown: dict[str, int] = {}
+        for attempt in attempts:
+            category = self._classify_attempt_failure(attempt)
+            if category is None:
+                continue
+            breakdown[category] = breakdown.get(category, 0) + 1
+        return breakdown
+
+    def _classify_attempt_failure(self, attempt: BenchmarkAttemptResult) -> str | None:
+        if bool(attempt.metrics.get("passed", False)) or bool(attempt.metrics.get("resolved", False)):
+            return None
+        if bool(attempt.metrics.get("infra_failure", False)):
+            return "infra"
+        if bool(attempt.metadata.get("executor_timed_out", False)) or bool(
+            attempt.metrics.get("command_timeout_count", 0)
+        ):
+            return "timeout"
+        if int(attempt.metrics.get("tool_failure_count", 0) or 0) > 0:
+            return "tool_failure"
+        if bool(attempt.metrics.get("executed", False)) and not bool(
+            attempt.metrics.get("produced_patch_nonempty", False)
+        ):
+            return "empty_patch"
+        if bool(attempt.metrics.get("evaluated", False)):
+            return "verification"
+        return "infra"
+
+    def _attempt_index_succeeded(
+        self,
+        attempts: list[BenchmarkAttemptResult],
+        *,
+        attempt_index: int,
+    ) -> bool:
+        for attempt in attempts:
+            if attempt.attempt_index != attempt_index:
+                continue
+            return bool(attempt.metrics.get("passed", False)) or bool(
+                attempt.metrics.get("resolved", False)
+            )
+        return False
+
+    def _attempt_two_rescue_counts(
+        self,
+        results: list[BenchmarkCaseResult],
+        attempts_by_case: dict[str, list[BenchmarkAttemptResult]],
+    ) -> tuple[int, int]:
+        rescued = 0
+        eligible = 0
+        for result in results:
+            attempts = attempts_by_case.get(result.case_id, [])
+            if len(attempts) < 2 or self._attempt_index_succeeded(attempts, attempt_index=1):
+                continue
+            eligible += 1
+            if self._case_attempt_two_rescued(attempts):
+                rescued += 1
+        return rescued, eligible
+
+    def _case_attempt_two_rescued(self, attempts: list[BenchmarkAttemptResult]) -> bool:
+        if len(attempts) < 2 or self._attempt_index_succeeded(attempts, attempt_index=1):
+            return False
+        return self._attempt_index_succeeded(attempts, attempt_index=2)
+
+    def _case_memory_used(
+        self,
+        result: BenchmarkCaseResult,
+        attempts: list[BenchmarkAttemptResult],
+    ) -> bool:
+        if attempts:
+            return any(
+                int(attempt.metadata.get("memory_context_count", 0) or 0) > 0
+                or float(attempt.metrics.get("retrieval_usage_rate", 0.0) or 0.0) > 0.0
+                for attempt in attempts
+            )
+        return int(result.metadata.get("memory_context_count", 0) or 0) > 0 or float(
+            result.metrics.get("retrieval_usage_rate", 0.0) or 0.0
+        ) > 0.0
+
+    def _case_memory_helped(self, attempts: list[BenchmarkAttemptResult]) -> bool:
+        if len(attempts) < 2 or self._attempt_index_succeeded(attempts, attempt_index=1):
+            return False
+        for attempt in attempts[1:]:
+            if not (
+                bool(attempt.metrics.get("passed", False))
+                or bool(attempt.metrics.get("resolved", False))
+            ):
+                continue
+            if int(attempt.metadata.get("memory_context_count", 0) or 0) > 0 or float(
+                attempt.metrics.get("retrieval_usage_rate", 0.0) or 0.0
+            ) > 0.0:
+                return True
+        return False
 
     def _shared_attempt_k_values(
         self,

@@ -7,7 +7,6 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
-from vtm.adapters.rlm import RLMAdapter
 from vtm.base import utc_now
 from vtm.benchmarks.models import (
     BenchmarkAttemptResult,
@@ -32,10 +31,8 @@ class BenchmarkRunner:
         self,
         manifest: BenchmarkManifest,
         config: BenchmarkRunConfig,
-        *,
-        rlm_adapter: RLMAdapter | None = None,
     ) -> None:
-        """Bind the runner to a manifest, config, and optional adapters."""
+        """Bind the runner to a manifest and config."""
         self._manifest = manifest
         self._config = config
         self._executor = BenchmarkSuiteExecutor(
@@ -43,7 +40,6 @@ class BenchmarkRunner:
             config=config,
             repo_manager=RepoWorkspaceManager(),
             symbol_indexer=SymbolIndexer(),
-            rlm_adapter=rlm_adapter,
         )
         self._reporter = BenchmarkReporter()
 
@@ -65,9 +61,8 @@ class BenchmarkRunner:
             manifest_lock["workspace_backend"] = self._config.workspace_backend
             manifest_lock["attempt_count"] = self._config.attempt_count
             manifest_lock["pass_k_values"] = list(self._config.pass_k_values)
-            manifest_lock["rlm_model_id"] = self._config.rlm_model_id
-            manifest_lock["rlm_max_iterations"] = self._config.rlm_max_iterations
-            manifest_lock["rlm_max_runtime_seconds"] = self._config.rlm_max_runtime_seconds
+            manifest_lock["execution_model_id"] = self._config.execution_model_id
+            manifest_lock["agent_max_iterations"] = self._config.agent_max_iterations
             manifest_lock["workspace_command_timeout_seconds"] = (
                 self._config.workspace_command_timeout_seconds
             )

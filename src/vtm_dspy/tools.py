@@ -19,14 +19,49 @@ from vtm.services.memory_kernel import MemoryKernel
 VERIFIED_MEMORY_STATUSES = (ValidityStatus.VERIFIED, ValidityStatus.RELOCATED)
 
 
+@dataclass(frozen=True)
+class MemoryWriteProposal:
+    """One agent-authored memory proposal awaiting host-side verification."""
+
+    proposal_kind: str
+    memory_role: str
+    title: str
+    summary: str
+    rationale: str | None
+    function_name: str | None
+    repair_kind: str | None
+    interface_mode: str | None
+    bug_class: str | None
+    failure_signature: str | None
+    transfer_terms: tuple[str, ...]
+
+
+def memory_tooling_supported(
+    *,
+    kernel: MemoryKernel | None,
+    scopes: Sequence[VisibilityScope] = (),
+    dependency_provider: Callable[[], DependencyFingerprint | None] | None = None,
+    memory_lookup: Callable[[str], MemoryItem | None] | None = None,
+) -> bool:
+    """Whether the full dynamic memory tool surface can operate safely."""
+    return (
+        kernel is not None
+        and bool(tuple(scopes))
+        and dependency_provider is not None
+        and memory_lookup is not None
+    )
+
+
 @dataclass
 class VTMMemoryTools:
-    """Thin memory lookup tools suitable for DSPy ReAct and RLM surfaces."""
+    """Thin memory lookup tools suitable for DSPy ReAct surfaces."""
 
     kernel: MemoryKernel | None
     scopes: tuple[VisibilityScope, ...] = ()
     dependency_provider: Callable[[], DependencyFingerprint | None] | None = None
     memory_lookup: Callable[[str], MemoryItem | None] | None = None
+    enable_lookup_tools: bool = True
+    enable_write_tools: bool = True
 
     def __init__(
         self,
@@ -35,32 +70,88 @@ class VTMMemoryTools:
         scopes: Sequence[VisibilityScope] = (),
         dependency_provider: Callable[[], DependencyFingerprint | None] | None = None,
         memory_lookup: Callable[[str], MemoryItem | None] | None = None,
+        enable_lookup_tools: bool = True,
+        enable_write_tools: bool = True,
     ) -> None:
         self.kernel = kernel
         self.scopes = tuple(scopes)
         self.dependency_provider = dependency_provider
         self.memory_lookup = memory_lookup
+        self.enable_lookup_tools = bool(enable_lookup_tools)
+        self.enable_write_tools = bool(enable_write_tools)
+        self._write_proposals: list[MemoryWriteProposal] = []
 
     @property
     def enabled(self) -> bool:
-        """Whether dynamic memory operations are available."""
-        return self.kernel is not None and bool(self.scopes)
+        """Whether any dynamic memory operations are available."""
+        return self.lookup_enabled or self.write_enabled
+
+    @property
+    def lookup_enabled(self) -> bool:
+        """Whether retrieval, expansion, and verification are available."""
+        return (
+            self.enable_lookup_tools
+            and self.kernel is not None
+            and bool(self.scopes)
+        )
+
+    @property
+    def write_enabled(self) -> bool:
+        """Whether agent-side memory proposals are available."""
+        return self.enable_write_tools and bool(self.scopes)
 
     def tool_mapping(self) -> dict[str, Callable[..., Any]]:
         """Return named tool callables for DSPy agent construction."""
-        mapping: dict[str, Callable[..., Any]] = {
-            "search_verified_memory": self.search_verified_memory,
-            "search_naive_memory": self.search_naive_memory,
-            "expand_memory_evidence": self.expand_memory_evidence,
-            "verify_memory": self.verify_memory,
-        }
+        mapping: dict[str, Callable[..., Any]] = {}
+        if self.lookup_enabled:
+            mapping.update(
+                {
+                    "search_verified_memory": self.search_verified_memory,
+                    "search_naive_memory": self.search_naive_memory,
+                    "expand_memory_evidence": self.expand_memory_evidence,
+                    "verify_memory": self.verify_memory,
+                }
+            )
+        if self.write_enabled:
+            mapping.update(
+                {
+                    "propose_memory_lesson": self.propose_memory_lesson,
+                    "propose_failure_pattern": self.propose_failure_pattern,
+                    "propose_solution_pattern": self.propose_solution_pattern,
+                }
+            )
         if not self.enabled:
             return {}
         return mapping
 
+    def clear_write_proposals(self) -> None:
+        """Forget any previously buffered proposals."""
+        self._write_proposals.clear()
+
+    def drain_write_proposals(self) -> list[dict[str, Any]]:
+        """Return buffered proposals and clear the buffer."""
+        drained = [
+            {
+                "proposal_kind": proposal.proposal_kind,
+                "memory_role": proposal.memory_role,
+                "title": proposal.title,
+                "summary": proposal.summary,
+                "rationale": proposal.rationale,
+                "function_name": proposal.function_name,
+                "repair_kind": proposal.repair_kind,
+                "interface_mode": proposal.interface_mode,
+                "bug_class": proposal.bug_class,
+                "failure_signature": proposal.failure_signature,
+                "transfer_terms": list(proposal.transfer_terms),
+            }
+            for proposal in self._write_proposals
+        ]
+        self._write_proposals.clear()
+        return drained
+
     def search_verified_memory(self, query: str, k: int = 5) -> list[dict[str, Any]]:
         """Search memory using verified-only semantics when a dependency is available."""
-        if not self.enabled or not query.strip():
+        if not self.lookup_enabled or not query.strip():
             return []
         assert self.kernel is not None
         verification_mode = "stored_status_only"
@@ -95,7 +186,7 @@ class VTMMemoryTools:
 
     def search_naive_memory(self, query: str, k: int = 5) -> list[dict[str, Any]]:
         """Search memory without read-time verification."""
-        if not self.enabled or not query.strip():
+        if not self.lookup_enabled or not query.strip():
             return []
         assert self.kernel is not None
         result = self.kernel.retrieve(
@@ -110,7 +201,7 @@ class VTMMemoryTools:
 
     def expand_memory_evidence(self, memory_id: str) -> dict[str, Any]:
         """Return one memory item's evidence plus a compact summary."""
-        if not self.enabled or not memory_id.strip():
+        if not self.lookup_enabled or not memory_id.strip():
             return {
                 "id": memory_id,
                 "summary": "memory expansion unavailable",
@@ -127,7 +218,7 @@ class VTMMemoryTools:
 
     def verify_memory(self, memory_id: str) -> dict[str, Any]:
         """Verify one memory item against the current dependency fingerprint."""
-        if not self.enabled or not memory_id.strip():
+        if not self.lookup_enabled or not memory_id.strip():
             return {
                 "id": memory_id,
                 "summary": "verification unavailable",
@@ -158,15 +249,159 @@ class VTMMemoryTools:
         )
         return payload
 
+    def propose_memory_lesson(
+        self,
+        title: str,
+        summary: str,
+        rationale: str = "",
+        memory_role: str = "repair_lesson",
+        transfer_terms: str = "",
+        function_name: str = "",
+        repair_kind: str = "",
+        interface_mode: str = "",
+        bug_class: str = "",
+        failure_signature: str = "",
+    ) -> dict[str, Any]:
+        """Buffer one reusable lesson for host-side verification and promotion."""
+        return self._buffer_write_proposal(
+            proposal_kind="memory_lesson",
+            memory_role=memory_role,
+            title=title,
+            summary=summary,
+            rationale=rationale,
+            transfer_terms=transfer_terms,
+            function_name=function_name,
+            repair_kind=repair_kind,
+            interface_mode=interface_mode,
+            bug_class=bug_class,
+            failure_signature=failure_signature,
+        )
+
+    def propose_failure_pattern(
+        self,
+        failure_signature: str,
+        lesson: str,
+        rationale: str = "",
+        transfer_terms: str = "",
+        function_name: str = "",
+        repair_kind: str = "",
+        interface_mode: str = "",
+        bug_class: str = "",
+    ) -> dict[str, Any]:
+        """Buffer one reusable failure pattern as a repair lesson proposal."""
+        title = f"Failure pattern: {self._compact(failure_signature, limit=72)}"
+        return self._buffer_write_proposal(
+            proposal_kind="failure_pattern",
+            memory_role="repair_lesson",
+            title=title,
+            summary=lesson,
+            rationale=rationale,
+            transfer_terms=transfer_terms,
+            function_name=function_name,
+            repair_kind=repair_kind,
+            interface_mode=interface_mode,
+            bug_class=bug_class,
+            failure_signature=failure_signature,
+        )
+
+    def propose_solution_pattern(
+        self,
+        summary: str,
+        rationale: str = "",
+        transfer_terms: str = "",
+        function_name: str = "",
+        interface_mode: str = "",
+    ) -> dict[str, Any]:
+        """Buffer one generic successful solution pattern for host-side promotion."""
+        title = f"Solution pattern: {self._compact(summary, limit=72)}"
+        return self._buffer_write_proposal(
+            proposal_kind="solution_pattern",
+            memory_role="successful_solution",
+            title=title,
+            summary=summary,
+            rationale=rationale,
+            transfer_terms=transfer_terms,
+            function_name=function_name,
+            repair_kind="successful_initial_solution",
+            interface_mode=interface_mode,
+            bug_class="",
+            failure_signature="",
+        )
+
     def _current_dependency(self) -> DependencyFingerprint | None:
         if self.dependency_provider is None:
             return None
         return self.dependency_provider()
 
+    def _buffer_write_proposal(
+        self,
+        *,
+        proposal_kind: str,
+        memory_role: str,
+        title: str,
+        summary: str,
+        rationale: str,
+        transfer_terms: str,
+        function_name: str,
+        repair_kind: str,
+        interface_mode: str,
+        bug_class: str,
+        failure_signature: str,
+    ) -> dict[str, Any]:
+        if not self.write_enabled:
+            return {"status": "unavailable", "reason": "memory tooling disabled"}
+        normalized_summary = self._compact(summary, limit=240)
+        if not normalized_summary:
+            return {"status": "rejected", "reason": "summary is required"}
+        proposal = MemoryWriteProposal(
+            proposal_kind=proposal_kind,
+            memory_role=self._normalize_memory_role(memory_role),
+            title=self._compact(title, limit=96) or "Agent memory lesson",
+            summary=normalized_summary,
+            rationale=self._compact(rationale, limit=600) or None,
+            function_name=self._compact(function_name, limit=64) or None,
+            repair_kind=self._compact(repair_kind, limit=64) or None,
+            interface_mode=self._compact(interface_mode, limit=64) or None,
+            bug_class=self._compact(bug_class, limit=64) or None,
+            failure_signature=self._compact(failure_signature, limit=220) or None,
+            transfer_terms=self._normalize_transfer_terms(transfer_terms),
+        )
+        self._write_proposals.append(proposal)
+        return {
+            "status": "buffered",
+            "proposal_index": len(self._write_proposals),
+            "proposal_kind": proposal.proposal_kind,
+            "memory_role": proposal.memory_role,
+            "summary": proposal.summary,
+        }
+
     def _lookup_memory(self, memory_id: str) -> MemoryItem | None:
         if self.memory_lookup is None:
             return None
         return self.memory_lookup(memory_id)
+
+    def _normalize_memory_role(self, raw_role: str) -> str:
+        normalized = raw_role.strip().lower()
+        if normalized in {"repair_lesson", "successful_solution"}:
+            return normalized
+        return "repair_lesson"
+
+    def _normalize_transfer_terms(self, raw_terms: str) -> tuple[str, ...]:
+        terms = []
+        seen: set[str] = set()
+        for token in raw_terms.replace("|", ",").split(","):
+            normalized = token.strip().lower()
+            if not normalized or normalized in seen:
+                continue
+            terms.append(normalized)
+            seen.add(normalized)
+        return tuple(terms)
+
+    def _compact(self, raw: str, *, limit: int) -> str:
+        normalized = " ".join(raw.split())
+        if len(normalized) <= limit:
+            return normalized
+        return normalized[: max(0, limit - 3)].rstrip() + "..."
 
     def _serialize_candidate(
         self,

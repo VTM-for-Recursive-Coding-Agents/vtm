@@ -265,3 +265,85 @@ def test_verify_on_read_filters_stale_memory(
 
     assert result.candidates == ()
     assert result.stale_filtered_count == 1
+
+
+def test_lexical_retriever_boosts_function_name_and_feedback_signature(
+    metadata_store,
+    memory_factory,
+    scope,
+) -> None:
+    boosted = memory_factory(
+        title="Repair lesson",
+        summary="Fix the visible failure for the function.",
+        tags=("repair",),
+    ).model_copy(
+        update={
+            "metadata": {
+                "function_name": "add",
+                "feedback_signature": "expected 5 actual 4 NameError List not defined",
+                "memory_role": "repair_lesson",
+            }
+        }
+    )
+    generic = memory_factory(
+        title="Expected actual note",
+        summary="expected 5 actual 4",
+        tags=("reference",),
+    )
+    metadata_store.save_memory_item(boosted)
+    metadata_store.save_memory_item(generic)
+
+    retriever = LexicalRetriever(metadata_store)
+    result = retriever.retrieve(
+        RetrieveRequest(
+            query="function add expected 5 actual 4 NameError List not defined",
+            scopes=(scope,),
+            limit=2,
+        )
+    )
+
+    assert [candidate.memory.memory_id for candidate in result.candidates] == [
+        boosted.memory_id,
+        generic.memory_id,
+    ]
+    assert result.candidates[0].explanation.metadata["lexical_boost_score"] > 0.0
+    assert "metadata:function_name" in result.candidates[0].explanation.matched_fields
+    assert "metadata:feedback_signature" in result.candidates[0].explanation.matched_fields
+
+
+def test_lexical_retriever_boosts_anchor_symbol_and_path_matches(
+    metadata_store,
+    memory_factory,
+    scope,
+    anchor_evidence,
+) -> None:
+    anchored = memory_factory(
+        title="Builder lesson",
+        summary="Use the stored symbol-specific repair guidance.",
+        evidence=(anchor_evidence.model_copy(update={"summary": "src/parser.py::target"}),),
+        tags=("builder",),
+    )
+    generic = memory_factory(
+        title="Parser note",
+        summary="parser target guidance",
+        tags=("parser", "target"),
+    )
+    metadata_store.save_memory_item(anchored)
+    metadata_store.save_memory_item(generic)
+
+    retriever = LexicalRetriever(metadata_store)
+    result = retriever.retrieve(
+        RetrieveRequest(
+            query="src example py target",
+            scopes=(scope,),
+            limit=2,
+        )
+    )
+
+    assert [candidate.memory.memory_id for candidate in result.candidates] == [
+        anchored.memory_id,
+        generic.memory_id,
+    ]
+    assert result.candidates[0].explanation.metadata["lexical_boost_score"] > 0.0
+    assert "anchor_path" in result.candidates[0].explanation.matched_fields
+    assert "anchor_symbol" in result.candidates[0].explanation.matched_fields

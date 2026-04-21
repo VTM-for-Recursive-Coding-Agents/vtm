@@ -25,11 +25,9 @@ from vtm.benchmarks.models import (
 )
 from vtm.benchmarks.openrouter import execution_model, openrouter_api_key, openrouter_base_url
 from vtm.benchmarks.repo_materialization import RepoWorkspaceManager
-from vtm.benchmarks.symbol_index import SymbolIndexer
-from vtm.enums import EvidenceBudget, EvidenceKind, MemoryKind, ScopeKind, ValidityStatus
-from vtm.harness.executors import (
-    RLMBenchmarkExecutor,
-)
+from vtm.benchmarks.symbol_index import SymbolIndexer, SymbolSnapshot
+from vtm.enums import EvidenceBudget, EvidenceKind, MemoryKind, ValidityStatus
+from vtm.harness.executors import DSPyReActBenchmarkExecutor, ExecutorMemoryRuntime
 from vtm.harness.models import ExecutorRequest, HarnessTaskPack, TaskMemoryContextItem
 from vtm.harness.scoring import changed_path_metrics, patch_similarity
 from vtm.harness.workspace import (
@@ -57,7 +55,6 @@ from vtm.stores import (
     SqliteCacheStore,
     SqliteMetadataStore,
 )
-from vtm_rlm.context import RLMRuntimeContext
 
 PATH_HINT_RE = re.compile(r"[A-Za-z0-9_./-]+\.py")
 IDENTIFIER_HINT_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
@@ -84,6 +81,24 @@ class PreparedCodingTask:
     retrieval_relocated_count: int = 0
     retrieval_stale_filtered_count: int = 0
     retrieval_stale_hit_rate: float = 0.0
+    visible_task_context: VisibleTaskContext | None = None
+    seed_symbols: dict[tuple[str, str], SymbolSnapshot] | None = None
+    memory_seed_ref: str | None = None
+
+
+@dataclass(frozen=True)
+class AttemptTaskMaterialization:
+    """Attempt-local task-pack payload and retrieval metadata."""
+
+    task_pack: HarnessTaskPack
+    task_file: Path
+    memory_context: tuple[TaskMemoryContextItem, ...]
+    context_chars: int
+    retrieval_verified_count: int = 0
+    retrieval_relocated_count: int = 0
+    retrieval_stale_filtered_count: int = 0
+    retrieval_stale_hit_rate: float = 0.0
+    failure_handoff_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -146,21 +161,24 @@ def run_coding_suite(
             symbol_indexer=symbol_indexer,
             kernel_factory=kernel_factory,
         )
-        attempt_results_by_case[task.case_id] = [
-            evaluate_coding_attempt(
-                repo_root=repo_root,
-                repo_spec=repo_spec,
-                pair=pair,
-                task=task,
-                prepared_task=prepared_task,
-                output_dir=output_dir,
-                config=config,
-                workspace_backend=workspace_backend,
-                kernel_factory=kernel_factory,
-                attempt_index=attempt_index,
+        case_attempts: list[BenchmarkAttemptResult] = []
+        for attempt_index in range(1, config.attempt_count + 1):
+            case_attempts.append(
+                evaluate_coding_attempt(
+                    repo_root=repo_root,
+                    repo_spec=repo_spec,
+                    pair=pair,
+                    task=task,
+                    prepared_task=prepared_task,
+                    output_dir=output_dir,
+                    config=config,
+                    workspace_backend=workspace_backend,
+                    kernel_factory=kernel_factory,
+                    attempt_index=attempt_index,
+                    previous_attempts=tuple(case_attempts),
+                )
             )
-            for attempt_index in range(1, config.attempt_count + 1)
-        ]
+        attempt_results_by_case[task.case_id] = case_attempts
 
     results = [
         aggregate_attempt_results(
@@ -339,6 +357,9 @@ def prepare_coding_task(
         retrieval_relocated_count=retrieval_relocated_count,
         retrieval_stale_filtered_count=retrieval_stale_filtered_count,
         retrieval_stale_hit_rate=retrieval_stale_hit_rate,
+        visible_task_context=visible_task_context,
+        seed_symbols=seed_symbols if config.mode != "no_memory" else None,
+        memory_seed_ref=memory_seed_ref,
     )
 
 
@@ -352,7 +373,7 @@ def coding_retrieve_request(
 ) -> RetrieveRequest:
     """Build the retrieval request that matches the configured benchmark mode."""
     resolved_mode = resolved_benchmark_mode(mode)
-    if resolved_mode in {"verified_lexical", "lexical_rlm_rerank"}:
+    if resolved_mode == "verified_lexical":
         return RetrieveRequest(
             query=query,
             scopes=(scope,),
@@ -1012,6 +1033,258 @@ def _coerce_timeout_text(value: str | bytes | None) -> str:
     return value.strip()
 
 
+def materialize_attempt_task(
+    *,
+    prepared_task: PreparedCodingTask,
+    prepared_workspace: PreparedWorkspace,
+    task: CodingTaskCase,
+    config: BenchmarkRunConfig,
+    kernel: TransactionalMemoryKernel | None,
+    scope: VisibilityScope | None,
+    current_dependency: Any | None,
+    previous_attempts: tuple[BenchmarkAttemptResult, ...],
+) -> AttemptTaskMaterialization:
+    """Create the attempt-local task pack consumed by the executor."""
+    if (
+        config.mode == "no_memory"
+        or kernel is None
+        or scope is None
+        or current_dependency is None
+        or prepared_task.visible_task_context is None
+    ):
+        return AttemptTaskMaterialization(
+            task_pack=prepared_task.task_pack,
+            task_file=prepared_task.task_file,
+            memory_context=prepared_task.memory_context,
+            context_chars=prepared_task.context_chars,
+            retrieval_verified_count=prepared_task.retrieval_verified_count,
+            retrieval_relocated_count=prepared_task.retrieval_relocated_count,
+            retrieval_stale_filtered_count=prepared_task.retrieval_stale_filtered_count,
+            retrieval_stale_hit_rate=prepared_task.retrieval_stale_hit_rate,
+        )
+
+    visible_task_context = attempt_visible_task_context(
+        base_context=prepared_task.visible_task_context,
+        previous_attempts=previous_attempts,
+    )
+    seed_task_conditioned_memories(
+        kernel=kernel,
+        scope=scope,
+        task=task,
+        current_dependency=current_dependency,
+        visible_task_context=visible_task_context,
+    )
+    retrieval_result = kernel.retrieve(
+        coding_retrieve_request(
+            mode=config.mode,
+            query=visible_task_context.retrieval_query,
+            scope=scope,
+            limit=coding_candidate_pool_limit(config.top_k),
+            current_dependency=current_dependency,
+        )
+    )
+    selected_candidates = rerank_coding_candidates(
+        retrieval_result.candidates,
+        visible_task_context=visible_task_context,
+        top_k=config.top_k,
+    )
+    retrieved_memory_context = tuple(
+        memory_context_payload(
+            candidate.memory,
+            candidate.score,
+            candidate.explanation,
+        )
+        for candidate in selected_candidates
+    )
+    handoff_context = _previous_attempt_memory_context(previous_attempts)
+    memory_context = _merge_attempt_memory_context(
+        handoff_context,
+        retrieved_memory_context,
+        limit=config.top_k,
+    )
+    task_pack = prepared_task.task_pack.model_copy(
+        update={
+            "retrieval_query": visible_task_context.retrieval_query,
+            "verifier_output": visible_task_context.verifier_output,
+            "localization_notes": visible_task_context.localization_notes,
+            "memory_context": memory_context,
+        }
+    )
+    task_file = prepared_workspace.artifact_root / "task-pack.json"
+    task_file.write_text(
+        json.dumps(task_pack.model_dump(mode="json"), indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    context_chars = len(
+        json.dumps(
+            [item.model_dump(mode="json") for item in memory_context],
+            sort_keys=True,
+        )
+    )
+    return AttemptTaskMaterialization(
+        task_pack=task_pack,
+        task_file=task_file,
+        memory_context=memory_context,
+        context_chars=context_chars,
+        retrieval_verified_count=retrieval_result.verified_count,
+        retrieval_relocated_count=retrieval_result.relocated_count,
+        retrieval_stale_filtered_count=retrieval_result.stale_filtered_count,
+        retrieval_stale_hit_rate=retrieval_result.stale_hit_rate,
+        failure_handoff_count=len(handoff_context),
+    )
+
+
+def attempt_visible_task_context(
+    *,
+    base_context: VisibleTaskContext,
+    previous_attempts: tuple[BenchmarkAttemptResult, ...],
+) -> VisibleTaskContext:
+    """Augment visible retrieval signals with the latest failed-attempt feedback."""
+    if not previous_attempts:
+        return base_context
+
+    latest_attempt = previous_attempts[-1]
+    if bool(latest_attempt.metrics.get("passed", False)) or bool(
+        latest_attempt.metrics.get("resolved", False)
+    ):
+        return base_context
+
+    failure_excerpt = _latest_attempt_failure_excerpt(latest_attempt)
+    previous_changed_paths = tuple(
+        str(item).strip()
+        for item in latest_attempt.metadata.get("produced_changed_paths", ())
+        if str(item).strip()
+    )
+    if not failure_excerpt and not previous_changed_paths:
+        return base_context
+
+    path_hints = tuple(dict.fromkeys((*base_context.path_hints, *previous_changed_paths)))
+    module_hints = tuple(
+        dict.fromkeys((*base_context.module_hints, *_extract_module_hints(previous_changed_paths)))
+    )
+    failure_signatures = tuple(
+        dict.fromkeys(
+            (*base_context.failure_signatures, *_extract_failure_signatures(failure_excerpt))
+        )
+    )
+    localization_notes = list(base_context.localization_notes)
+    if previous_changed_paths:
+        localization_notes.append(
+            "Previous failed attempt changed: " + ", ".join(previous_changed_paths)
+        )
+    if failure_excerpt:
+        localization_notes.append(
+            "Previous failed attempt verifier signal: "
+            + _clip_visible_text(failure_excerpt.replace("\n", " "), max_chars=220)
+        )
+    localization_tuple = tuple(dict.fromkeys(note for note in localization_notes if note))
+    query_parts = _unique_visible_parts(
+        *base_context.retrieval_query_parts,
+        " ".join(previous_changed_paths),
+        failure_excerpt,
+    )
+    return VisibleTaskContext(
+        retrieval_query=" ".join(query_parts).strip(),
+        retrieval_query_parts=query_parts,
+        verifier_output=failure_excerpt or base_context.verifier_output,
+        localization_notes=localization_tuple,
+        path_hints=path_hints,
+        module_hints=module_hints,
+        symbol_hints=base_context.symbol_hints,
+        failure_signatures=failure_signatures,
+    )
+
+
+def _latest_attempt_failure_excerpt(attempt: BenchmarkAttemptResult) -> str | None:
+    for key in (
+        "final_verification_stderr_path",
+        "final_verification_stdout_path",
+        "executor_stderr_path",
+    ):
+        excerpt = _read_attempt_text_excerpt(attempt.metadata.get(key))
+        if excerpt:
+            return excerpt
+    infra_error = str(attempt.metadata.get("infra_error") or "").strip()
+    if infra_error:
+        return _clip_visible_text(infra_error, max_chars=700)
+    return None
+
+
+def _read_attempt_text_excerpt(path_value: Any) -> str | None:
+    path_text = str(path_value or "").strip()
+    if not path_text:
+        return None
+    path = Path(path_text)
+    if not path.exists():
+        return None
+    contents = path.read_text(encoding="utf-8").strip()
+    if not contents:
+        return None
+    return _clip_visible_text(contents, max_chars=700)
+
+
+def _previous_attempt_memory_context(
+    previous_attempts: tuple[BenchmarkAttemptResult, ...],
+) -> tuple[TaskMemoryContextItem, ...]:
+    if not previous_attempts:
+        return ()
+    latest_attempt = previous_attempts[-1]
+    if bool(latest_attempt.metrics.get("passed", False)) or bool(
+        latest_attempt.metrics.get("resolved", False)
+    ):
+        return ()
+
+    changed_paths = tuple(
+        str(item).strip()
+        for item in latest_attempt.metadata.get("produced_changed_paths", ())
+        if str(item).strip()
+    )
+    failure_excerpt = _latest_attempt_failure_excerpt(latest_attempt)
+    if not changed_paths and not failure_excerpt:
+        return ()
+
+    attempt_index = latest_attempt.attempt_index
+    summary_parts: list[str] = [f"Attempt {attempt_index} failed and needs repair."]
+    if changed_paths:
+        summary_parts.append("Changed files: " + ", ".join(changed_paths[:4]))
+    if failure_excerpt:
+        summary_parts.append(
+            "Verifier signal: "
+            + _clip_visible_text(failure_excerpt.replace("\n", " "), max_chars=180)
+        )
+    matched_terms = tuple(
+        sorted(_hint_terms(" ".join(changed_paths), failure_excerpt))[:8]
+    )
+    return (
+        TaskMemoryContextItem(
+            memory_id=f"attempt-handoff:{latest_attempt.case_id}:{attempt_index:02d}",
+            title=f"Repair Handoff From Attempt {attempt_index}",
+            summary=_clip_visible_text(" ".join(summary_parts), max_chars=260),
+            score=10_000.0,
+            status="working_memory",
+            relative_path=changed_paths[0] if changed_paths else None,
+            matched_terms=matched_terms,
+            matched_fields=("produced_changed_paths", "verifier_output"),
+            relevance_reason=(
+                "Derived from the latest failed attempt so the next pass can repair "
+                "the in-flight solution instead of restarting."
+            ),
+        ),
+    )
+
+
+def _merge_attempt_memory_context(
+    handoff_context: tuple[TaskMemoryContextItem, ...],
+    retrieved_context: tuple[TaskMemoryContextItem, ...],
+    *,
+    limit: int,
+) -> tuple[TaskMemoryContextItem, ...]:
+    if not handoff_context:
+        return retrieved_context
+    remaining = max(0, limit - len(handoff_context))
+    return (*handoff_context, *retrieved_context[:remaining])
+
+
 def evaluate_coding_attempt(
     *,
     repo_root: Path,
@@ -1024,6 +1297,7 @@ def evaluate_coding_attempt(
     workspace_backend: WorkspaceBackend,
     kernel_factory: BenchmarkKernelFactory,
     attempt_index: int,
+    previous_attempts: tuple[BenchmarkAttemptResult, ...] = (),
 ) -> BenchmarkAttemptResult:
     """Execute one concrete attempt for a coding task."""
     executed = False
@@ -1053,6 +1327,18 @@ def evaluate_coding_attempt(
     artifacts: FilesystemArtifactStore | None = None
     cache: SqliteCacheStore | None = None
     durable_scope: VisibilityScope | None = None
+    current_dependency: Any | None = None
+    memory_runtime: ExecutorMemoryRuntime | None = None
+    attempt_task = AttemptTaskMaterialization(
+        task_pack=prepared_task.task_pack,
+        task_file=prepared_task.task_file,
+        memory_context=prepared_task.memory_context,
+        context_chars=prepared_task.context_chars,
+        retrieval_verified_count=prepared_task.retrieval_verified_count,
+        retrieval_relocated_count=prepared_task.retrieval_relocated_count,
+        retrieval_stale_filtered_count=prepared_task.retrieval_stale_filtered_count,
+        retrieval_stale_hit_rate=prepared_task.retrieval_stale_hit_rate,
+    )
 
     try:
         prepared_workspace = workspace_backend.prepare_workspace(
@@ -1065,17 +1351,6 @@ def evaluate_coding_attempt(
             command_timeout_seconds=config.workspace_command_timeout_seconds,
             max_output_chars=config.workspace_max_output_chars,
         )
-        executor_request = ExecutorRequest(
-            case_id=task.case_id,
-            task_file=str(prepared_task.task_file),
-            workspace=str(prepared_workspace.workspace_root),
-            artifact_root=str(prepared_workspace.artifact_root),
-            attempt_index=prepared_workspace.attempt_index,
-            workspace_backend=prepared_workspace.backend_name,
-            test_command=task.test_command,
-        )
-        session_id = f"{task.case_id}-{config.mode}-attempt-{attempt_index:02d}"
-        task_scope = VisibilityScope(kind=ScopeKind.TASK, scope_id=session_id)
         if config.mode != "no_memory":
             kernel, metadata, artifacts, cache, durable_scope = kernel_factory.open_kernel(
                 repo_root=repo_root,
@@ -1083,25 +1358,60 @@ def evaluate_coding_attempt(
                 pair=pair,
                 output_dir=output_dir,
             )
-        runtime_context = RLMRuntimeContext(
-            kernel=kernel,
-            task_scope=task_scope if kernel is not None else None,
-            durable_scope=durable_scope,
-            dependency_builder=(
-                kernel_factory.dependency_builder() if kernel is not None else None
-            ),
+            if prepared_task.seed_symbols is None:
+                raise ValueError("memory-enabled coding attempts require seeded symbols")
+            kernel_factory.seed_memories(
+                kernel,
+                repo_root,
+                repo_spec.repo_name,
+                pair,
+                prepared_task.seed_symbols,
+                durable_scope,
+                dependency_ref=prepared_task.memory_seed_ref,
+            )
+            current_dependency = benchmark_dependency_fingerprint(
+                kernel_factory=kernel_factory,
+                repo_root=repo_root,
+                pair=pair,
+            )
+            if metadata is not None and durable_scope is not None:
+                memory_runtime = ExecutorMemoryRuntime(
+                    kernel=kernel,
+                    scopes=(durable_scope,),
+                    dependency_provider=lambda: current_dependency,
+                    memory_lookup=metadata.get_memory_item,
+                )
+            attempt_task = materialize_attempt_task(
+                prepared_task=prepared_task,
+                prepared_workspace=prepared_workspace,
+                task=task,
+                config=config,
+                kernel=kernel,
+                scope=durable_scope,
+                current_dependency=current_dependency,
+                previous_attempts=previous_attempts,
+            )
+        executor_request = ExecutorRequest(
+            case_id=task.case_id,
+            task_file=str(attempt_task.task_file),
+            workspace=str(prepared_workspace.workspace_root),
+            artifact_root=str(prepared_workspace.artifact_root),
+            attempt_index=prepared_workspace.attempt_index,
+            workspace_backend=prepared_workspace.backend_name,
+            test_command=task.test_command,
         )
-        model_id = execution_model(config.rlm_model_id)
-        outcome = RLMBenchmarkExecutor(
+        model_id = execution_model(config.execution_model_id)
+        outcome = DSPyReActBenchmarkExecutor(
             model_id=model_id,
             base_url=openrouter_base_url(),
             api_key=openrouter_api_key(),
-            max_iterations=config.rlm_max_iterations,
-            max_timeout_seconds=config.rlm_max_runtime_seconds,
+            max_iterations=config.agent_max_iterations,
+            command_timeout_seconds=config.workspace_command_timeout_seconds,
+            max_output_chars=config.workspace_max_output_chars,
         ).execute(
             request=executor_request,
             prepared_workspace=prepared_workspace,
-            runtime_context=runtime_context,
+            memory_runtime=memory_runtime,
         )
         executed = True
 
@@ -1224,20 +1534,22 @@ def evaluate_coding_attempt(
             "infra_failure": infra_failure,
             "runtime_ms": runtime_ms,
             "patch_similarity": patch_similarity_score,
-            "retrieval_usage_rate": 0.0 if not prepared_task.memory_context else 1.0,
-            "verified_count": prepared_task.retrieval_verified_count,
-            "relocated_count": prepared_task.retrieval_relocated_count,
-            "stale_filtered_count": prepared_task.retrieval_stale_filtered_count,
-            "stale_hit_rate": prepared_task.retrieval_stale_hit_rate,
-            "context_chars": prepared_task.context_chars,
+            "retrieval_usage_rate": 0.0 if not attempt_task.memory_context else 1.0,
+            "verified_count": attempt_task.retrieval_verified_count,
+            "relocated_count": attempt_task.retrieval_relocated_count,
+            "stale_filtered_count": attempt_task.retrieval_stale_filtered_count,
+            "stale_hit_rate": attempt_task.retrieval_stale_hit_rate,
+            "context_chars": attempt_task.context_chars,
+            "failure_handoff_count": attempt_task.failure_handoff_count,
             **(outcome.agent_metrics if outcome is not None else {}),
         },
         metadata={
-            "task_file": str(prepared_task.task_file),
+            "task_file": str(attempt_task.task_file),
             "touched_paths": list(prepared_task.touched_paths),
             "expected_changed_paths": list(prepared_task.expected_changed_paths),
             "target_patch_digest": prepared_task.target_patch_digest,
-            "memory_context_count": len(prepared_task.memory_context),
+            "memory_context_count": len(attempt_task.memory_context),
+            "failure_handoff_count": attempt_task.failure_handoff_count,
             "memory_mode": config.mode,
             "top_k": config.top_k,
             "task_kind": task.task_kind,
@@ -1245,13 +1557,13 @@ def evaluate_coding_attempt(
             "execution_style": task.execution_style,
             "evaluation_backend": task.evaluation_backend,
             "problem_statement": task.problem_statement,
-            "hints_text": task.hints_text,
+            "hints_text": attempt_task.task_pack.hints_text,
             "fail_to_pass_tests": list(task.fail_to_pass_tests),
             "pass_to_pass_tests": list(task.pass_to_pass_tests),
-            "verifier_output": prepared_task.task_pack.verifier_output,
-            "localization_notes": list(prepared_task.task_pack.localization_notes),
+            "verifier_output": attempt_task.task_pack.verifier_output,
+            "localization_notes": list(attempt_task.task_pack.localization_notes),
             "gold_test_patch_digest": task.gold_test_patch_digest,
-            "retrieval_query": prepared_task.task_pack.retrieval_query,
+            "retrieval_query": attempt_task.task_pack.retrieval_query,
             "base_ref": pair.base_ref,
             "head_ref": pair.head_ref,
             "commit_pair_label": pair.label,

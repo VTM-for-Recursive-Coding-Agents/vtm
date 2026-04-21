@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from vtm.adapters.rlm import RLMRankedCandidate, RLMRankRequest, RLMRankResponse
 from vtm.artifacts import ArtifactRecord
 from vtm.benchmarks import (
     BenchmarkManifest,
@@ -152,31 +151,6 @@ def test_core_models_round_trip(
             stderr_artifact_id="art_stderr",
             status=ValidityStatus.VERIFIED,
             reason="procedure validator exit code matched expected",
-        ),
-        RLMRankRequest(
-            query="parser",
-            candidates=(
-                RLMRankedCandidate(
-                    candidate_id=memory.memory_id,
-                    title=memory.title,
-                    summary=memory.summary,
-                    status=ValidityStatus.VERIFIED,
-                ),
-            ),
-        ),
-        RLMRankResponse(
-            candidates=(
-                RLMRankedCandidate(
-                    candidate_id=memory.memory_id,
-                    title=memory.title,
-                    summary=memory.summary,
-                    status=ValidityStatus.VERIFIED,
-                    rlm_score=0.8,
-                    final_score=0.8,
-                    reason="direct match",
-                ),
-            ),
-            model_name="fake-model",
         ),
         BenchmarkManifest(
             manifest_id="synthetic",

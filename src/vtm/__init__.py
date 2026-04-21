@@ -13,7 +13,6 @@ from vtm.adapters.python_ast import (
     PythonAstAnchorRelocator,
     PythonAstSyntaxAdapter,
 )
-from vtm.adapters.rlm import RLMAdapter, RLMRankedCandidate, RLMRankRequest, RLMRankResponse
 from vtm.adapters.runtime import (
     DEFAULT_TOOL_PROBES,
     EnvFingerprintAdapter,
@@ -73,7 +72,6 @@ from vtm.services import (
     NoopConsolidator,
     ProcedureValidator,
     Retriever,
-    RLMRerankingRetriever,
     TransactionalMemoryKernel,
     Verifier,
 )
@@ -147,11 +145,6 @@ __all__ = [
     "PythonAstAnchorRelocator",
     "PythonAstSyntaxAdapter",
     "PythonTreeSitterSyntaxAdapter",
-    "RLMAdapter",
-    "RLMRankRequest",
-    "RLMRankResponse",
-    "RLMRankedCandidate",
-    "RLMRerankingRetriever",
     "RepoFingerprint",
     "RetrieveCandidate",
     "RetrieveExplanation",

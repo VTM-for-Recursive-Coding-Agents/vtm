@@ -9,15 +9,18 @@ from typing import Any
 import pytest
 
 import vtm_dspy
-from vtm.benchmarks.livecodebench_dspy_pilot import describe_method_runtime
+from vtm.benchmarks.livecodebench_dspy_pilot import (
+    describe_method_runtime,
+    open_memory_session,
+    open_persistent_memory_session,
+    run_dspy_attempt,
+)
 from vtm.enums import ValidityStatus
 from vtm.fingerprints import DependencyFingerprint
 from vtm.retrieval import RetrieveCandidate, RetrieveExplanation, RetrieveRequest, RetrieveResult
 from vtm.verification import VerificationResult
 from vtm_dspy.config import DSPyOpenRouterConfig
 from vtm_dspy.react_agent import VTMReActCodingAgent
-from vtm_dspy.rlm_adapter import VTMRLMContextAdapter, make_vtm_rlm
-from vtm_dspy.rlm_agent import VTMRLMCodingAgent, rlm_interpreter_availability
 from vtm_dspy.tools import VTMMemoryTools
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -131,6 +134,46 @@ def test_vtm_memory_tools_work_with_fake_kernel(
     assert kernel.verify_calls[0][0] == item.memory_id
 
 
+def test_vtm_memory_tools_buffer_write_proposals(
+    memory_factory,
+    dep_fp: DependencyFingerprint,
+    scope,
+) -> None:
+    item = memory_factory()
+    kernel = FakeKernel(item=item, dep_fp=dep_fp)
+    tools = VTMMemoryTools(
+        kernel=kernel,
+        scopes=(scope,),
+        dependency_provider=lambda: dep_fp,
+        memory_lookup=lambda memory_id: item if memory_id == item.memory_id else None,
+    )
+
+    lesson = tools.propose_memory_lesson(
+        "Off-by-one repair",
+        "When public tests are off by one, re-check inclusive bounds before returning.",
+        rationale="Observed during repair after a public mismatch.",
+        transfer_terms="bounds,off_by_one",
+        function_name="solve",
+        repair_kind="public_test_logic_mismatch",
+        interface_mode="top_level_function",
+    )
+    failure = tools.propose_failure_pattern(
+        "expected 5 actual 4",
+        "Mismatched totals usually indicate the subtraction branch survived instead of the sum branch.",
+        transfer_terms="logic_mismatch,sum",
+    )
+    drained = tools.drain_write_proposals()
+
+    assert lesson["status"] == "buffered"
+    assert failure["status"] == "buffered"
+    assert len(drained) == 2
+    assert drained[0]["memory_role"] == "repair_lesson"
+    assert drained[0]["function_name"] == "solve"
+    assert drained[0]["transfer_terms"] == ["bounds", "off_by_one"]
+    assert drained[1]["proposal_kind"] == "failure_pattern"
+    assert tools.drain_write_proposals() == []
+
+
 def test_react_agent_constructs_tools_without_running_a_model(
     memory_factory,
     dep_fp: DependencyFingerprint,
@@ -149,6 +192,9 @@ def test_react_agent_constructs_tools_without_running_a_model(
 
     assert "search_verified_memory" in agent.tool_names()
     assert "search_naive_memory" in agent.tool_names()
+    assert "propose_memory_lesson" in agent.tool_names()
+    assert "propose_failure_pattern" in agent.tool_names()
+    assert "propose_solution_pattern" in agent.tool_names()
     assert "read_file" in agent.tool_names()
     assert "run_command" in agent.tool_names()
     description = agent.describe()
@@ -175,13 +221,18 @@ def test_react_agent_uses_plain_predict_when_no_tools(monkeypatch: pytest.Monkey
             return FakeProgram("predict")
 
         @staticmethod
-        def ReAct(signature: str, tools: list[object]) -> FakeProgram:
+        def ReAct(
+            signature: str,
+            tools: list[object],
+            max_iters: int | None = None,
+        ) -> FakeProgram:
             calls.append(f"react:{signature}:{len(tools)}")
+            assert max_iters is not None
             return FakeProgram("react")
 
     agent = VTMReActCodingAgent(kernel=None, scopes=(), workspace_root=None)
     monkeypatch.setattr("vtm_dspy.react_agent.require_dspy", lambda: FakeDSPy)
-    monkeypatch.setattr(agent, "create_lm", lambda: object())
+    monkeypatch.setattr(agent, "create_lm", lambda **_: object())
 
     program = agent.create_program()
 
@@ -211,131 +262,24 @@ def test_react_agent_uses_react_when_tools_are_available(
             return FakeProgram("predict")
 
         @staticmethod
-        def ReAct(signature: str, tools: list[object]) -> FakeProgram:
+        def ReAct(
+            signature: str,
+            tools: list[object],
+            max_iters: int | None = None,
+        ) -> FakeProgram:
             calls.append(f"react:{signature}:{len(tools)}")
+            assert max_iters is not None
             return FakeProgram("react")
 
     agent = VTMReActCodingAgent(kernel=None, scopes=(), workspace_root=tmp_path)
     monkeypatch.setattr("vtm_dspy.react_agent.require_dspy", lambda: FakeDSPy)
-    monkeypatch.setattr(agent, "create_lm", lambda: object())
+    monkeypatch.setattr(agent, "create_lm", lambda **_: object())
 
     program = agent.create_program()
 
     assert isinstance(program, FakeProgram)
     assert program.kind == "react"
     assert calls == ["react:task -> response:4"]
-
-
-def test_make_vtm_rlm_constructs_dspy_rlm(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[tuple[str, dict[str, object]]] = []
-
-    class FakeProgram:
-        def __init__(self, signature: str, **kwargs: object) -> None:
-            calls.append((signature, kwargs))
-
-    class FakeDSPy:
-        @staticmethod
-        def RLM(signature: str, **kwargs: object) -> FakeProgram:
-            return FakeProgram(signature, **kwargs)
-
-    adapter = VTMRLMContextAdapter.from_kernel(kernel=None, scopes=())
-    monkeypatch.setattr("vtm_dspy.rlm_adapter.require_dspy", lambda: FakeDSPy)
-
-    program = make_vtm_rlm(adapter=adapter, signature="task, context -> response", query="parser")
-
-    assert isinstance(program, FakeProgram)
-    assert calls == [("task, context -> response", {"tools": []})]
-
-
-def test_rlm_agent_constructs_dspy_rlm_when_tools_are_available(
-    monkeypatch: pytest.MonkeyPatch,
-    memory_factory,
-    dep_fp: DependencyFingerprint,
-    scope,
-) -> None:
-    item = memory_factory()
-    kernel = FakeKernel(item=item, dep_fp=dep_fp)
-    calls: list[tuple[str, object]] = []
-
-    class FakeProgram:
-        def __init__(self, signature: str, **kwargs: object) -> None:
-            self.signature = signature
-            self.kwargs = kwargs
-            self.lm = None
-            calls.append((signature, kwargs.get("tools")))
-
-        def set_lm(self, lm) -> None:
-            self.lm = lm
-
-    class FakeDSPy:
-        @staticmethod
-        def RLM(signature: str, **kwargs: object) -> FakeProgram:
-            return FakeProgram(signature, **kwargs)
-
-    agent = VTMRLMCodingAgent(
-        kernel=kernel,
-        scopes=(scope,),
-        dependency_provider=lambda: dep_fp,
-        memory_lookup=lambda memory_id: item if memory_id == item.memory_id else None,
-    )
-    monkeypatch.setattr("vtm_dspy.rlm_adapter.require_dspy", lambda: FakeDSPy)
-    monkeypatch.setattr("vtm_dspy.rlm_agent.require_dspy", lambda: FakeDSPy)
-    monkeypatch.setattr(agent, "create_lm", lambda: object())
-
-    program = agent.create_program()
-
-    assert isinstance(program, FakeProgram)
-    assert program.signature == "task, context -> response"
-    assert program.kwargs["max_iterations"] == 8
-    assert program.kwargs["max_llm_calls"] == 16
-    assert len(program.kwargs["tools"]) == 4
-    assert calls == [("task, context -> response", program.kwargs["tools"])]
-
-
-def test_rlm_agent_handles_known_dspy_none_code_bug(monkeypatch: pytest.MonkeyPatch) -> None:
-    class FakeProgram:
-        def __call__(self, *, task: str, context: dict[str, object]) -> object:
-            raise AttributeError("'NoneType' object has no attribute 'strip'")
-
-    agent = VTMRLMCodingAgent(kernel=None, scopes=())
-    monkeypatch.setattr("vtm_dspy.rlm_agent.rlm_interpreter_availability", lambda: (True, None))
-    monkeypatch.setattr(agent, "create_program", lambda *, signature="task, context -> response": FakeProgram())
-
-    result = agent.run("Solve it")
-
-    assert result["response"]["response"] == ""
-    assert "code=None" in result["response"]["error"]
-    assert "execution_error" in result["trajectory"]
-
-
-def test_rlm_agent_reports_missing_deno_prerequisite(monkeypatch: pytest.MonkeyPatch) -> None:
-    agent = VTMRLMCodingAgent(kernel=None, scopes=())
-    monkeypatch.setattr(
-        "vtm_dspy.rlm_agent.rlm_interpreter_availability",
-        lambda: (False, "Deno required for DSPy RLM."),
-    )
-
-    result = agent.run("Solve it")
-
-    assert result["response"]["response"] == ""
-    assert result["response"]["error"] == "Deno required for DSPy RLM."
-    assert result["trajectory"]["execution_mode"] == "rlm_unavailable"
-
-
-def test_rlm_interpreter_availability_reports_missing_deno(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    rlm_interpreter_availability.cache_clear()
-    monkeypatch.setattr("vtm_dspy.rlm_agent.shutil.which", lambda name: None)
-    try:
-        available, error = rlm_interpreter_availability()
-    finally:
-        rlm_interpreter_availability.cache_clear()
-
-    assert available is False
-    assert error is not None
-    assert "deno" in error.lower()
-
 
 def test_livecodebench_dspy_vtm_runtime_exposes_memory_tools() -> None:
     runtime = describe_method_runtime(
@@ -352,9 +296,9 @@ def test_livecodebench_dspy_vtm_runtime_exposes_memory_tools() -> None:
     assert "verify_memory" in runtime.tool_names
 
 
-def test_livecodebench_dspy_rlm_vtm_runtime_exposes_memory_tools() -> None:
+def test_livecodebench_dspy_vtm_local_only_runtime_exposes_memory_tools() -> None:
     runtime = describe_method_runtime(
-        "dspy_rlm_vtm",
+        "dspy_vtm_local_only",
         model="qwen/qwen3-coder-next",
         base_url="https://openrouter.example/api/v1",
         api_key="openrouter-test-key",
@@ -363,24 +307,211 @@ def test_livecodebench_dspy_rlm_vtm_runtime_exposes_memory_tools() -> None:
     assert runtime.uses_dspy is True
     assert runtime.uses_vtm_memory is True
     assert runtime.memory_tools_enabled is True
-    assert runtime.rlm_available is True
     assert "search_verified_memory" in runtime.tool_names
-    assert "verify_memory" in runtime.tool_names
 
 
-def test_livecodebench_dspy_rlm_baseline_runtime_hides_memory_tools() -> None:
+def test_livecodebench_dspy_vtm_persistent_only_runtime_exposes_memory_tools() -> None:
     runtime = describe_method_runtime(
-        "dspy_rlm_baseline",
+        "dspy_vtm_persistent_only",
         model="qwen/qwen3-coder-next",
         base_url="https://openrouter.example/api/v1",
         api_key="openrouter-test-key",
     )
 
     assert runtime.uses_dspy is True
-    assert runtime.uses_vtm_memory is False
-    assert runtime.memory_tools_enabled is False
-    assert runtime.rlm_available is True
-    assert runtime.tool_names == ()
+    assert runtime.uses_vtm_memory is True
+    assert runtime.memory_tools_enabled is True
+    assert "search_verified_memory" in runtime.tool_names
+
+
+def test_livecodebench_dspy_vtm_attempt_exposes_memory_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(self, task: str, *, signature: str = "task -> response") -> dict[str, Any]:
+        del task, signature
+        captured["tool_names"] = self.tool_names()
+        captured["memory_tools_enabled"] = self.memory_tools.enabled
+        captured["max_iters"] = self.max_iters
+        return {
+            "response": {"response": "```python\npass\n```"},
+            "trajectory": {"execution_mode": "react", "diagnostics": {}},
+        }
+
+    monkeypatch.setattr(VTMReActCodingAgent, "run", fake_run)
+    session = open_memory_session(
+        state_root=tmp_path / "pilot-session",
+        problem_id="example-problem",
+        workspace_root=tmp_path,
+    )
+    try:
+        payload = run_dspy_attempt(
+            prompt="solve it",
+            method="dspy_vtm",
+            session=session,
+            model_config=DSPyOpenRouterConfig(
+                base_url="https://openrouter.example/api/v1",
+                api_key="openrouter-test-key",
+                execution_model="google/gemma-test",
+                rerank_model="google/rerank-test",
+                dspy_model="openrouter/google/gemma-test",
+            ),
+            attempt_index=2,
+        )
+    finally:
+        session.close()
+
+    assert captured["memory_tools_enabled"] is True
+    assert captured["max_iters"] == 10
+    assert "search_verified_memory" in captured["tool_names"]
+    assert "search_naive_memory" in captured["tool_names"]
+    assert "expand_memory_evidence" in captured["tool_names"]
+    assert "verify_memory" in captured["tool_names"]
+    assert payload["response_text"] == "```python\npass\n```"
+
+
+def test_livecodebench_dspy_vtm_local_only_attempt_exposes_memory_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(self, task: str, *, signature: str = "task -> response") -> dict[str, Any]:
+        del task, signature
+        captured["tool_names"] = self.tool_names()
+        captured["memory_tools_enabled"] = self.memory_tools.enabled
+        captured["max_iters"] = self.max_iters
+        return {
+            "response": {"response": "```python\npass\n```"},
+            "trajectory": {"execution_mode": "react", "diagnostics": {}},
+        }
+
+    monkeypatch.setattr(VTMReActCodingAgent, "run", fake_run)
+    session = open_memory_session(
+        state_root=tmp_path / "pilot-session",
+        problem_id="example-problem",
+        workspace_root=tmp_path,
+    )
+    try:
+        payload = run_dspy_attempt(
+            prompt="solve it",
+            method="dspy_vtm_local_only",
+            session=session,
+            model_config=DSPyOpenRouterConfig(
+                base_url="https://openrouter.example/api/v1",
+                api_key="openrouter-test-key",
+                execution_model="google/gemma-test",
+                rerank_model="google/rerank-test",
+                dspy_model="openrouter/google/gemma-test",
+            ),
+            attempt_index=2,
+        )
+    finally:
+        session.close()
+
+    assert captured["memory_tools_enabled"] is True
+    assert captured["max_iters"] == 10
+    assert "search_verified_memory" in captured["tool_names"]
+    assert payload["response_text"] == "```python\npass\n```"
+
+
+def test_livecodebench_dspy_vtm_persistent_only_attempt_exposes_memory_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(self, task: str, *, signature: str = "task -> response") -> dict[str, Any]:
+        del task, signature
+        captured["tool_names"] = self.tool_names()
+        captured["memory_tools_enabled"] = self.memory_tools.enabled
+        captured["max_iters"] = self.max_iters
+        return {
+            "response": {"response": "```python\npass\n```"},
+            "trajectory": {"execution_mode": "react", "diagnostics": {}},
+        }
+
+    monkeypatch.setattr(VTMReActCodingAgent, "run", fake_run)
+    session = open_persistent_memory_session(
+        state_root=tmp_path / "persistent-session",
+        scenario="self_repair",
+        model="qwen/qwen3-coder-next",
+        workspace_root=tmp_path,
+    )
+    try:
+        payload = run_dspy_attempt(
+            prompt="solve it",
+            method="dspy_vtm_persistent_only",
+            session=session,
+            model_config=DSPyOpenRouterConfig(
+                base_url="https://openrouter.example/api/v1",
+                api_key="openrouter-test-key",
+                execution_model="google/gemma-test",
+                rerank_model="google/rerank-test",
+                dspy_model="openrouter/google/gemma-test",
+            ),
+            attempt_index=2,
+        )
+    finally:
+        session.close()
+
+    assert captured["memory_tools_enabled"] is True
+    assert captured["max_iters"] == 10
+    assert "search_verified_memory" in captured["tool_names"]
+    assert payload["response_text"] == "```python\npass\n```"
+
+
+def test_livecodebench_dspy_vtm_attempt_one_keeps_write_tools_but_hides_lookup_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(self, task: str, *, signature: str = "task -> response") -> dict[str, Any]:
+        del task, signature
+        captured["tool_names"] = self.tool_names()
+        captured["memory_tools_enabled"] = self.memory_tools.enabled
+        captured["max_iters"] = self.max_iters
+        return {
+            "response": {"response": "```python\npass\n```"},
+            "trajectory": {"execution_mode": "react", "diagnostics": {}},
+        }
+
+    monkeypatch.setattr(VTMReActCodingAgent, "run", fake_run)
+    session = open_memory_session(
+        state_root=tmp_path / "pilot-session",
+        problem_id="example-problem",
+        workspace_root=tmp_path,
+    )
+    try:
+        payload = run_dspy_attempt(
+            prompt="solve it",
+            method="dspy_vtm",
+            session=session,
+            model_config=DSPyOpenRouterConfig(
+                base_url="https://openrouter.example/api/v1",
+                api_key="openrouter-test-key",
+                execution_model="google/gemma-test",
+                rerank_model="google/rerank-test",
+                dspy_model="openrouter/google/gemma-test",
+            ),
+            attempt_index=1,
+        )
+    finally:
+        session.close()
+
+    assert captured["memory_tools_enabled"] is True
+    assert captured["max_iters"] == 8
+    assert "search_verified_memory" not in captured["tool_names"]
+    assert "search_naive_memory" not in captured["tool_names"]
+    assert "expand_memory_evidence" not in captured["tool_names"]
+    assert "verify_memory" not in captured["tool_names"]
+    assert "propose_memory_lesson" in captured["tool_names"]
+    assert "propose_failure_pattern" in captured["tool_names"]
+    assert "propose_solution_pattern" in captured["tool_names"]
+    assert payload["response_text"] == "```python\npass\n```"
 
 
 def test_livecodebench_dspy_baseline_runtime_hides_memory_tools() -> None:
@@ -394,8 +525,43 @@ def test_livecodebench_dspy_baseline_runtime_hides_memory_tools() -> None:
     assert runtime.uses_dspy is True
     assert runtime.uses_vtm_memory is False
     assert runtime.memory_tools_enabled is False
-    assert runtime.rlm_available is False
     assert runtime.tool_names == ()
+
+
+def test_livecodebench_dspy_baseline_attempt_hides_memory_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(self, task: str, *, signature: str = "task -> response") -> dict[str, Any]:
+        del task, signature
+        captured["tool_names"] = self.tool_names()
+        captured["memory_tools_enabled"] = self.memory_tools.enabled
+        captured["max_iters"] = self.max_iters
+        return {
+            "response": {"response": "```python\npass\n```"},
+            "trajectory": {"execution_mode": "predict", "diagnostics": {}},
+        }
+
+    monkeypatch.setattr(VTMReActCodingAgent, "run", fake_run)
+
+    payload = run_dspy_attempt(
+        prompt="solve it",
+        method="dspy_baseline",
+        session=None,
+        model_config=DSPyOpenRouterConfig(
+            base_url="https://openrouter.example/api/v1",
+            api_key="openrouter-test-key",
+            execution_model="google/gemma-test",
+            rerank_model="google/rerank-test",
+            dspy_model="openrouter/google/gemma-test",
+        ),
+    )
+
+    assert captured["memory_tools_enabled"] is False
+    assert captured["max_iters"] == 8
+    assert captured["tool_names"] == ()
+    assert payload["response_text"] == "```python\npass\n```"
 
 
 def test_openrouter_config_maps_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -414,6 +580,66 @@ def test_openrouter_config_maps_env_vars(monkeypatch: pytest.MonkeyPatch) -> Non
     assert config.dspy_model == "openrouter/google/gemma-test"
     assert config.lm_model_name() == "openai/google/gemma-test"
     assert config.as_env()["VTM_DSPY_MODEL"] == "openrouter/google/gemma-test"
+
+
+def test_openrouter_config_includes_optional_lm_kwargs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-key")
+    monkeypatch.setenv("VTM_OPENROUTER_BASE_URL", "https://openrouter.example/api/v1")
+
+    config = DSPyOpenRouterConfig.from_env(
+        execution_model_name="google/gemma-test",
+        dspy_model_name="google/gemma-test",
+        temperature=0.25,
+        max_tokens=4096,
+    )
+
+    assert config.lm_kwargs() == {
+        "api_base": "https://openrouter.example/api/v1",
+        "model_type": "chat",
+        "api_key": "openrouter-test-key",
+        "temperature": 0.25,
+        "max_tokens": 4096,
+    }
+
+
+def test_react_agent_create_lm_forwards_sampling_kwargs(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class FakeDSPy:
+        @staticmethod
+        def LM(model: str, **kwargs: object) -> object:
+            calls.append((model, dict(kwargs)))
+            return object()
+
+    agent = VTMReActCodingAgent(
+        kernel=None,
+        scopes=(),
+        model_config=DSPyOpenRouterConfig(
+            base_url="https://openrouter.example/api/v1",
+            api_key="openrouter-test-key",
+            execution_model="google/gemma-test",
+            rerank_model="google/rerank-test",
+            dspy_model="openrouter/google/gemma-test",
+            temperature=0.25,
+            max_tokens=4096,
+        ),
+    )
+    monkeypatch.setattr("vtm_dspy.react_agent.require_dspy", lambda: FakeDSPy)
+
+    agent.create_lm()
+
+    assert calls == [
+        (
+            "openai/google/gemma-test",
+            {
+                "api_base": "https://openrouter.example/api/v1",
+                "model_type": "chat",
+                "api_key": "openrouter-test-key",
+                "temperature": 0.25,
+                "max_tokens": 4096,
+            },
+        )
+    ]
 
 
 def test_docs_frame_dspy_and_livecodebench_correctly() -> None:

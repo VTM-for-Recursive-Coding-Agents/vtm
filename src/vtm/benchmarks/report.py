@@ -17,14 +17,12 @@ MODE_ORDER: dict[BenchmarkMode, int] = {
     "no_memory": 0,
     "naive_lexical": 1,
     "verified_lexical": 2,
-    "lexical_rlm_rerank": 3,
 }
 
 MODE_LABELS: dict[BenchmarkMode, str] = {
     "no_memory": "No Memory",
     "naive_lexical": "Naive Lexical",
     "verified_lexical": "Verified Lexical",
-    "lexical_rlm_rerank": "Lexical + RLM Rerank",
 }
 
 CSV_BASE_FIELDS = (
@@ -72,8 +70,12 @@ CODING_METRIC_ORDER = (
     "resolved_rate",
     "patch_applied_rate",
     "pass_at_1",
+    "attempt_1_pass_rate",
+    "attempt_2_rescue_rate",
     "median_runtime_ms",
     "retrieval_usage_rate",
+    "memory_used_rate",
+    "memory_helped_when_used_rate",
     "mean_verified_count",
     "mean_relocated_count",
     "mean_stale_filtered_count",

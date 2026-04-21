@@ -63,6 +63,8 @@ class DSPyOpenRouterConfig:
     rerank_model: str
     dspy_model: str
     model_type: str = DEFAULT_DSPY_MODEL_TYPE
+    temperature: float | None = None
+    max_tokens: int | None = None
 
     @classmethod
     def from_env(
@@ -73,6 +75,8 @@ class DSPyOpenRouterConfig:
         execution_model_name: str | None = None,
         rerank_model_name: str | None = None,
         dspy_model_name: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> DSPyOpenRouterConfig:
         """Resolve one consistent config bundle from the repo's environment variables."""
         base_url = _normalize_non_empty(
@@ -89,6 +93,8 @@ class DSPyOpenRouterConfig:
             execution_model=execution,
             rerank_model=rerank,
             dspy_model=dspy_model,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
 
     def require_api_key(self) -> str:
@@ -103,14 +109,18 @@ class DSPyOpenRouterConfig:
         """Return the DSPy LM id for OpenAI-compatible OpenRouter access."""
         return resolve_dspy_lm_model(self.dspy_model)
 
-    def lm_kwargs(self) -> dict[str, str]:
+    def lm_kwargs(self) -> dict[str, object]:
         """Return keyword arguments suitable for `dspy.LM(...)`."""
-        kwargs = {
+        kwargs: dict[str, object] = {
             "api_base": self.base_url,
             "model_type": self.model_type,
         }
         if self.api_key is not None:
             kwargs["api_key"] = self.api_key
+        if self.temperature is not None:
+            kwargs["temperature"] = self.temperature
+        if self.max_tokens is not None:
+            kwargs["max_tokens"] = self.max_tokens
         return kwargs
 
     def as_env(self) -> dict[str, str]:

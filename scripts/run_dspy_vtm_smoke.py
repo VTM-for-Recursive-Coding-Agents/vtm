@@ -23,7 +23,6 @@ from vtm.stores.cache_store import SqliteCacheStore
 from vtm.stores.sqlite_store import SqliteMetadataStore
 from vtm_dspy.config import DSPyOpenRouterConfig
 from vtm_dspy.react_agent import VTMReActCodingAgent
-from vtm_dspy.rlm_adapter import VTMRLMContextAdapter
 
 
 def parse_args() -> argparse.Namespace:
@@ -149,13 +148,6 @@ def main() -> int:
             memory_lookup=metadata_store.get_memory_item,
             model_config=model_config,
         )
-        rlm_adapter = VTMRLMContextAdapter.from_kernel(
-            kernel=kernel,
-            scopes=(scope,),
-            dependency_provider=lambda: dependency,
-            memory_lookup=metadata_store.get_memory_item,
-            model_config=model_config,
-        )
         payload: dict[str, object] = {
             "dry_run": not args.run_model,
             "agent": agent.describe(),
@@ -163,7 +155,6 @@ def main() -> int:
             "query": args.query,
             "naive_results": agent.memory_tools.search_naive_memory(args.query),
             "verified_results": agent.memory_tools.search_verified_memory(args.query),
-            "rlm_context": rlm_adapter.build_context(args.query),
         }
         if args.run_model:
             payload["result"] = agent.run(args.task)

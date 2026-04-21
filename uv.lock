@@ -1220,27 +1220,19 @@ dspy = [
 openai = [
     { name = "openai" },
 ]
-rlm = [
-    { name = "openai" },
-    { name = "python-dotenv" },
-    { name = "rich" },
-]
 
 [package.metadata]
 requires-dist = [
     { name = "dspy", marker = "extra == 'dspy'", specifier = ">=3.1,<4.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.14" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=2.26,<3.0" },
-    { name = "openai", marker = "extra == 'rlm'", specifier = ">=2.26,<3.0" },
     { name = "pydantic", specifier = ">=2.12,<3.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3" },
-    { name = "python-dotenv", marker = "extra == 'rlm'", specifier = ">=1.0,<2.0" },
-    { name = "rich", marker = "extra == 'rlm'", specifier = ">=13.0,<14.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
     { name = "tree-sitter", specifier = ">=0.25,<0.26" },
     { name = "tree-sitter-python", specifier = ">=0.25,<0.26" },
 ]
-provides-extras = ["dev", "dspy", "openai", "rlm", "bench"]
+provides-extras = ["dev", "dspy", "openai", "bench"]
 
 [[package]]
 name = "xxhash"

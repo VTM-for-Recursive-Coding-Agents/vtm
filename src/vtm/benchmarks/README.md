@@ -2,7 +2,7 @@
 
 Purpose: manifest-driven orchestration for the final retrieval, drift, and coding study.
 
-Maintained surface: OpenRouter-only inference, static retrieval, drift verification, drifted retrieval, controlled coding-drift, and optional `lexical_rlm_rerank`. Earlier branches explored Codex paths, embeddings, and terminal-only tracks, but those are outside the maintained surface now.
+Maintained surface: OpenRouter-only inference, static retrieval, drift verification, drifted retrieval, and controlled coding-drift. Earlier branches explored Codex paths, embeddings, and terminal-only tracks, but those are outside the maintained surface now.
 
 Use this README for package ownership only. For maintained commands, use [`docs/benchmark-recipes.md`](../../../docs/benchmark-recipes.md).
 

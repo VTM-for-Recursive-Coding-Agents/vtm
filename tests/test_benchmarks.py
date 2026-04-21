@@ -5,7 +5,6 @@ import math
 import subprocess
 from pathlib import Path
 
-from vtm.adapters.rlm import RLMRankRequest, RLMRankResponse
 from vtm.benchmarks import BenchmarkManifest, BenchmarkRunConfig, BenchmarkRunner
 from vtm.benchmarks.coding_suite import (
     VisibleTaskContext,
@@ -24,9 +23,9 @@ from vtm.benchmarks.synthetic import (
     SyntheticPythonSmokeCorpus,
 )
 from vtm.enums import MemoryKind, ValidityStatus
+from vtm.harness.executors import build_benchmark_task_prompt
 from vtm.harness.models import HarnessTaskPack
 from vtm.retrieval import RetrieveCandidate, RetrieveExplanation
-from vtm_rlm.prompting import build_phase1_task_prompt
 
 
 def _run(repo: Path, *args: str) -> str:
@@ -169,26 +168,6 @@ def _seed_controlled_task_memories(
         kernel_factory.close_kernel_stores(metadata, artifacts, cache)
 
 
-class FakeBenchmarkRLMAdapter:
-    def rank_candidates(self, request: RLMRankRequest) -> RLMRankResponse:
-        reranked = tuple(
-            candidate.model_copy(
-                update={
-                    "rlm_score": float(len(request.candidates) - index + 1),
-                    "final_score": float(len(request.candidates) - index + 1),
-                    "reason": f"benchmark-rerank-{candidate.candidate_id}",
-                }
-            )
-            for index, candidate in enumerate(request.candidates, start=1)
-        )
-        return RLMRankResponse(candidates=reranked, model_name="fake-benchmark-model")
-
-
-class FailingBenchmarkRLMAdapter:
-    def rank_candidates(self, request: RLMRankRequest) -> RLMRankResponse:
-        raise RuntimeError("benchmark rerank failure")
-
-
 def test_manifest_lock_is_deterministic_for_identical_runs(tmp_path: Path) -> None:
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
     config_one = BenchmarkRunConfig(
@@ -326,11 +305,11 @@ def test_git_repo_checkout_supports_local_remote(tmp_path: Path) -> None:
     assert (tmp_path / "git-run" / "corpus" / "local_git_repo").exists()
 
 
-def test_coding_suite_writes_task_pack_and_executes_rlm(
+def test_coding_suite_writes_task_pack_and_executes_agent(
     tmp_path: Path,
-    install_fake_vendored_rlm,
+    install_fake_benchmark_agent,
 ) -> None:
-    install_fake_vendored_rlm()
+    install_fake_benchmark_agent()
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
     result = BenchmarkRunner(
         manifest,
@@ -341,7 +320,7 @@ def test_coding_suite_writes_task_pack_and_executes_rlm(
             output_dir=str(tmp_path / "coding"),
             top_k=3,
             max_cases=1,
-            rlm_model_id="fake-model",
+            execution_model_id="fake-model",
         ),
     ).run()
 
@@ -369,9 +348,9 @@ def test_coding_suite_writes_task_pack_and_executes_rlm(
 
 def test_coding_suite_supports_naive_lexical_mode(
     tmp_path: Path,
-    install_fake_vendored_rlm,
+    install_fake_benchmark_agent,
 ) -> None:
-    install_fake_vendored_rlm()
+    install_fake_benchmark_agent()
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
     result = BenchmarkRunner(
         manifest,
@@ -382,7 +361,7 @@ def test_coding_suite_supports_naive_lexical_mode(
             output_dir=str(tmp_path / "coding-naive"),
             top_k=3,
             max_cases=1,
-            rlm_model_id="fake-model",
+            execution_model_id="fake-model",
         ),
     ).run()
 
@@ -403,9 +382,9 @@ def test_coding_suite_supports_naive_lexical_mode(
 
 def test_coding_suite_executor_writes_benchmark_local_artifacts(
     tmp_path: Path,
-    install_fake_vendored_rlm,
+    install_fake_benchmark_agent,
 ) -> None:
-    install_fake_vendored_rlm()
+    install_fake_benchmark_agent()
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
     result = BenchmarkRunner(
         manifest,
@@ -417,7 +396,7 @@ def test_coding_suite_executor_writes_benchmark_local_artifacts(
             top_k=3,
             max_cases=1,
             pair_filters=("bugfix",),
-            rlm_model_id="fake-model",
+            execution_model_id="fake-model",
         ),
     ).run()
 
@@ -705,9 +684,9 @@ def test_rerank_coding_candidates_prefers_structural_matches(
 
 def test_controlled_coding_drift_task_pack_hides_expected_changed_paths_from_prompt(
     tmp_path: Path,
-    install_fake_vendored_rlm,
+    install_fake_benchmark_agent,
 ) -> None:
-    install_fake_vendored_rlm()
+    install_fake_benchmark_agent()
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/controlled-coding-drift.json")
     result = BenchmarkRunner(
         manifest,
@@ -719,7 +698,7 @@ def test_controlled_coding_drift_task_pack_hides_expected_changed_paths_from_pro
             pair_filters=("stale_api_name",),
             max_cases=1,
             top_k=5,
-            rlm_model_id="fake-model",
+            execution_model_id="fake-model",
         ),
     ).run()
 
@@ -729,7 +708,7 @@ def test_controlled_coding_drift_task_pack_hides_expected_changed_paths_from_pro
             tmp_path / "controlled-coding" / "task-packs" / "controlled_stale_api_name.json"
         ).read_text(encoding="utf-8")
     )
-    prompt = build_phase1_task_prompt(task_pack, Path("/tmp/workspace"))
+    prompt = build_benchmark_task_prompt(task_pack)
 
     assert task_pack.expected_changed_paths == ("parser.py",)
     assert "Expected Changed Paths" not in prompt
@@ -738,9 +717,9 @@ def test_controlled_coding_drift_task_pack_hides_expected_changed_paths_from_pro
 
 def test_controlled_coding_drift_verified_mode_records_stale_filtering(
     tmp_path: Path,
-    install_fake_vendored_rlm,
+    install_fake_benchmark_agent,
 ) -> None:
-    install_fake_vendored_rlm()
+    install_fake_benchmark_agent()
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/controlled-coding-drift.json")
     result = BenchmarkRunner(
         manifest,
@@ -751,7 +730,7 @@ def test_controlled_coding_drift_verified_mode_records_stale_filtering(
             output_dir=str(tmp_path / "controlled-coding-verified"),
             pair_filters=("stale_api_name", "relocated_helper", "stale_invariant"),
             top_k=5,
-            rlm_model_id="fake-model",
+            execution_model_id="fake-model",
         ),
     ).run()
 
@@ -766,9 +745,9 @@ def test_controlled_coding_drift_verified_mode_records_stale_filtering(
 
 def test_controlled_coding_drift_verified_mode_records_retrieval_metadata_with_seeded_memories(
     tmp_path: Path,
-    install_fake_vendored_rlm,
+    install_fake_benchmark_agent,
 ) -> None:
-    install_fake_vendored_rlm()
+    install_fake_benchmark_agent()
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/controlled-coding-drift.json")
     result = BenchmarkRunner(
         manifest,
@@ -780,7 +759,7 @@ def test_controlled_coding_drift_verified_mode_records_retrieval_metadata_with_s
             pair_filters=("validation_procedure",),
             max_cases=1,
             top_k=5,
-            rlm_model_id="fake-model",
+            execution_model_id="fake-model",
         ),
     ).run()
 
@@ -810,9 +789,9 @@ def test_controlled_coding_drift_verified_mode_records_retrieval_metadata_with_s
 
 def test_coding_suite_reports_multiple_tasks_and_filtering(
     tmp_path: Path,
-    install_fake_vendored_rlm,
+    install_fake_benchmark_agent,
 ) -> None:
-    install_fake_vendored_rlm()
+    install_fake_benchmark_agent()
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
     result = BenchmarkRunner(
         manifest,
@@ -822,7 +801,7 @@ def test_coding_suite_reports_multiple_tasks_and_filtering(
             mode="no_memory",
             output_dir=str(tmp_path / "coding-many"),
             pair_filters=("bugfix", "sentinel"),
-            rlm_model_id="fake-model",
+            execution_model_id="fake-model",
         ),
     ).run()
 
@@ -837,8 +816,8 @@ def test_coding_suite_reports_multiple_tasks_and_filtering(
     assert {case["commit_pair_id"] for case in cases} == {"bugfix", "sentinel"}
 
 
-def test_coding_summary_compares_modes(tmp_path: Path, install_fake_vendored_rlm) -> None:
-    install_fake_vendored_rlm()
+def test_coding_summary_compares_modes(tmp_path: Path, install_fake_benchmark_agent) -> None:
+    install_fake_benchmark_agent()
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
     no_memory = BenchmarkRunner(
         manifest,
@@ -849,7 +828,7 @@ def test_coding_summary_compares_modes(tmp_path: Path, install_fake_vendored_rlm
             output_dir=str(tmp_path / "coding-no-memory"),
             pair_filters=("bugfix",),
             max_cases=1,
-            rlm_model_id="fake-model",
+            execution_model_id="fake-model",
         ),
     ).run()
     verified = BenchmarkRunner(
@@ -861,7 +840,7 @@ def test_coding_summary_compares_modes(tmp_path: Path, install_fake_vendored_rlm
             output_dir=str(tmp_path / "coding-verified"),
             pair_filters=("bugfix",),
             max_cases=1,
-            rlm_model_id="fake-model",
+            execution_model_id="fake-model",
         ),
     ).run()
 
@@ -870,6 +849,70 @@ def test_coding_summary_compares_modes(tmp_path: Path, install_fake_vendored_rlm
     assert no_memory.metrics["retrieval_usage_rate"] == 0.0
     assert verified.metrics["retrieval_usage_rate"] == 1.0
     assert verified.metrics["mean_verified_count"] >= 1.0
+
+
+def test_coding_attempt_two_retrieval_uses_previous_failed_attempt_signals(
+    tmp_path: Path,
+    install_fake_benchmark_agent,
+) -> None:
+    def apply_attempt_update(task_pack, workspace_root: Path, artifact_root: Path) -> None:
+        del task_pack
+        attempt_dir = next(
+            (
+                path
+                for path in reversed(artifact_root.parents)
+                if path.name.startswith("attempt-")
+            ),
+            None,
+        )
+        if attempt_dir is None or attempt_dir.name != "attempt-01":
+            return
+        module_path = workspace_root / "bugfix_module.py"
+        updated_source = (
+            module_path.read_text(encoding="utf-8")
+            + "\n# previous failed attempt touched this file\n"
+        )
+        module_path.write_text(
+            updated_source,
+            encoding="utf-8",
+        )
+
+    install_fake_benchmark_agent(apply_workspace_update=apply_attempt_update)
+    manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
+    result = BenchmarkRunner(
+        manifest,
+        BenchmarkRunConfig(
+            manifest_path="benchmarks/manifests/synthetic-smoke.json",
+            suite="coding",
+            mode="verified_lexical",
+            output_dir=str(tmp_path / "coding-attempt-conditioned"),
+            pair_filters=("bugfix",),
+            max_cases=1,
+            attempt_count=2,
+            pass_k_values=(1, 2),
+            execution_model_id="fake-model",
+        ),
+    ).run()
+
+    attempts = [
+        json.loads(line)
+        for line in Path(result.artifacts["attempts_jsonl"])
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    second_attempt_task_pack = HarnessTaskPack.from_json(
+        Path(attempts[1]["metadata"]["task_file"]).read_text(encoding="utf-8")
+    )
+
+    assert attempts[1]["metadata"]["task_file"].endswith("attempt-02/task-pack.json")
+    assert any(
+        note == "Previous failed attempt changed: bugfix_module.py"
+        for note in second_attempt_task_pack.localization_notes
+    )
+    assert any(
+        item.title == "Repair Handoff From Attempt 1"
+        for item in second_attempt_task_pack.memory_context
+    )
 
 
 def test_coding_runner_rejects_unknown_pair_filters(tmp_path: Path) -> None:
@@ -884,7 +927,7 @@ def test_coding_runner_rejects_unknown_pair_filters(tmp_path: Path) -> None:
             mode="verified_lexical",
             output_dir=str(tmp_path / "coding-bad-pair"),
                 pair_filters=("missing_pair",),
-                rlm_model_id="fake-model",
+                execution_model_id="fake-model",
             ),
         ).run()
     except ValueError as exc:
@@ -895,7 +938,7 @@ def test_coding_runner_rejects_unknown_pair_filters(tmp_path: Path) -> None:
 
 def test_coding_changed_path_metrics_detect_extra_paths(
     tmp_path: Path,
-    install_fake_vendored_rlm,
+    install_fake_benchmark_agent,
 ) -> None:
     def apply_extra_change(task_pack, workspace_root: Path, artifact_root: Path) -> None:
         del task_pack, artifact_root
@@ -917,7 +960,7 @@ def test_coding_changed_path_metrics_detect_extra_paths(
             encoding="utf-8",
         )
 
-    install_fake_vendored_rlm(apply_workspace_update=apply_extra_change)
+    install_fake_benchmark_agent(apply_workspace_update=apply_extra_change)
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
     result = BenchmarkRunner(
         manifest,
@@ -928,7 +971,7 @@ def test_coding_changed_path_metrics_detect_extra_paths(
             output_dir=str(tmp_path / "coding-extra-path"),
             pair_filters=("bugfix",),
             max_cases=1,
-            rlm_model_id="fake-model",
+            execution_model_id="fake-model",
         ),
     ).run()
 
@@ -941,9 +984,9 @@ def test_coding_changed_path_metrics_detect_extra_paths(
 
 def test_coding_changed_path_metrics_detect_missing_patch(
     tmp_path: Path,
-    install_fake_vendored_rlm,
+    install_fake_benchmark_agent,
 ) -> None:
-    install_fake_vendored_rlm(
+    install_fake_benchmark_agent(
         apply_workspace_update=lambda task_pack, workspace_root, artifact_root: None
     )
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
@@ -956,7 +999,7 @@ def test_coding_changed_path_metrics_detect_missing_patch(
             output_dir=str(tmp_path / "coding-empty-patch"),
             pair_filters=("bugfix",),
             max_cases=1,
-            rlm_model_id="fake-model",
+            execution_model_id="fake-model",
         ),
     ).run()
 
@@ -1145,31 +1188,6 @@ def test_runner_rejects_unknown_repo_or_pair_filters(tmp_path: Path) -> None:
         raise AssertionError("expected unknown pair filter to fail")
 
 
-def test_synthetic_reranking_benchmark_run_works_with_fake_adapter(tmp_path: Path) -> None:
-    manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
-
-    result = BenchmarkRunner(
-        manifest,
-        BenchmarkRunConfig(
-            manifest_path="benchmarks/manifests/synthetic-smoke.json",
-            suite="retrieval",
-            mode="lexical_rlm_rerank",
-            output_dir=str(tmp_path / "rerank"),
-            max_cases=2,
-        ),
-        rlm_adapter=FakeBenchmarkRLMAdapter(),
-    ).run()
-
-    rows = [
-        json.loads(line)
-        for line in Path(result.artifacts["results_jsonl"]).read_text(encoding="utf-8").splitlines()
-    ]
-
-    assert result.case_count == 2
-    assert rows[0]["metadata"]["slice_name"] in {"smoke_identity", "taskish_behavior"}
-    assert rows[0]["metrics"]["rank"] is not None
-
-
 def test_synthetic_naive_lexical_benchmark_run_uses_plain_lexical_retrieval(
     tmp_path: Path,
 ) -> None:
@@ -1274,25 +1292,3 @@ def test_drifted_retrieval_tracks_valid_recall_and_stale_rejection(
     assert verified.metrics["stale_rejection_rate"] == 1.0
     assert verified.metrics["stale_hit_rate"] == 0.0
     assert verified.metrics["valid_recall_at_1"] > verified.metrics["recall_at_1"]
-
-
-def test_synthetic_reranking_benchmark_run_falls_back_on_adapter_failure(tmp_path: Path) -> None:
-    manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
-
-    result = BenchmarkRunner(
-        manifest,
-        BenchmarkRunConfig(
-            manifest_path="benchmarks/manifests/synthetic-smoke.json",
-            suite="retrieval",
-            mode="lexical_rlm_rerank",
-            output_dir=str(tmp_path / "rerank-failure"),
-            max_cases=1,
-        ),
-        rlm_adapter=FailingBenchmarkRLMAdapter(),
-    ).run()
-
-    result_rows = Path(result.artifacts["results_jsonl"]).read_text(encoding="utf-8").splitlines()
-    row = json.loads(result_rows[0])
-
-    assert result.case_count == 1
-    assert row["metrics"]["rank"] is not None

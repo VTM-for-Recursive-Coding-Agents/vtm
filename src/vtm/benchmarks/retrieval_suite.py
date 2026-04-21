@@ -123,19 +123,18 @@ def run_retrieval_suite(
                         scopes=(scope,),
                         statuses=(
                             tuple(ValidityStatus)
-                            if resolved_mode in {"verified_lexical", "lexical_rlm_rerank"}
+                            if resolved_mode == "verified_lexical"
                             else None
                         ),
                         evidence_budget=EvidenceBudget.SUMMARY_ONLY,
                         limit=top_k,
                         current_dependency=(
                             current_dependency
-                            if resolved_mode in {"verified_lexical", "lexical_rlm_rerank"}
+                            if resolved_mode == "verified_lexical"
                             else None
                         ),
-                        verify_on_read=resolved_mode in {"verified_lexical", "lexical_rlm_rerank"},
-                        return_verified_only=resolved_mode
-                        in {"verified_lexical", "lexical_rlm_rerank"},
+                        verify_on_read=resolved_mode == "verified_lexical",
+                        return_verified_only=resolved_mode == "verified_lexical",
                     )
                 )
                 latency_ms = (time.perf_counter() - started) * 1000

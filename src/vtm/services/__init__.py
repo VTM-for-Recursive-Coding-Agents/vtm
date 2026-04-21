@@ -8,7 +8,6 @@ from vtm.services.procedures import (
     DockerProcedureValidator,
     ProcedureValidator,
 )
-from vtm.services.reranking_retriever import RLMRerankingRetriever
 from vtm.services.retriever import LexicalRetriever, Retriever
 from vtm.services.verifier import BasicVerifier, Verifier
 
@@ -23,7 +22,6 @@ __all__ = [
     "MemoryKernel",
     "NoopConsolidator",
     "ProcedureValidator",
-    "RLMRerankingRetriever",
     "Retriever",
     "TransactionalMemoryKernel",
     "Verifier",

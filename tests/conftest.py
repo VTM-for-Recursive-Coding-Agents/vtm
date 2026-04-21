@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -15,6 +14,7 @@ from vtm.anchors import CodeAnchor
 from vtm.enums import EvidenceKind, MemoryKind, ScopeKind, ValidityStatus
 from vtm.evidence import ArtifactRef, EvidenceRef
 from vtm.fingerprints import DependencyFingerprint, EnvFingerprint, RepoFingerprint, ToolVersion
+from vtm.harness.models import HarnessTaskPack
 from vtm.memory_items import (
     ClaimPayload,
     MemoryItem,
@@ -32,7 +32,6 @@ from vtm.services.verifier import BasicVerifier
 from vtm.stores.artifact_store import FilesystemArtifactStore
 from vtm.stores.cache_store import SqliteCacheStore
 from vtm.stores.sqlite_store import SqliteMetadataStore
-from vtm_rlm.execution import VendoredRLMRunResult
 
 DEFAULT_PROCEDURE_VALIDATOR = object()
 
@@ -266,30 +265,13 @@ def kernel(
 
 
 @pytest.fixture
-def install_fake_vendored_rlm(monkeypatch: pytest.MonkeyPatch):
+def install_fake_benchmark_agent(monkeypatch: pytest.MonkeyPatch):
     def _install(
         *,
         apply_workspace_update: Callable[[Any, Path, Path], None] | None = None,
-        response: str = "FINAL(Applied synthetic vendored-RLM update.)",
+        response: str = "FINAL(Applied synthetic benchmark update.)",
     ) -> None:
-        def fake_run_vendored_rlm(
-            *,
-            task_pack,
-            workspace_root: Path,
-            artifact_root: Path,
-            model_id: str,
-            kernel,
-            scopes,
-            max_iterations: int,
-            max_depth: int,
-            max_timeout_seconds: int,
-            base_url: str | None = None,
-            api_key: str | None = None,
-        ) -> VendoredRLMRunResult:
-            del kernel, scopes, max_iterations, max_depth, max_timeout_seconds, base_url, api_key
-            artifact_root.mkdir(parents=True, exist_ok=True)
-            trajectory_dir = artifact_root / "trajectory"
-            trajectory_dir.mkdir(parents=True, exist_ok=True)
+        def _apply_update(task_pack, workspace_root: Path, artifact_root: Path) -> None:
             if apply_workspace_update is None:
                 diff_result = subprocess.run(
                     [
@@ -316,34 +298,33 @@ def install_fake_vendored_rlm(monkeypatch: pytest.MonkeyPatch):
             else:
                 apply_workspace_update(task_pack, workspace_root, artifact_root)
 
-            response_path = artifact_root / "response.txt"
-            response_path.write_text(response, encoding="utf-8")
-            completion_json_path = artifact_root / "completion.json"
-            completion_json_path.write_text(
-                json.dumps({"response": response, "model_id": model_id}, indent=2, sort_keys=True),
-                encoding="utf-8",
+        def fake_run_dspy_agent(self, agent, prompt: str):  # noqa: ANN001
+            del agent, prompt
+            task_pack = HarnessTaskPack.model_validate_json(
+                Path(self._active_request.task_file).read_text(encoding="utf-8")
             )
-            metadata_json_path = artifact_root / "trajectory.json"
-            metadata_json_path.write_text(
-                json.dumps({"model_id": model_id, "mode": "fake_vendored_rlm"}, indent=2),
-                encoding="utf-8",
-            )
-            return VendoredRLMRunResult(
-                response=response,
-                runtime_ms=25.0,
-                response_path=str(response_path),
-                completion_json_path=str(completion_json_path),
-                metadata_json_path=str(metadata_json_path),
-                trajectory_dir=str(trajectory_dir),
-                usage_summary={
-                    "total_input_tokens": 10,
-                    "total_output_tokens": 5,
-                    "total_cost": 0.0,
+            artifact_root = Path(self._active_artifact_root)
+            workspace_root = Path(self._active_workspace_root)
+            _apply_update(task_pack, workspace_root, artifact_root)
+            return {
+                "response": {"response": response},
+                "trajectory": {
+                    "execution_mode": "react",
+                    "diagnostics": {
+                        "lm_call_count": 1,
+                        "tool_call_count": 1,
+                        "total_lm_duration_ms": 25.0,
+                        "total_prompt_tokens": 10,
+                        "total_completion_tokens": 5,
+                        "truncated_lm_call_count": 0,
+                    },
                 },
-                metadata={"mode": "fake_vendored_rlm"},
-            )
+            }
 
-        monkeypatch.setattr("vtm.harness.executors.run_vendored_rlm", fake_run_vendored_rlm)
+        monkeypatch.setattr(
+            "vtm.harness.executors.DSPyReActBenchmarkExecutor._run_agent",
+            fake_run_dspy_agent,
+        )
 
     return _install
 

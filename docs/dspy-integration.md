@@ -5,7 +5,7 @@ DSPy is the recommended forward-facing agent and programming interface for VTM, 
 ## Scope
 
 - `vtm` remains the kernel for memory records, retrieval, verification, and benchmark logic.
-- `vtm_dspy` is optional and only loaded when you want a DSPy agent or DSPy RLM integration.
+- `vtm_dspy` is optional and only loaded when you want a DSPy agent integration.
 - The final quantitative evidence remains retrieval, drift verification, drifted retrieval, and controlled coding-drift.
 - `controlled_coding_drift` remains the small maintained agent-loop benchmark.
 - LiveCodeBench remains a baseline model coding benchmark only.
@@ -26,12 +26,6 @@ Optional DSPy environment:
 uv sync --dev --extra dspy
 ```
 
-If you want the existing vendored-RLM benchmark path as well:
-
-```bash
-uv sync --dev --extra dspy --extra rlm
-```
-
 ## OpenRouter Config
 
 The DSPy layer reuses the same OpenRouter settings as the maintained VTM benchmark surface.
@@ -40,7 +34,6 @@ The DSPy layer reuses the same OpenRouter settings as the maintained VTM benchma
 export OPENROUTER_API_KEY=...
 export VTM_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 export VTM_EXECUTION_MODEL=google/gemma-4-31b-it:free
-export VTM_RERANK_MODEL=nvidia/nemotron-3-nano-30b-a3b:free
 ```
 
 For the first paid coding-model run, prefer `qwen/qwen3-coder-next`.
@@ -80,12 +73,6 @@ Available controlled workspace tools when `workspace_root` is supplied:
 
 These file and command tools are confined to the explicit workspace root. They do not expose arbitrary filesystem access by default.
 
-## RLM Note
-
-`VTMRLMContextAdapter` is optional long-context glue for DSPy reasoning. It prepares verified memory cards for DSPy RLM-style flows, but it should not be treated as the maintained repo-editing executor.
-
-DSPy RLM's default execution sandbox uses Deno and Pyodide. That makes it a better fit for long-context reasoning and tool mediation than direct local repository editing, unless a custom interpreter is added later.
-
 ## Smoke Script
 
 Default dry-run mode:
@@ -113,10 +100,6 @@ uv run --extra dspy python scripts/run_dspy_vtm_smoke.py --run-model
 - a direct OpenRouter baseline
 - a DSPy ReAct baseline without VTM memory
 - DSPy ReAct with VTM verified-memory tools
-- a DSPy RLM baseline without VTM memory
-- DSPy RLM with VTM verified-memory tools
-
-The RLM variants are exploratory only and do not replace the ReAct path.
 
 It is deliberately separate from the maintained VTM evidence:
 

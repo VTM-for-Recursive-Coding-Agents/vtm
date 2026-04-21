@@ -12,8 +12,7 @@ This is the maintained snapshot of what still matters for the narrowed paper art
 - External coding prompts no longer expose oracle changed-path hints by default.
 - Corrective retry keeps using the same fairness policy, so external retry hints do not inject oracle changed-path targets.
 - Controlled coding-drift retrieval derives query and reranking hints from visible task text, tests, verifier output, and deterministic localization notes only; task-pack memory context now retains advisory match metadata for each retrieved memory.
-- Coding task packs are stable, executor artifacts are durable, and the maintained coding executor is the OpenRouter-backed RLM path.
-- Vendored-RLM integration remains thin: fixed OpenRouter-backed execution plus optional reranking.
+- Coding task packs are stable, executor artifacts are durable, and the maintained coding executor is the DSPy ReAct path.
 
 ## Limits
 
@@ -21,7 +20,7 @@ This is the maintained snapshot of what still matters for the narrowed paper art
 - Filesystem artifact writes and SQLite writes still do not share one atomic commit boundary.
 - `CommandProcedureValidator` is local-process only; Docker is the only built-in sandbox backend.
 - Repeated attempts and `pass@k` reporting exist only for coding suites.
-- The maintained benchmark modes are `no_memory`, `naive_lexical`, `verified_lexical`, and optional `lexical_rlm_rerank`.
+- The maintained benchmark modes are `no_memory`, `naive_lexical`, and `verified_lexical`.
 - The maintained benchmark layers are static retrieval, drift verification, drifted retrieval, and controlled coding-drift.
 - Historical branches covered embeddings, terminal-only tracks, and Codex execution, but those are outside the maintained surface now.
 

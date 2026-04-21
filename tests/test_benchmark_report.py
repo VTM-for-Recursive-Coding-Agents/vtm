@@ -6,7 +6,7 @@ from pathlib import Path
 
 from vtm.benchmarks import BenchmarkManifest, BenchmarkRunConfig, BenchmarkRunner
 from vtm.benchmarks import report as benchmark_report
-from vtm.benchmarks.models import BenchmarkCaseResult, BenchmarkRunResult
+from vtm.benchmarks.models import BenchmarkAttemptResult, BenchmarkCaseResult, BenchmarkRunResult
 from vtm.benchmarks.reporting import BenchmarkReporter
 from vtm.enums import ValidityStatus
 
@@ -128,9 +128,9 @@ def test_benchmark_reporter_computes_safe_retrieval_metrics() -> None:
 
 def test_export_paper_tables_writes_suite_csvs_and_combined_markdown(
     tmp_path: Path,
-    install_fake_vendored_rlm,
+    install_fake_benchmark_agent,
 ) -> None:
-    install_fake_vendored_rlm()
+    install_fake_benchmark_agent()
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
 
     retrieval_run = BenchmarkRunner(
@@ -162,7 +162,7 @@ def test_export_paper_tables_writes_suite_csvs_and_combined_markdown(
             output_dir=str(tmp_path / "coding"),
             pair_filters=("bugfix",),
             max_cases=1,
-            rlm_model_id="fake-model",
+            execution_model_id="fake-model",
         ),
     ).run()
 
@@ -220,9 +220,9 @@ def test_export_paper_tables_writes_suite_csvs_and_combined_markdown(
 
 def test_export_paper_tables_supports_controlled_coding_drift_runs(
     tmp_path: Path,
-    install_fake_vendored_rlm,
+    install_fake_benchmark_agent,
 ) -> None:
-    install_fake_vendored_rlm()
+    install_fake_benchmark_agent()
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/controlled-coding-drift.json")
 
     run_paths: list[str] = []
@@ -237,7 +237,7 @@ def test_export_paper_tables_supports_controlled_coding_drift_runs(
                 pair_filters=("stale_api_name",),
                 max_cases=1,
                 top_k=5,
-                rlm_model_id="fake-model",
+                execution_model_id="fake-model",
             ),
         ).run()
         run_paths.append(str(Path(run_result.artifacts["summary_json"])))
@@ -509,3 +509,243 @@ def test_export_paper_tables_resolves_runs_prefix_to_flat_coding_layout(
     assert coding_rows[0]["summary_json"] == str(summary_path)
     assert coding_rows[0]["corpus"] == "Controlled Coding Drift"
     assert metadata["input_summary_json_paths"]["coding"] == [str(summary_path)]
+
+
+def test_benchmark_reporter_surfaces_attempt_deltas_and_memory_help() -> None:
+    reporter = BenchmarkReporter()
+    results = [
+        BenchmarkCaseResult(
+            suite="coding",
+            mode="verified_lexical",
+            case_id="repair-case",
+            repo_name="synthetic_python_smoke",
+            commit_pair_id="bugfix",
+            metrics={
+                "executed": True,
+                "evaluated": True,
+                "passed": True,
+                "resolved": True,
+                "testable": True,
+                "patch_applied": True,
+                "produced_patch_nonempty": True,
+                    "retrieval_usage_rate": 1.0,
+                    "verified_count": 2,
+                    "relocated_count": 0,
+                    "stale_filtered_count": 0,
+                    "stale_hit_rate": 0.0,
+                    "patch_similarity": 1.0,
+                    "changed_path_f1": 1.0,
+                    "context_chars": 100,
+                    "runtime_ms": 25.0,
+                    "tool_failure_count": 0,
+            },
+            metadata={"best_attempt_index": 2, "memory_context_count": 2},
+        ),
+        BenchmarkCaseResult(
+            suite="coding",
+            mode="verified_lexical",
+            case_id="tool-case",
+            repo_name="synthetic_python_smoke",
+            commit_pair_id="bugfix",
+            metrics={
+                "executed": True,
+                "evaluated": True,
+                "passed": False,
+                "resolved": False,
+                "testable": True,
+                "patch_applied": True,
+                "produced_patch_nonempty": True,
+                    "retrieval_usage_rate": 0.0,
+                    "verified_count": 0,
+                    "relocated_count": 0,
+                    "stale_filtered_count": 0,
+                    "stale_hit_rate": 0.0,
+                    "patch_similarity": 0.5,
+                    "changed_path_f1": 0.5,
+                    "context_chars": 50,
+                    "runtime_ms": 10.0,
+                    "tool_failure_count": 1,
+            },
+            metadata={"best_attempt_index": 1, "memory_context_count": 0},
+        ),
+        BenchmarkCaseResult(
+            suite="coding",
+            mode="verified_lexical",
+            case_id="verification-case",
+            repo_name="synthetic_python_smoke",
+            commit_pair_id="bugfix",
+            metrics={
+                "executed": True,
+                "evaluated": True,
+                "passed": False,
+                "resolved": False,
+                "testable": True,
+                "patch_applied": True,
+                "produced_patch_nonempty": True,
+                    "retrieval_usage_rate": 0.0,
+                    "verified_count": 0,
+                    "relocated_count": 0,
+                    "stale_filtered_count": 0,
+                    "stale_hit_rate": 0.0,
+                    "patch_similarity": 0.5,
+                    "changed_path_f1": 0.5,
+                    "context_chars": 50,
+                    "runtime_ms": 12.0,
+                    "tool_failure_count": 0,
+            },
+            metadata={"best_attempt_index": 1, "memory_context_count": 0},
+        ),
+        BenchmarkCaseResult(
+            suite="coding",
+            mode="verified_lexical",
+            case_id="first-pass-case",
+            repo_name="synthetic_python_smoke",
+            commit_pair_id="bugfix",
+            metrics={
+                "executed": True,
+                "evaluated": True,
+                "passed": True,
+                "resolved": True,
+                "testable": True,
+                "patch_applied": True,
+                "produced_patch_nonempty": True,
+                    "retrieval_usage_rate": 1.0,
+                    "verified_count": 1,
+                    "relocated_count": 0,
+                    "stale_filtered_count": 0,
+                    "stale_hit_rate": 0.0,
+                    "patch_similarity": 1.0,
+                    "changed_path_f1": 1.0,
+                    "context_chars": 75,
+                    "runtime_ms": 15.0,
+                    "tool_failure_count": 0,
+            },
+            metadata={"best_attempt_index": 1, "memory_context_count": 1},
+        ),
+    ]
+    attempts = [
+        BenchmarkAttemptResult(
+            suite="coding",
+            mode="verified_lexical",
+            case_id="repair-case",
+            repo_name="synthetic_python_smoke",
+            commit_pair_id="bugfix",
+            attempt_index=1,
+            metrics={
+                "executed": True,
+                "evaluated": True,
+                "passed": False,
+                "resolved": False,
+                "testable": True,
+                "patch_applied": False,
+                "produced_patch_nonempty": False,
+                "retrieval_usage_rate": 1.0,
+                "context_chars": 80,
+                "runtime_ms": 10.0,
+                "tool_failure_count": 0,
+            },
+            metadata={"memory_context_count": 2, "produced_changed_paths": []},
+        ),
+        BenchmarkAttemptResult(
+            suite="coding",
+            mode="verified_lexical",
+            case_id="repair-case",
+            repo_name="synthetic_python_smoke",
+            commit_pair_id="bugfix",
+            attempt_index=2,
+            metrics={
+                "executed": True,
+                "evaluated": True,
+                "passed": True,
+                "resolved": True,
+                "testable": True,
+                "patch_applied": True,
+                "produced_patch_nonempty": True,
+                "retrieval_usage_rate": 1.0,
+                "context_chars": 110,
+                "runtime_ms": 15.0,
+                "tool_failure_count": 0,
+            },
+            metadata={"memory_context_count": 2, "produced_changed_paths": ["bugfix_module.py"]},
+        ),
+        BenchmarkAttemptResult(
+            suite="coding",
+            mode="verified_lexical",
+            case_id="tool-case",
+            repo_name="synthetic_python_smoke",
+            commit_pair_id="bugfix",
+            attempt_index=1,
+            metrics={
+                "executed": True,
+                "evaluated": True,
+                "passed": False,
+                "resolved": False,
+                "testable": True,
+                "patch_applied": True,
+                "produced_patch_nonempty": True,
+                "retrieval_usage_rate": 0.0,
+                "context_chars": 40,
+                "runtime_ms": 10.0,
+                "tool_failure_count": 1,
+            },
+            metadata={"memory_context_count": 0, "produced_changed_paths": ["tool_case.py"]},
+        ),
+        BenchmarkAttemptResult(
+            suite="coding",
+            mode="verified_lexical",
+            case_id="verification-case",
+            repo_name="synthetic_python_smoke",
+            commit_pair_id="bugfix",
+            attempt_index=1,
+            metrics={
+                "executed": True,
+                "evaluated": True,
+                "passed": False,
+                "resolved": False,
+                "testable": True,
+                "patch_applied": True,
+                "produced_patch_nonempty": True,
+                "retrieval_usage_rate": 0.0,
+                "context_chars": 40,
+                "runtime_ms": 12.0,
+                "tool_failure_count": 0,
+            },
+            metadata={
+                "memory_context_count": 0,
+                "produced_changed_paths": ["verification_case.py"],
+            },
+        ),
+        BenchmarkAttemptResult(
+            suite="coding",
+            mode="verified_lexical",
+            case_id="first-pass-case",
+            repo_name="synthetic_python_smoke",
+            commit_pair_id="bugfix",
+            attempt_index=1,
+            metrics={
+                "executed": True,
+                "evaluated": True,
+                "passed": True,
+                "resolved": True,
+                "testable": True,
+                "patch_applied": True,
+                "produced_patch_nonempty": True,
+                "retrieval_usage_rate": 1.0,
+                "context_chars": 75,
+                "runtime_ms": 15.0,
+                "tool_failure_count": 0,
+            },
+            metadata={"memory_context_count": 1, "produced_changed_paths": ["first_pass.py"]},
+        ),
+    ]
+
+    summary = reporter.summarize_results("coding", results, attempts=attempts, pass_k_values=(1, 2))
+
+    assert summary["attempt_1_pass_rate"] == 0.25
+    assert summary["attempt_2_rescue_rate"] == 1.0
+    assert summary["attempt_failure_breakdown"]["empty_patch"] == 1
+    assert summary["attempt_failure_breakdown"]["tool_failure"] == 1
+    assert summary["attempt_failure_breakdown"]["verification"] == 1
+    assert summary["memory_used_case_count"] == 2
+    assert summary["memory_helped_case_count"] == 1
+    assert summary["memory_helped_when_used_rate"] == 0.5

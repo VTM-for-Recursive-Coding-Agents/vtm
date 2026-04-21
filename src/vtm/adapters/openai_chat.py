@@ -60,11 +60,21 @@ class OpenAICompatibleChatClient:
         )
         try:
             with request.urlopen(http_request, timeout=self._config.timeout_seconds) as response:
-                raw_payload = json.loads(response.read().decode("utf-8"))
+                raw_text = response.read().decode("utf-8", errors="replace")
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(
                 f"OpenAI-compatible chat request failed with HTTP {exc.code}: {detail}"
+            ) from exc
+        except error.URLError as exc:
+            raise RuntimeError(f"OpenAI-compatible chat request failed: {exc.reason}") from exc
+        try:
+            raw_payload = json.loads(raw_text)
+        except json.JSONDecodeError as exc:
+            preview = self._response_preview(raw_text)
+            raise RuntimeError(
+                "OpenAI-compatible chat response was not valid JSON. "
+                f"preview={preview}"
             ) from exc
         if not isinstance(raw_payload, dict):
             raise RuntimeError("OpenAI-compatible chat response must be a JSON object")
@@ -144,6 +154,12 @@ class OpenAICompatibleChatClient:
         if normalized.endswith("/v1"):
             return f"{normalized}/chat/completions"
         return f"{normalized}/v1/chat/completions"
+
+    def _response_preview(self, raw_text: str, *, limit: int = 400) -> str:
+        compact = " ".join(raw_text.split())
+        if len(compact) <= limit:
+            return compact
+        return compact[: max(0, limit - 3)].rstrip() + "..."
 
 
 __all__ = ["OpenAICompatibleChatClient", "OpenAICompatibleChatConfig"]

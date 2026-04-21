@@ -60,6 +60,17 @@ def _load_export_results_module():
     return module
 
 
+def _load_export_dspy_pilot_results_module():
+    module_path = REPO_ROOT / "scripts" / "livecodebench" / "export_dspy_pilot_results.py"
+    spec = importlib.util.spec_from_file_location("vtm_livecodebench_export_dspy_pilot", module_path)
+    if spec is None or spec.loader is None:
+        raise AssertionError(f"Unable to load module from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def _load_module_from_path(module_name: str, module_path: Path):
     if not module_path.exists():
         pytest.skip(f"Missing module path: {module_path}")
@@ -430,6 +441,68 @@ def test_export_results_merges_summary_json_metrics(tmp_path: Path) -> None:
     assert "/tmp/fake-benchmark-output" in markdown
 
 
+def test_export_dspy_pilot_results_surfaces_memory_attribution_and_pass_curves(
+    tmp_path: Path,
+) -> None:
+    module = _load_export_dspy_pilot_results_module()
+    input_root = tmp_path / ".benchmarks" / "livecodebench-dspy"
+    summary_path = (
+        input_root
+        / "self_repair"
+        / "qwen-qwen3-coder-next"
+        / "run"
+        / "dspy_vtm"
+        / "summary.json"
+    )
+    summary_path.parent.mkdir(parents=True)
+    summary_path.write_text(
+        json.dumps(
+            {
+                "kind": "dspy_pilot",
+                "scenario": "self_repair",
+                "method": "dspy_vtm",
+                "model": "qwen/qwen3-coder-next",
+                "total": 3,
+                "public_test_pass_rate": 0.5,
+                "attempt1_public_test_pass_at_1": 0.25,
+                "attempt1_public_test_pass_at_k": 0.5,
+                "attempt1_public_test_pass_curve": {"1": 0.25, "2": 0.5},
+                "attempt2_public_test_pass_at_1": 0.4,
+                "attempt2_public_test_pass_at_k": 0.6,
+                "attempt2_public_test_pass_curve": {"1": 0.4, "2": 0.6},
+                "attempt2_delta_over_attempt1": 0.15,
+                "candidate_selection_mode": "best_of_k_public_tests",
+                "candidates_per_attempt": 2,
+                "retrieval_usage_rate": 1.0,
+                "canonical_memory_hit_rate": 0.5,
+                "agent_memory_write_rate": 0.25,
+                "mean_agent_memory_write_count": 0.25,
+                "consolidated_memory_card_rate": 0.25,
+                "mean_verified_count": 2.0,
+                "mean_stale_filtered_count": 0.0,
+                "mean_tool_calls": 3.0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rows = module.collect_rows(input_root)
+    markdown_path = tmp_path / "paper_tables.md"
+    module.write_markdown(markdown_path, rows)
+    markdown = markdown_path.read_text(encoding="utf-8")
+
+    assert rows[0]["attempt2_pass_at_k"] == 0.6
+    assert rows[0]["attempt1_pass_curve"] == {"1": 0.25, "2": 0.5}
+    assert rows[0]["canonical_memory_hit_rate"] == 0.5
+    assert "Pass Curve (A1)" in markdown
+    assert "Pass Curve (A2)" in markdown
+    assert "Canonical Hit Rate" in markdown
+    assert "Agent Write Rate" in markdown
+    assert "1:0.250, 2:0.500" in markdown
+    assert "1:0.400, 2:0.600" in markdown
+
+
 def test_livecodebench_checkout_resolves_custom_openrouter_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "openrouter-test-key")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://openrouter.example/api/v1")
@@ -671,17 +744,20 @@ def test_livecodebench_dspy_pilot_dry_run_supports_all_methods(
     assert payload["methods"] == [
         "direct",
         "dspy_baseline",
+        "dspy_vtm_local_only",
+        "dspy_vtm_persistent_only",
         "dspy_vtm",
-        "dspy_rlm_baseline",
-        "dspy_rlm_vtm",
     ]
     assert payload["problem_offset"] == 0
     assert payload["problem_count"] == 1
-    assert len(payload["runs"]) == 5
-    assert all(
-        str(tmp_path / ".benchmarks" / "livecodebench-dspy") in run["run_dir"]
-        for run in payload["runs"]
-    )
+    assert payload["runs"][0]["runtime"]["method"] == "direct"
+
+
+def test_livecodebench_dspy_default_max_tokens_is_high_for_long_repairs() -> None:
+    parser = livecodebench_dspy_pilot.build_parser()
+    args = parser.parse_args([])
+
+    assert args.max_tokens == 65536
 
 
 def test_livecodebench_dspy_summary_aggregation_handles_missing_retrieval_metrics() -> None:
@@ -692,12 +768,30 @@ def test_livecodebench_dspy_summary_aggregation_handles_missing_retrieval_metric
                 "method": "direct",
                 "evaluation": {"available": True, "passed": True, "syntax_error": False},
                 "tool_calls": 0,
+                "candidate_batches": [
+                    {
+                        "attempt_index": 1,
+                        "candidate_count": 1,
+                        "selected_candidate_index": 1,
+                        "selection_mode": "single_sample",
+                        "candidates": [{"candidate_index": 1, "passed": True}],
+                    }
+                ],
             },
             {
                 "problem_id": "lcb-2",
                 "method": "direct",
                 "evaluation": {"available": True, "passed": False, "syntax_error": False},
                 "tool_calls": 0,
+                "candidate_batches": [
+                    {
+                        "attempt_index": 1,
+                        "candidate_count": 1,
+                        "selected_candidate_index": 1,
+                        "selection_mode": "single_sample",
+                        "candidates": [{"candidate_index": 1, "passed": False}],
+                    }
+                ],
             },
         ],
         method="direct",
@@ -715,7 +809,107 @@ def test_livecodebench_dspy_summary_aggregation_handles_missing_retrieval_metric
     assert summary["mean_verified_count"] == 0.0
     assert summary["mean_stale_filtered_count"] == 0.0
     assert summary["mean_tool_calls"] == 0.0
+    assert summary["mean_candidates_per_attempt"] == 1.0
+    assert summary["candidate_selection_mode"] == "single_sample"
+    assert summary["attempt1_public_test_pass_at_1_count"] == 1
+    assert summary["attempt1_public_test_pass_at_1"] == 0.5
+    assert summary["attempt1_public_test_pass_at_k_count"] == 1
+    assert summary["attempt1_public_test_pass_at_k"] == 0.5
     assert summary["pilot_limitations"]
+
+
+def test_livecodebench_dspy_summary_aggregation_reports_best_of_k_metadata() -> None:
+    summary = aggregate_summary(
+        [
+            {
+                "problem_id": "lcb-1",
+                "method": "direct",
+                "evaluation": {"available": True, "passed": True, "syntax_error": False},
+                "tool_calls": 0,
+                "candidates_per_attempt": 3,
+                "candidate_batches": [
+                    {
+                        "attempt_index": 1,
+                        "candidate_count": 3,
+                        "selected_candidate_index": 2,
+                        "selection_mode": "best_of_k_public_tests",
+                        "candidates": [
+                            {"candidate_index": 1, "passed": False},
+                            {"candidate_index": 2, "passed": True},
+                            {"candidate_index": 3, "passed": False},
+                        ],
+                    }
+                ],
+            },
+        ],
+        method="direct",
+        scenario="code_generation",
+        model="qwen/qwen3-coder-next",
+    )
+
+    assert summary["mean_candidates_per_attempt"] == 3.0
+    assert summary["candidate_selection_mode"] == "best_of_k_public_tests"
+    assert summary["attempt1_public_test_pass_at_1"] == 0.0
+    assert summary["attempt1_public_test_pass_at_k"] == 1.0
+    assert summary["attempt1_public_test_pass_curve"] == {
+        "1": 0.0,
+        "2": 1.0,
+        "3": 1.0,
+    }
+
+
+def test_livecodebench_dspy_summary_aggregation_reports_memory_attribution_metrics() -> None:
+    summary = aggregate_summary(
+        [
+            {
+                "problem_id": "lcb-1",
+                "method": "dspy_vtm",
+                "evaluation": {"available": True, "passed": True, "syntax_error": False},
+                "canonical_memory_hit_count": 1,
+                "agent_memory_write_count": 2,
+                "consolidated_memory_card_count": 1,
+                "candidate_batches": [
+                    {
+                        "attempt_index": 1,
+                        "candidates": [{"candidate_index": 1, "passed": False}],
+                    },
+                    {
+                        "attempt_index": 2,
+                        "candidates": [{"candidate_index": 1, "passed": True}],
+                    },
+                ],
+            },
+            {
+                "problem_id": "lcb-2",
+                "method": "dspy_vtm",
+                "evaluation": {"available": True, "passed": False, "syntax_error": False},
+                "canonical_memory_hit_count": 0,
+                "agent_memory_write_count": 0,
+                "consolidated_memory_card_count": 0,
+                "candidate_batches": [
+                    {
+                        "attempt_index": 1,
+                        "candidates": [
+                            {"candidate_index": 1, "passed": False},
+                            {"candidate_index": 2, "passed": True},
+                        ],
+                    }
+                ],
+            },
+        ],
+        method="dspy_vtm",
+        scenario="self_repair",
+        model="qwen/qwen3-coder-next",
+    )
+
+    assert summary["canonical_memory_hit_rate"] == 0.5
+    assert summary["mean_canonical_memory_hit_count"] == 0.5
+    assert summary["agent_memory_write_rate"] == 0.5
+    assert summary["mean_agent_memory_write_count"] == 1.0
+    assert summary["total_agent_memory_write_count"] == 2
+    assert summary["consolidated_memory_card_rate"] == 0.5
+    assert summary["attempt1_public_test_pass_curve"] == {"1": 0.0, "2": 0.5}
+    assert summary["attempt2_public_test_pass_curve"] == {"1": 0.5}
 
 
 def test_livecodebench_dspy_discovers_explicit_source_backends(tmp_path: Path) -> None:
@@ -880,6 +1074,34 @@ def test_livecodebench_dspy_prompt_uses_agent_contract_for_dspy() -> None:
     assert "final `response` field as a single ```python fenced code block" in prompt
 
 
+def test_livecodebench_dspy_vtm_repair_prompt_requires_memory_workflow() -> None:
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-dspy-memory-workflow",
+        scenario="self_repair",
+        prompt="Implement add(a, b).",
+    )
+
+    prompt = build_attempt_prompt(
+        problem,
+        attempt_index=2,
+        agent_mode="dspy",
+        require_memory_tooling=True,
+        suggested_memory_query="self_repair | top_level_function | function add | expected 5 actual 4",
+        visible_feedback=("Functional public test mismatch: expected=5 actual=4",),
+        repair_context=RepairContext(
+            previous_response="def add(a, b):\n    return a - b\n",
+            previous_code="def add(a, b):\n    return a - b\n",
+            visible_feedback=("Functional public test mismatch: expected=5 actual=4",),
+        ),
+    )
+
+    assert "Memory Workflow:" in prompt
+    assert "search_verified_memory" in prompt
+    assert "expand_memory_evidence" in prompt
+    assert "Do not skip memory lookup on repair attempts" in prompt
+    assert "Suggested memory query:" in prompt
+
+
 def test_livecodebench_dspy_self_repair_prompt_includes_previous_code_and_feedback() -> None:
     problem = LiveCodeBenchProblem(
         problem_id="lcb-repair",
@@ -899,10 +1121,104 @@ def test_livecodebench_dspy_self_repair_prompt_includes_previous_code_and_feedba
         ),
     )
 
-    assert "Previous Attempt:" in prompt
+    assert "Previous Candidate:" in prompt
     assert "return a - b" in prompt
     assert "Functional public test mismatch: expected=5 actual=4" in prompt
     assert "This is repair attempt 2. Fix the previous attempt." in prompt
+
+
+def test_livecodebench_dspy_prompt_groups_memory_by_role() -> None:
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-role-sections",
+        scenario="self_repair",
+        prompt="Implement add(a, b).",
+        public_feedback=("Public sample: input='[2, 3]' output='5'",),
+        evaluator_payload={"problem_metadata": {"func_name": "add"}},
+    )
+
+    prompt = build_attempt_prompt(
+        problem,
+        attempt_index=2,
+        memory_cards=(
+            {
+                "id": "contract",
+                "role": "function_contract",
+                "title": "Interface contract",
+                "summary": "Expose top-level add(a, b).",
+                "score": 1.0,
+            },
+            {
+                "id": "tests",
+                "role": "public_tests",
+                "title": "Public tests",
+                "summary": "Functional example 1: input='[2, 3]' output='5'",
+                "score": 0.9,
+            },
+            {
+                "id": "repair",
+                "role": "repair_lesson",
+                "title": "Repair lesson",
+                "summary": "Fix sign errors before returning the sum.",
+                "score": 0.8,
+            },
+        ),
+        visible_feedback=("Functional public test mismatch: expected=5 actual=4",),
+        repair_context=RepairContext(
+            previous_response="def add(a, b):\n    return a - b\n",
+            previous_code="def add(a, b):\n    return a - b\n",
+            visible_feedback=("Functional public test mismatch: expected=5 actual=4",),
+        ),
+    )
+
+    assert "Verified Contract Hints:" in prompt
+    assert "Public-Test Signals:" in prompt
+    assert "Visible Failure:" in prompt
+    assert "Verified Repair Lessons:" in prompt
+    assert "Verified Memory Cards:" not in prompt
+
+
+def test_livecodebench_dspy_compact_repair_prompt_focuses_on_failure_and_one_lesson() -> None:
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-compact-repair",
+        scenario="self_repair",
+        prompt="Implement add(a, b).",
+    )
+
+    prompt = build_attempt_prompt(
+        problem,
+        attempt_index=3,
+        compact_repair=True,
+        memory_cards=(
+            {
+                "id": "repair-1",
+                "role": "repair_lesson",
+                "title": "Lesson one",
+                "summary": "Return the sum, not the difference.",
+                "score": 1.0,
+            },
+            {
+                "id": "repair-2",
+                "role": "repair_lesson",
+                "title": "Lesson two",
+                "summary": "Do not mutate inputs.",
+                "score": 0.9,
+            },
+        ),
+        visible_feedback=("Functional public test mismatch: expected=5 actual=4",),
+        repair_context=RepairContext(
+            previous_response="def add(a, b):\n    return a - b\n",
+            previous_code="def add(a, b):\n    return a - b\n",
+            visible_feedback=("Functional public test mismatch: expected=5 actual=4",),
+        ),
+    )
+
+    assert "Problem Statement:" not in prompt
+    assert "Previous Candidate:" in prompt
+    assert "Visible Failure:" in prompt
+    assert "Verified Repair Lessons:" in prompt
+    assert "Lesson one" in prompt
+    assert "Lesson two" not in prompt
+    assert "final short repair attempt 3" in prompt
 
 
 def test_livecodebench_dspy_extract_code_prefers_final_fenced_block() -> None:
@@ -990,6 +1306,885 @@ def test_livecodebench_dspy_retrieval_prioritizes_repair_feedback_cards(
     assert "problem_summary" not in roles
 
 
+def test_livecodebench_dspy_merge_memory_cards_budgets_and_dedupes_repair_cards() -> None:
+    cards = livecodebench_dspy_pilot.merge_memory_cards(
+        (
+            {
+                "id": "repair-1",
+                "role": "repair_lesson",
+                "title": "Repair lesson 1",
+                "summary": "Fix NameError and return the right sum.",
+                "score": 0.9,
+                "problem_id": "lcb-1",
+                "function_name": "add",
+                "feedback_signature": "NameError List not defined | expected 5 actual 4",
+            },
+            {
+                "id": "repair-2",
+                "role": "repair_lesson",
+                "title": "Repair lesson 2",
+                "summary": "Same lesson phrased differently.",
+                "score": 0.8,
+                "problem_id": "lcb-1",
+                "function_name": "add",
+                "feedback_signature": "NameError List not defined | expected 5 actual 4",
+            },
+            {
+                "id": "solution-1",
+                "role": "successful_solution",
+                "title": "Successful solution",
+                "summary": "Full solved program.",
+                "score": 0.95,
+                "problem_id": "lcb-1",
+                "function_name": "add",
+            },
+            {
+                "id": "feedback-1",
+                "role": "feedback_item",
+                "title": "Visible failure",
+                "summary": "expected 5 actual 4",
+                "score": 1.0,
+            },
+            {
+                "id": "feedback-2",
+                "role": "feedback_item",
+                "title": "Another visible failure",
+                "summary": "NameError: List not defined",
+                "score": 0.7,
+            },
+        ),
+        attempt_index=2,
+    )
+
+    assert [card["id"] for card in cards] == ["feedback-1", "repair-1"]
+
+
+def test_livecodebench_dspy_merge_memory_cards_attempt_one_stays_compact() -> None:
+    cards = livecodebench_dspy_pilot.merge_memory_cards(
+        (
+            {
+                "id": "contract-1",
+                "role": "function_contract",
+                "title": "Contract 1",
+                "summary": "Expose add(a, b).",
+                "score": 0.9,
+            },
+            {
+                "id": "contract-2",
+                "role": "function_contract",
+                "title": "Contract 2",
+                "summary": "Expose add(a, b) at module scope.",
+                "score": 0.8,
+            },
+            {
+                "id": "tests-1",
+                "role": "public_tests",
+                "title": "Tests",
+                "summary": "input='[2,3]' output='5'",
+                "score": 0.85,
+            },
+            {
+                "id": "problem-1",
+                "role": "problem_summary",
+                "title": "Problem",
+                "summary": "Add two numbers.",
+                "score": 1.0,
+            },
+        ),
+        attempt_index=1,
+    )
+
+    assert [card["id"] for card in cards] == ["tests-1", "contract-1"]
+
+
+def test_livecodebench_dspy_attempt_one_retrieval_uses_contract_cards_only(
+    tmp_path: Path,
+) -> None:
+    session = open_memory_session(
+        state_root=tmp_path / "pilot-state",
+        problem_id="lcb-attempt-one",
+        workspace_root=tmp_path,
+    )
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-attempt-one",
+        scenario="code_generation",
+        prompt="Implement add(a, b).",
+        evaluator_payload={
+            "public_tests": [
+                {"input": "[2, 3]", "output": "5", "testtype": "functional"},
+            ],
+            "problem_metadata": {"func_name": "add"},
+        },
+    )
+    try:
+        seed_problem_memory(session, problem)
+        payload = retrieve_verified_memory(
+            session,
+            query="lcb-attempt-one | implement add",
+            attempt_index=1,
+            allowed_roles=livecodebench_dspy_pilot.ATTEMPT_ONE_MEMORY_ROLES,
+            limit=2,
+        )
+    finally:
+        session.close()
+
+    roles = {card.get("role") for card in payload["cards"]}
+
+    assert payload["used"] is True
+    assert roles <= {"function_contract", "public_tests"}
+
+
+def test_livecodebench_dspy_persistent_success_memory_is_retrievable_across_sessions(
+    tmp_path: Path,
+) -> None:
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-persistent-success",
+        scenario="self_repair",
+        prompt="Implement add(a, b) and return the sum.",
+        prompt_metadata={"platform": "leetcode", "difficulty": "easy"},
+        evaluator_payload={
+            "public_tests": [
+                {"input": "[2, 3]", "output": "5", "testtype": "functional"},
+            ],
+            "problem_metadata": {"func_name": "add"},
+        },
+    )
+    persistent_root = tmp_path / "persistent-memory"
+    session = livecodebench_dspy_pilot.open_persistent_memory_session(
+        state_root=persistent_root,
+        scenario="self_repair",
+        model="qwen/qwen3-coder-next",
+        workspace_root=tmp_path,
+    )
+    try:
+        write_result = livecodebench_dspy_pilot.write_persistent_success_memory(
+            session,
+            problem=problem,
+            attempt_index=2,
+            response_text="```python\ndef add(a, b):\n    return a + b\n```",
+            extracted_code="def add(a, b):\n    return a + b\n",
+            evaluation={"available": True, "passed": True, "failure_feedback": []},
+            visible_feedback=("Functional public test mismatch: expected=5 actual=4",),
+        )
+    finally:
+        session.close()
+
+    reopened = livecodebench_dspy_pilot.open_persistent_memory_session(
+        state_root=persistent_root,
+        scenario="self_repair",
+        model="qwen/qwen3-coder-next",
+        workspace_root=tmp_path,
+    )
+    try:
+        payload = retrieve_verified_memory(
+            reopened,
+            query="add implement add return sum expected 5 actual 4",
+            attempt_index=1,
+            allowed_roles=frozenset({"successful_solution"}),
+            limit=2,
+        )
+    finally:
+        reopened.close()
+
+    assert write_result is not None
+    assert write_result["success_memory_id"] == livecodebench_dspy_pilot.success_memory_id(problem.problem_id)
+    assert payload["used"] is True
+    assert payload["cards"][0]["role"] == "successful_solution"
+    assert payload["cards"][0]["title"] == "Successful top_level_function pattern for add"
+    assert "reusable successful solution pattern" in payload["cards"][0]["summary"].lower()
+    assert "leetcode" in payload["cards"][0]["transfer_terms"]
+    assert "top_level_function" in payload["cards"][0]["transfer_terms"]
+    assert "add" in payload["cards"][0]["summary"].lower()
+
+
+def test_livecodebench_dspy_persistent_repair_lesson_is_retrievable_across_sessions(
+    tmp_path: Path,
+) -> None:
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-persistent-repair",
+        scenario="self_repair",
+        prompt="Implement add(a, b) and return the sum.",
+        prompt_metadata={"platform": "leetcode", "difficulty": "easy"},
+        evaluator_payload={
+            "public_tests": [
+                {"input": "[2, 3]", "output": "5", "testtype": "functional"},
+            ],
+            "problem_metadata": {"func_name": "add"},
+        },
+    )
+    persistent_root = tmp_path / "persistent-memory"
+    visible_feedback = (
+        "Functional public test mismatch: expected=5 actual=4",
+        "NameError: name 'List' is not defined",
+    )
+    session = livecodebench_dspy_pilot.open_persistent_memory_session(
+        state_root=persistent_root,
+        scenario="self_repair",
+        model="qwen/qwen3-coder-next",
+        workspace_root=tmp_path,
+    )
+    try:
+        livecodebench_dspy_pilot.write_persistent_success_memory(
+            session,
+            problem=problem,
+            attempt_index=2,
+            response_text="```python\ndef add(a, b):\n    return a + b\n```",
+            extracted_code="def add(a, b):\n    return a + b\n",
+            evaluation={"available": True, "passed": True, "failure_feedback": []},
+            visible_feedback=visible_feedback,
+        )
+    finally:
+        session.close()
+
+    reopened = livecodebench_dspy_pilot.open_persistent_memory_session(
+        state_root=persistent_root,
+        scenario="self_repair",
+        model="qwen/qwen3-coder-next",
+        workspace_root=tmp_path,
+    )
+    try:
+        payload = retrieve_verified_memory(
+            reopened,
+            query="add expected 5 actual 4 NameError List not defined",
+            attempt_index=2,
+            allowed_roles=frozenset({"repair_lesson"}),
+            limit=2,
+            expand_top_k=1,
+        )
+    finally:
+        reopened.close()
+
+    assert payload["used"] is True
+    assert payload["cards"][0]["role"] == "repair_lesson"
+    assert payload["cards"][0]["title"] == "Repair lesson: runtime_nameerror on top_level_function"
+    assert "resolved visible feedback" in str(payload["cards"][0]["summary"]).lower()
+    assert payload["cards"][0]["repair_kind"] == "runtime_nameerror"
+    assert payload["cards"][0]["interface_mode"] == "top_level_function"
+    assert payload["cards"][0]["platform"] == "leetcode"
+    assert payload["cards"][0]["difficulty"] == "easy"
+    assert "nameerror" in payload["cards"][0]["transfer_terms"]
+    assert "Resolved Feedback:" in str(payload["cards"][0]["rationale_preview"])
+
+
+def test_livecodebench_dspy_persistent_repair_consolidation_creates_canonical_summary_card(
+    tmp_path: Path,
+) -> None:
+    persistent_root = tmp_path / "persistent-memory"
+    problems = [
+        LiveCodeBenchProblem(
+            problem_id="lcb-canonical-repair-a",
+            scenario="self_repair",
+            prompt="Implement add(a, b) and return the sum.",
+            prompt_metadata={"platform": "leetcode", "difficulty": "easy"},
+            evaluator_payload={
+                "public_tests": [
+                    {"input": "[2, 3]", "output": "5", "testtype": "functional"},
+                ],
+                "problem_metadata": {"func_name": "add"},
+            },
+        ),
+        LiveCodeBenchProblem(
+            problem_id="lcb-canonical-repair-b",
+            scenario="self_repair",
+            prompt="Implement add(a, b) for another task.",
+            prompt_metadata={"platform": "leetcode", "difficulty": "easy"},
+            evaluator_payload={
+                "public_tests": [
+                    {"input": "[9, 2]", "output": "11", "testtype": "functional"},
+                ],
+                "problem_metadata": {"func_name": "add"},
+            },
+        ),
+    ]
+    visible_feedback = ("Functional public test mismatch: expected=5 actual=4",)
+
+    session = livecodebench_dspy_pilot.open_persistent_memory_session(
+        state_root=persistent_root,
+        scenario="self_repair",
+        model="qwen/qwen3-coder-next",
+        workspace_root=tmp_path,
+    )
+    try:
+        for problem in problems:
+            livecodebench_dspy_pilot.write_persistent_success_memory(
+                session,
+                problem=problem,
+                attempt_index=2,
+                response_text="```python\ndef add(a, b):\n    return a + b\n```",
+                extracted_code="def add(a, b):\n    return a + b\n",
+                evaluation={"available": True, "passed": True, "failure_feedback": []},
+                visible_feedback=visible_feedback,
+            )
+        payload = retrieve_verified_memory(
+            session,
+            query=livecodebench_dspy_pilot.build_retrieval_query(
+                problems[-1],
+                visible_feedback,
+                store_kind="persistent",
+            ),
+            attempt_index=2,
+            allowed_roles=frozenset({"canonical_repair_lesson"}),
+            limit=3,
+            expand_top_k=1,
+        )
+    finally:
+        session.close()
+
+    assert payload["used"] is True
+    assert payload["cards"][0]["role"] == "canonical_repair_lesson"
+    assert payload["cards"][0]["title"] == (
+        "Canonical repair lesson: public_test_logic_mismatch on top_level_function for add"
+    )
+    assert payload["cards"][0]["canonical_support_count"] == 2
+    assert "canonical repair lesson distilled" in str(payload["cards"][0]["summary"]).lower()
+
+
+def test_livecodebench_dspy_persistent_retrieval_prefers_canonical_repair_cards(
+    tmp_path: Path,
+) -> None:
+    persistent_root = tmp_path / "persistent-memory"
+    problems = [
+        LiveCodeBenchProblem(
+            problem_id="lcb-canonical-rank-a",
+            scenario="self_repair",
+            prompt="Implement add(a, b) and return the sum.",
+            prompt_metadata={"platform": "leetcode", "difficulty": "easy"},
+            evaluator_payload={
+                "public_tests": [
+                    {"input": "[2, 3]", "output": "5", "testtype": "functional"},
+                ],
+                "problem_metadata": {"func_name": "add"},
+            },
+        ),
+        LiveCodeBenchProblem(
+            problem_id="lcb-canonical-rank-b",
+            scenario="self_repair",
+            prompt="Implement add(a, b) again.",
+            prompt_metadata={"platform": "leetcode", "difficulty": "easy"},
+            evaluator_payload={
+                "public_tests": [
+                    {"input": "[6, 1]", "output": "7", "testtype": "functional"},
+                ],
+                "problem_metadata": {"func_name": "add"},
+            },
+        ),
+    ]
+    visible_feedback = ("Functional public test mismatch: expected=5 actual=4",)
+
+    session = livecodebench_dspy_pilot.open_persistent_memory_session(
+        state_root=persistent_root,
+        scenario="self_repair",
+        model="qwen/qwen3-coder-next",
+        workspace_root=tmp_path,
+    )
+    try:
+        for problem in problems:
+            livecodebench_dspy_pilot.write_persistent_success_memory(
+                session,
+                problem=problem,
+                attempt_index=2,
+                response_text="```python\ndef add(a, b):\n    return a + b\n```",
+                extracted_code="def add(a, b):\n    return a + b\n",
+                evaluation={"available": True, "passed": True, "failure_feedback": []},
+                visible_feedback=visible_feedback,
+            )
+        payload = retrieve_verified_memory(
+            session,
+            query=livecodebench_dspy_pilot.build_retrieval_query(
+                problems[-1],
+                visible_feedback,
+                store_kind="persistent",
+            ),
+            attempt_index=2,
+            allowed_roles=livecodebench_dspy_pilot.REPAIR_PERSISTENT_MEMORY_ROLES,
+            limit=4,
+            expand_top_k=1,
+        )
+    finally:
+        session.close()
+
+    assert payload["used"] is True
+    assert payload["cards"][0]["role"] == "canonical_repair_lesson"
+    assert any(card["role"] == "repair_lesson" for card in payload["cards"][1:])
+
+
+def test_livecodebench_dspy_attempt_one_success_does_not_create_repair_lesson(
+    tmp_path: Path,
+) -> None:
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-no-repair-lesson",
+        scenario="code_generation",
+        prompt="Implement add(a, b) and return the sum.",
+        evaluator_payload={
+            "public_tests": [
+                {"input": "[2, 3]", "output": "5", "testtype": "functional"},
+            ],
+            "problem_metadata": {"func_name": "add"},
+        },
+    )
+    persistent_root = tmp_path / "persistent-memory"
+    session = livecodebench_dspy_pilot.open_persistent_memory_session(
+        state_root=persistent_root,
+        scenario="code_generation",
+        model="qwen/qwen3-coder-next",
+        workspace_root=tmp_path,
+    )
+    try:
+        livecodebench_dspy_pilot.write_persistent_success_memory(
+            session,
+            problem=problem,
+            attempt_index=1,
+            response_text="```python\ndef add(a, b):\n    return a + b\n```",
+            extracted_code="def add(a, b):\n    return a + b\n",
+            evaluation={"available": True, "passed": True, "failure_feedback": []},
+            visible_feedback=(),
+        )
+    finally:
+        session.close()
+
+    reopened = livecodebench_dspy_pilot.open_persistent_memory_session(
+        state_root=persistent_root,
+        scenario="code_generation",
+        model="qwen/qwen3-coder-next",
+        workspace_root=tmp_path,
+    )
+    try:
+        payload = retrieve_verified_memory(
+            reopened,
+            query="add expected 5 actual 4",
+            attempt_index=2,
+            allowed_roles=frozenset({"repair_lesson"}),
+            limit=2,
+        )
+    finally:
+        reopened.close()
+
+    assert payload["used"] is False
+
+
+def test_livecodebench_dspy_retrieval_plan_skips_persistent_attempt_one() -> None:
+    assert livecodebench_dspy_pilot.retrieval_plan(
+        attempt_index=1,
+        store_kind="persistent",
+    ) is None
+    plan = livecodebench_dspy_pilot.retrieval_plan(
+        attempt_index=2,
+        store_kind="persistent",
+    )
+    assert plan is not None
+    assert plan.allowed_roles == livecodebench_dspy_pilot.REPAIR_PERSISTENT_MEMORY_ROLES
+    assert "repair_lesson" in plan.allowed_roles
+    compact_plan = livecodebench_dspy_pilot.retrieval_plan(
+        attempt_index=3,
+        store_kind="persistent",
+    )
+    assert compact_plan is not None
+    assert compact_plan.allowed_roles == livecodebench_dspy_pilot.CHEAP_REPAIR_PERSISTENT_MEMORY_ROLES
+    assert compact_plan.limit == 1
+
+
+def test_livecodebench_dspy_retrieval_query_includes_failure_signature_fields() -> None:
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-query",
+        scenario="self_repair",
+        prompt="Implement add(a, b).",
+        evaluator_payload={"problem_metadata": {"func_name": "add"}},
+    )
+
+    query = livecodebench_dspy_pilot.build_retrieval_query(
+        problem,
+        (
+            "Functional public test mismatch: expected=5 actual=4",
+            "NameError: name 'List' is not defined",
+        ),
+    )
+
+    assert "function add" in query
+    assert "NameError" in query
+    assert "expected 5 actual 4" in query
+
+
+def test_livecodebench_dspy_persistent_retrieval_query_avoids_problem_specific_tokens() -> None:
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-query-persistent",
+        scenario="self_repair",
+        prompt="Implement add(a, b) and return the sum of two integers.",
+        prompt_metadata={"platform": "leetcode", "difficulty": "easy"},
+        evaluator_payload={
+            "public_tests": [
+                {"input": "[2, 3]", "output": "5", "testtype": "functional"},
+            ],
+            "problem_metadata": {"func_name": "add"},
+        },
+    )
+
+    query = livecodebench_dspy_pilot.build_retrieval_query(
+        problem,
+        (
+            "Functional public test mismatch: expected=5 actual=4",
+            "NameError: name 'List' is not defined",
+        ),
+        store_kind="persistent",
+    )
+
+    assert "lcb-query-persistent" not in query
+    assert "return the sum of two integers" not in query
+    assert "self_repair" in query
+    assert "top_level_function" in query
+    assert "platform leetcode" in query
+    assert "difficulty easy" in query
+    assert "repair_kind runtime_nameerror" in query
+    assert "integers" in query
+
+
+def test_livecodebench_dspy_self_repair_uses_short_third_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompts: list[str] = []
+
+    class FakeSource:
+        def evaluate(self, problem, *, response_text, extracted_code):
+            del problem, extracted_code
+            if "return a + b" in response_text:
+                return {"available": True, "passed": True, "failure_feedback": []}
+            return {
+                "available": True,
+                "passed": False,
+                "failure_feedback": ["Functional public test mismatch: expected=5 actual=4"],
+            }
+
+    def fake_run_dspy_attempt(**kwargs):
+        prompts.append(kwargs["prompt"])
+        if len(prompts) < 3:
+            return {
+                "response_text": "```python\ndef add(a, b):\n    return a - b\n```",
+                "tool_calls": 0,
+                "trajectory": {},
+                "usage": None,
+                "response_error": None,
+            }
+        return {
+            "response_text": "```python\ndef add(a, b):\n    return a + b\n```",
+            "tool_calls": 0,
+            "trajectory": {},
+            "usage": None,
+            "response_error": None,
+        }
+
+    monkeypatch.setattr(livecodebench_dspy_pilot, "run_dspy_attempt", fake_run_dspy_attempt)
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-third-attempt",
+        scenario="self_repair",
+        prompt="Implement add(a, b).",
+        evaluator_payload={
+            "public_tests": [{"input": "[2, 3]", "output": "5", "testtype": "functional"}],
+            "problem_metadata": {"func_name": "add"},
+        },
+    )
+
+    row = livecodebench_dspy_pilot.execute_problem(
+        problem,
+        method="dspy_baseline",
+        config=livecodebench_dspy_pilot.PilotRunConfig(
+            methods=("dspy_baseline",),
+            requested_scenario="self_repair",
+            resolved_scenario="self_repair",
+            model="qwen/qwen3-coder-next",
+            base_url="https://openrouter.example/api/v1",
+            api_key="openrouter-test-key",
+            temperature=0.0,
+            max_tokens=4096,
+            candidates_per_attempt=1,
+            problem_offset=0,
+            max_problems=1,
+            execute=True,
+            output_root=Path(".benchmarks/livecodebench-dspy"),
+            persistent_memory_root=Path(".benchmarks/livecodebench-dspy/_persistent_vtm_memory"),
+            benchmark_root=Path("benchmarks/LiveCodeBench"),
+            problem_file=None,
+            run_id="third_attempt_test",
+        ),
+        source=FakeSource(),
+        client=livecodebench_dspy_pilot.OpenAICompatibleChatClient(
+            livecodebench_dspy_pilot.OpenAICompatibleChatConfig(
+                base_url="https://openrouter.example/api/v1",
+                api_key="openrouter-test-key",
+            )
+        ),
+        model_config=livecodebench_dspy_pilot.DSPyOpenRouterConfig.from_env(
+            base_url_value="https://openrouter.example/api/v1",
+            api_key_value="openrouter-test-key",
+            execution_model_name="qwen/qwen3-coder-next",
+            dspy_model_name="qwen/qwen3-coder-next",
+        ),
+    )
+
+    assert row["attempt_count"] == 3
+    assert row["cheap_repair_used"] is True
+    assert len(prompts) == 3
+    assert "Problem Statement:" not in prompts[-1]
+    assert "final short repair attempt 3" in prompts[-1]
+
+
+def test_livecodebench_dspy_best_of_k_selects_better_public_test_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompts: list[str] = []
+    completions = iter(
+        [
+            {
+                "response_text": "```python\ndef add(a, b):\n    return a - b\n```",
+                "tool_calls": 0,
+                "trajectory": {},
+                "usage": {"completion_tokens": 5, "prompt_tokens": 10},
+                "response_error": None,
+            },
+            {
+                "response_text": "```python\ndef add(a, b):\n    return a + b\n```",
+                "tool_calls": 0,
+                "trajectory": {},
+                "usage": {"completion_tokens": 7, "prompt_tokens": 10},
+                "response_error": None,
+            },
+        ]
+    )
+
+    class FakeSource:
+        def evaluate(self, problem, *, response_text, extracted_code):
+            del problem, extracted_code
+            if "return a + b" in response_text:
+                return {
+                    "available": True,
+                    "passed": True,
+                    "pass_rate": 1.0,
+                    "passed_test_count": 1,
+                    "public_test_count": 1,
+                    "failure_feedback": [],
+                    "syntax_error": False,
+                }
+            return {
+                "available": True,
+                "passed": False,
+                "pass_rate": 0.0,
+                "passed_test_count": 0,
+                "public_test_count": 1,
+                "failure_feedback": ["Functional public test mismatch: expected=5 actual=4"],
+                "syntax_error": False,
+            }
+
+    def fake_run_dspy_attempt(**kwargs):
+        prompts.append(kwargs["prompt"])
+        return next(completions)
+
+    monkeypatch.setattr(livecodebench_dspy_pilot, "run_dspy_attempt", fake_run_dspy_attempt)
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-best-of-k",
+        scenario="code_generation",
+        prompt="Implement add(a, b).",
+        evaluator_payload={
+            "public_tests": [{"input": "[2, 3]", "output": "5", "testtype": "functional"}],
+            "problem_metadata": {"func_name": "add"},
+        },
+    )
+
+    row = livecodebench_dspy_pilot.execute_problem(
+        problem,
+        method="dspy_baseline",
+        config=livecodebench_dspy_pilot.PilotRunConfig(
+            methods=("dspy_baseline",),
+            requested_scenario="code_generation",
+            resolved_scenario="code_generation",
+            model="qwen/qwen3-coder-next",
+            base_url="https://openrouter.example/api/v1",
+            api_key="openrouter-test-key",
+            temperature=0.7,
+            max_tokens=4096,
+            candidates_per_attempt=2,
+            problem_offset=0,
+            max_problems=1,
+            execute=True,
+            output_root=Path(".benchmarks/livecodebench-dspy"),
+            persistent_memory_root=Path(".benchmarks/livecodebench-dspy/_persistent_vtm_memory"),
+            benchmark_root=Path("benchmarks/LiveCodeBench"),
+            problem_file=None,
+            run_id="best_of_k_test",
+        ),
+        source=FakeSource(),
+        client=livecodebench_dspy_pilot.OpenAICompatibleChatClient(
+            livecodebench_dspy_pilot.OpenAICompatibleChatConfig(
+                base_url="https://openrouter.example/api/v1",
+                api_key="openrouter-test-key",
+            )
+        ),
+        model_config=livecodebench_dspy_pilot.DSPyOpenRouterConfig.from_env(
+            base_url_value="https://openrouter.example/api/v1",
+            api_key_value="openrouter-test-key",
+            execution_model_name="qwen/qwen3-coder-next",
+            dspy_model_name="qwen/qwen3-coder-next",
+        ),
+    )
+
+    assert row["evaluation"]["passed"] is True
+    assert "return a + b" in row["response"]
+    assert row["candidate_selection_mode"] == "best_of_k_public_tests"
+    assert row["selected_candidate_indices"] == [2]
+    assert row["candidate_batches"][0]["selected_candidate_index"] == 2
+    assert row["usage"]["completion_tokens"] == 12
+    assert row["usage"]["prompt_tokens"] == 20
+    assert len(prompts) == 2
+
+
+@pytest.mark.parametrize(
+    ("method", "expected_retrieval_kinds", "expected_agent_session_kind"),
+    [
+        ("dspy_vtm_local_only", ["local", "local"], "local"),
+        ("dspy_vtm_persistent_only", ["persistent"], "persistent"),
+        ("dspy_vtm", ["local", "local", "persistent"], "local"),
+    ],
+)
+def test_livecodebench_dspy_memory_ablation_routes_correct_memory_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    method: str,
+    expected_retrieval_kinds: list[str],
+    expected_agent_session_kind: str,
+) -> None:
+    retrieval_kinds: list[str] = []
+    agent_session_kinds: list[str] = []
+    prompts: list[str] = []
+
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-ablation-routing",
+        scenario="self_repair",
+        prompt="Implement add(a, b).",
+        prompt_metadata={"platform": "leetcode", "difficulty": "easy"},
+        evaluator_payload={
+            "public_tests": [
+                {"input": "[2, 3]", "output": "5", "testtype": "functional"},
+            ],
+            "problem_metadata": {"func_name": "add"},
+        },
+    )
+
+    class FakeSource:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def evaluate(self, problem, *, response_text, extracted_code):
+            del problem, extracted_code
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "available": True,
+                    "passed": False,
+                    "pass_rate": 0.0,
+                    "passed_test_count": 0,
+                    "public_test_count": 1,
+                    "failure_feedback": ["Functional public test mismatch: expected=5 actual=4"],
+                    "syntax_error": False,
+                }
+            return {
+                "available": True,
+                "passed": True,
+                "pass_rate": 1.0,
+                "passed_test_count": 1,
+                "public_test_count": 1,
+                "failure_feedback": [],
+                "syntax_error": False,
+            }
+
+    def fake_retrieve_verified_memory(session, **kwargs):
+        del kwargs
+        scope_id = str(session.scope.scope_id)
+        retrieval_kinds.append("persistent" if "persistent" in scope_id else "local")
+        return {
+            "used": True,
+            "query": "fake-query",
+            "cards": [],
+            "verified_count": 1,
+            "stale_filtered_count": 0,
+            "tool_calls": 1,
+        }
+
+    def fake_run_dspy_attempt(**kwargs):
+        prompts.append(kwargs["prompt"])
+        session = kwargs["session"]
+        assert session is not None
+        scope_id = str(session.scope.scope_id)
+        agent_session_kinds.append("persistent" if "persistent" in scope_id else "local")
+        return {
+            "response_text": "```python\ndef add(a, b):\n    return a + b\n```",
+            "tool_calls": 0,
+            "trajectory": {},
+            "usage": None,
+            "response_error": None,
+        }
+
+    monkeypatch.setattr(
+        livecodebench_dspy_pilot,
+        "retrieve_verified_memory",
+        fake_retrieve_verified_memory,
+    )
+    monkeypatch.setattr(livecodebench_dspy_pilot, "run_dspy_attempt", fake_run_dspy_attempt)
+
+    persistent_session = (
+        livecodebench_dspy_pilot.open_persistent_memory_session(
+            state_root=tmp_path / "persistent-memory",
+            scenario="self_repair",
+            model="qwen/qwen3-coder-next",
+            workspace_root=tmp_path,
+        )
+        if method in {"dspy_vtm_persistent_only", "dspy_vtm"}
+        else None
+    )
+    try:
+        row = livecodebench_dspy_pilot.execute_problem(
+            problem,
+            method=method,  # type: ignore[arg-type]
+            config=livecodebench_dspy_pilot.PilotRunConfig(
+                methods=(method,),  # type: ignore[arg-type]
+                requested_scenario="self_repair",
+                resolved_scenario="self_repair",
+                model="qwen/qwen3-coder-next",
+                base_url="https://openrouter.example/api/v1",
+                api_key="openrouter-test-key",
+                temperature=0.0,
+                max_tokens=4096,
+                candidates_per_attempt=1,
+                problem_offset=0,
+                max_problems=1,
+                execute=True,
+                output_root=tmp_path / ".benchmarks" / "livecodebench-dspy",
+                persistent_memory_root=tmp_path / ".benchmarks" / "livecodebench-dspy" / "_persistent_vtm_memory",
+                benchmark_root=tmp_path / "benchmarks" / "LiveCodeBench",
+                problem_file=None,
+                run_id="ablation_routing",
+            ),
+            source=FakeSource(),
+            client=livecodebench_dspy_pilot.OpenAICompatibleChatClient(
+                livecodebench_dspy_pilot.OpenAICompatibleChatConfig(
+                    base_url="https://openrouter.example/api/v1",
+                    api_key="openrouter-test-key",
+                )
+            ),
+            model_config=livecodebench_dspy_pilot.DSPyOpenRouterConfig.from_env(
+                base_url_value="https://openrouter.example/api/v1",
+                api_key_value="openrouter-test-key",
+                execution_model_name="qwen/qwen3-coder-next",
+                dspy_model_name="qwen/qwen3-coder-next",
+            ),
+            persistent_session=persistent_session,
+        )
+    finally:
+        if persistent_session is not None:
+            persistent_session.close()
+
+    assert row["attempt_count"] == 2
+    assert retrieval_kinds == expected_retrieval_kinds
+    assert all(kind == expected_agent_session_kind for kind in agent_session_kinds)
+    assert len(prompts) == 2
+
+
 def test_livecodebench_dspy_counts_tool_calls_from_trajectory_mapping() -> None:
     payload = {
         "trajectory": {
@@ -1041,25 +2236,62 @@ def test_livecodebench_dspy_summary_uses_retrieval_invocation_rate_not_hit_rate(
     assert summary["retrieval_hit_rate"] == 0.0
 
 
-def test_livecodebench_dspy_rlm_attempt_uses_rlm_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_livecodebench_dspy_summary_reports_attempt2_repair_metrics() -> None:
+    summary = aggregate_summary(
+        [
+            {
+                "problem_id": "lcb-1",
+                "method": "dspy_vtm",
+                "evaluation": {"available": True, "passed": True, "syntax_error": False},
+                "candidate_batches": [
+                    {
+                        "attempt_index": 1,
+                        "candidates": [{"candidate_index": 1, "passed": False}],
+                    },
+                    {
+                        "attempt_index": 2,
+                        "candidates": [{"candidate_index": 1, "passed": True}],
+                    },
+                ],
+            }
+        ],
+        method="dspy_vtm",
+        scenario="self_repair",
+        model="qwen/qwen3-coder-next",
+    )
+
+    assert summary["attempt1_public_test_pass_at_1"] == 0.0
+    assert summary["attempt2_public_test_pass_at_1"] == 1.0
+    assert summary["attempt2_delta_over_attempt1"] == 1.0
+
+
+def test_livecodebench_dspy_vtm_attempt_exposes_dynamic_memory_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, object] = {}
 
-    class FakeAgent:
-        def __init__(self, **kwargs) -> None:
-            captured["init"] = kwargs
+    def fake_run(self, prompt: str) -> dict[str, object]:  # noqa: ANN001
+        captured["prompt"] = prompt
+        captured["tool_names"] = self.tool_names()
+        captured["memory_tools_enabled"] = self.memory_tools.enabled
+        return {
+            "response": {"response": "```python\nprint('ok')\n```"},
+            "memory_write_proposals": [
+                {
+                    "proposal_kind": "memory_lesson",
+                    "memory_role": "repair_lesson",
+                    "title": "Guard public mismatch repairs",
+                    "summary": "Use the public mismatch to isolate the faulty branch before rewriting the whole function.",
+                }
+            ],
+            "trajectory": {"execution_mode": "predict"},
+        }
 
-        def run(self, prompt: str, *, query: str | None = None) -> dict[str, object]:
-            captured["prompt"] = prompt
-            captured["query"] = query
-            return {
-                "response": {
-                    "response": "```python\nprint('ok')\n```",
-                    "trajectory": [{"reasoning": "inspect", "code": "print(1)"}],
-                },
-                "trajectory": {"execution_mode": "rlm"},
-            }
-
-    monkeypatch.setattr(livecodebench_dspy_pilot, "VTMRLMCodingAgent", FakeAgent)
+    monkeypatch.setattr(
+        livecodebench_dspy_pilot.VTMReActCodingAgent,
+        "run",
+        fake_run,
+    )
     session = SimpleNamespace(
         kernel=object(),
         scope=object(),
@@ -1069,7 +2301,7 @@ def test_livecodebench_dspy_rlm_attempt_uses_rlm_agent(monkeypatch: pytest.Monke
 
     payload = livecodebench_dspy_pilot.run_dspy_attempt(
         prompt="Solve it",
-        method="dspy_rlm_vtm",
+        method="dspy_vtm",
         session=session,
         model_config=livecodebench_dspy_pilot.DSPyOpenRouterConfig.from_env(
             base_url_value="https://openrouter.example/api/v1",
@@ -1077,13 +2309,291 @@ def test_livecodebench_dspy_rlm_attempt_uses_rlm_agent(monkeypatch: pytest.Monke
             execution_model_name="qwen/qwen3-coder-next",
             dspy_model_name="qwen/qwen3-coder-next",
         ),
-        memory_query="lcb-123 | public feedback",
+        attempt_index=2,
     )
 
     assert payload["response_text"] == "```python\nprint('ok')\n```"
-    assert payload["tool_calls"] == 1
     assert captured["prompt"] == "Solve it"
-    assert captured["query"] == "lcb-123 | public feedback"
+    assert captured["memory_tools_enabled"] is True
+    assert "search_verified_memory" in captured["tool_names"]
+    assert "search_naive_memory" in captured["tool_names"]
+    assert "expand_memory_evidence" in captured["tool_names"]
+    assert "verify_memory" in captured["tool_names"]
+    assert "propose_memory_lesson" in captured["tool_names"]
+    assert "propose_failure_pattern" in captured["tool_names"]
+    assert "propose_solution_pattern" in captured["tool_names"]
+    assert payload["memory_write_proposals"][0]["title"] == "Guard public mismatch repairs"
+
+
+def test_livecodebench_dspy_vtm_attempt_one_keeps_write_tools_but_hides_lookup_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(self, prompt: str) -> dict[str, object]:  # noqa: ANN001
+        captured["prompt"] = prompt
+        captured["tool_names"] = self.tool_names()
+        captured["memory_tools_enabled"] = self.memory_tools.enabled
+        return {
+            "response": {"response": "```python\nprint('ok')\n```"},
+            "memory_write_proposals": [
+                {
+                    "proposal_kind": "memory_lesson",
+                    "memory_role": "repair_lesson",
+                    "title": "Capture attempt-one state",
+                    "summary": "Record the current implementation state before repair.",
+                }
+            ],
+            "trajectory": {"execution_mode": "predict"},
+        }
+
+    monkeypatch.setattr(
+        livecodebench_dspy_pilot.VTMReActCodingAgent,
+        "run",
+        fake_run,
+    )
+    session = SimpleNamespace(
+        kernel=object(),
+        scope=object(),
+        dependency=object(),
+        metadata_store=SimpleNamespace(get_memory_item=lambda _memory_id: None),
+    )
+
+    payload = livecodebench_dspy_pilot.run_dspy_attempt(
+        prompt="Solve it",
+        method="dspy_vtm",
+        session=session,
+        model_config=livecodebench_dspy_pilot.DSPyOpenRouterConfig.from_env(
+            base_url_value="https://openrouter.example/api/v1",
+            api_key_value="openrouter-test-key",
+            execution_model_name="qwen/qwen3-coder-next",
+            dspy_model_name="qwen/qwen3-coder-next",
+        ),
+        attempt_index=1,
+    )
+
+    assert payload["response_text"] == "```python\nprint('ok')\n```"
+    assert captured["prompt"] == "Solve it"
+    assert captured["memory_tools_enabled"] is True
+    assert "search_verified_memory" not in captured["tool_names"]
+    assert "search_naive_memory" not in captured["tool_names"]
+    assert "expand_memory_evidence" not in captured["tool_names"]
+    assert "verify_memory" not in captured["tool_names"]
+    assert "propose_memory_lesson" in captured["tool_names"]
+    assert "propose_failure_pattern" in captured["tool_names"]
+    assert "propose_solution_pattern" in captured["tool_names"]
+    assert payload["memory_write_proposals"][0]["title"] == "Capture attempt-one state"
+
+
+def test_livecodebench_dspy_vtm_attempt_falls_back_when_dependency_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(self, prompt: str) -> dict[str, object]:  # noqa: ANN001
+        captured["prompt"] = prompt
+        captured["tool_names"] = self.tool_names()
+        captured["memory_tools_enabled"] = self.memory_tools.enabled
+        return {
+            "response": {"response": "```python\nprint('ok')\n```"},
+            "trajectory": {"execution_mode": "predict"},
+        }
+
+    monkeypatch.setattr(
+        livecodebench_dspy_pilot.VTMReActCodingAgent,
+        "run",
+        fake_run,
+    )
+    session = SimpleNamespace(
+        kernel=object(),
+        scope=object(),
+        dependency=None,
+        metadata_store=SimpleNamespace(get_memory_item=lambda _memory_id: None),
+    )
+
+    payload = livecodebench_dspy_pilot.run_dspy_attempt(
+        prompt="Solve it",
+        method="dspy_vtm",
+        session=session,
+        model_config=livecodebench_dspy_pilot.DSPyOpenRouterConfig.from_env(
+            base_url_value="https://openrouter.example/api/v1",
+            api_key_value="openrouter-test-key",
+            execution_model_name="qwen/qwen3-coder-next",
+            dspy_model_name="qwen/qwen3-coder-next",
+        ),
+    )
+
+    assert payload["response_text"] == "```python\nprint('ok')\n```"
+    assert captured["prompt"] == "Solve it"
+    assert captured["memory_tools_enabled"] is False
+    assert "search_verified_memory" not in captured["tool_names"]
+    assert "verify_memory" not in captured["tool_names"]
+
+
+def test_livecodebench_dspy_agent_proposal_promotes_transferable_repair_memory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-agent-write-source",
+        scenario="self_repair",
+        prompt="Implement add(a, b) and return the sum.",
+        prompt_metadata={"platform": "leetcode", "difficulty": "easy"},
+        evaluator_payload={
+            "public_tests": [
+                {"input": "[2, 3]", "output": "5", "testtype": "functional"},
+            ],
+            "problem_metadata": {"func_name": "add"},
+        },
+    )
+    later_problem = LiveCodeBenchProblem(
+        problem_id="lcb-agent-write-target",
+        scenario="self_repair",
+        prompt="Implement add(a, b) for a later benchmark task.",
+        prompt_metadata={"platform": "leetcode", "difficulty": "easy"},
+        evaluator_payload={
+            "public_tests": [
+                {"input": "[7, 4]", "output": "11", "testtype": "functional"},
+            ],
+            "problem_metadata": {"func_name": "add"},
+        },
+    )
+
+    class FakeSource:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def evaluate(self, problem, *, response_text, extracted_code):
+            del problem, response_text, extracted_code
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "available": True,
+                    "passed": False,
+                    "pass_rate": 0.0,
+                    "passed_test_count": 0,
+                    "public_test_count": 1,
+                    "failure_feedback": ["Functional public test mismatch: expected=5 actual=4"],
+                    "syntax_error": False,
+                }
+            return {
+                "available": True,
+                "passed": True,
+                "pass_rate": 1.0,
+                "passed_test_count": 1,
+                "public_test_count": 1,
+                "failure_feedback": [],
+                "syntax_error": False,
+            }
+
+    attempts = {"count": 0}
+
+    def fake_run_dspy_attempt(**kwargs):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            return {
+                "response_text": "```python\ndef add(a, b):\n    return a - b\n```",
+                "tool_calls": 1,
+                "trajectory": {},
+                "usage": None,
+                "response_error": None,
+                "memory_write_proposals": [],
+            }
+        return {
+            "response_text": "```python\ndef add(a, b):\n    return a + b\n```",
+            "tool_calls": 2,
+            "trajectory": {},
+            "usage": None,
+            "response_error": None,
+            "memory_write_proposals": [
+                {
+                    "proposal_kind": "failure_pattern",
+                    "memory_role": "repair_lesson",
+                    "title": "Avoid subtraction on sum tasks",
+                    "summary": (
+                        "When public tests for a top-level add function show a smaller actual "
+                        "total than expected, check that the final branch returns the sum instead "
+                        "of the difference."
+                    ),
+                    "rationale": "The repaired candidate passed after replacing subtraction with addition.",
+                    "function_name": "add",
+                    "repair_kind": "public_test_logic_mismatch",
+                    "interface_mode": "top_level_function",
+                    "failure_signature": "Functional public test mismatch: expected=5 actual=4",
+                    "transfer_terms": ["logic_mismatch", "sum", "addition", "top_level_function"],
+                }
+            ],
+        }
+
+    monkeypatch.setattr(livecodebench_dspy_pilot, "run_dspy_attempt", fake_run_dspy_attempt)
+    persistent_session = livecodebench_dspy_pilot.open_persistent_memory_session(
+        state_root=tmp_path / "persistent-memory",
+        scenario="self_repair",
+        model="qwen/qwen3-coder-next",
+        workspace_root=tmp_path,
+    )
+    try:
+        row = livecodebench_dspy_pilot.execute_problem(
+            problem,
+            method="dspy_vtm_persistent_only",
+            config=livecodebench_dspy_pilot.PilotRunConfig(
+                methods=("dspy_vtm_persistent_only",),
+                requested_scenario="self_repair",
+                resolved_scenario="self_repair",
+                model="qwen/qwen3-coder-next",
+                base_url="https://openrouter.example/api/v1",
+                api_key="openrouter-test-key",
+                temperature=0.0,
+                max_tokens=4096,
+                candidates_per_attempt=1,
+                problem_offset=0,
+                max_problems=1,
+                execute=True,
+                output_root=tmp_path / ".benchmarks" / "livecodebench-dspy",
+                persistent_memory_root=tmp_path / ".benchmarks" / "livecodebench-dspy" / "_persistent_vtm_memory",
+                benchmark_root=tmp_path / "benchmarks" / "LiveCodeBench",
+                problem_file=None,
+                run_id="agent_write_transfer",
+            ),
+            source=FakeSource(),
+            client=livecodebench_dspy_pilot.OpenAICompatibleChatClient(
+                livecodebench_dspy_pilot.OpenAICompatibleChatConfig(
+                    base_url="https://openrouter.example/api/v1",
+                    api_key="openrouter-test-key",
+                )
+            ),
+            model_config=livecodebench_dspy_pilot.DSPyOpenRouterConfig.from_env(
+                base_url_value="https://openrouter.example/api/v1",
+                api_key_value="openrouter-test-key",
+                execution_model_name="qwen/qwen3-coder-next",
+                dspy_model_name="qwen/qwen3-coder-next",
+            ),
+            persistent_session=persistent_session,
+        )
+
+        retrieval = retrieve_verified_memory(
+            persistent_session,
+            query=livecodebench_dspy_pilot.build_retrieval_query(
+                later_problem,
+                ("Functional public test mismatch: expected=11 actual=10",),
+                store_kind="persistent",
+            ),
+            attempt_index=2,
+            allowed_roles=frozenset({"repair_lesson"}),
+            limit=5,
+            expand_top_k=1,
+        )
+    finally:
+        persistent_session.close()
+
+    assert row["evaluation"]["passed"] is True
+    assert row["agent_memory_write_count"] == 1
+    assert len(row["agent_memory_write_ids"]) == 1
+    assert retrieval["used"] is True
+    assert any(
+        card["title"] == "Avoid subtraction on sum tasks"
+        for card in retrieval["cards"]
+    )
 
 
 def test_livecodebench_dspy_attempt_propagates_response_error(
@@ -1093,23 +2603,23 @@ def test_livecodebench_dspy_attempt_propagates_response_error(
         def __init__(self, **kwargs) -> None:
             pass
 
-        def run(self, prompt: str, *, query: str | None = None) -> dict[str, object]:
+        def run(self, prompt: str) -> dict[str, object]:
             return {
                 "response": {
                     "response": "",
-                    "error": "DSPy RLM emitted an action with code=None before final extraction.",
+                    "error": "DSPy ReAct failed before final extraction.",
                 },
                 "trajectory": {
-                    "execution_mode": "rlm",
-                    "execution_error": "DSPy RLM emitted an action with code=None before final extraction.",
+                    "execution_mode": "react",
+                    "execution_error": "DSPy ReAct failed before final extraction.",
                 },
             }
 
-    monkeypatch.setattr(livecodebench_dspy_pilot, "VTMRLMCodingAgent", FakeAgent)
+    monkeypatch.setattr(livecodebench_dspy_pilot, "VTMReActCodingAgent", FakeAgent)
 
     payload = livecodebench_dspy_pilot.run_dspy_attempt(
         prompt="Solve it",
-        method="dspy_rlm_baseline",
+        method="dspy_baseline",
         session=None,
         model_config=livecodebench_dspy_pilot.DSPyOpenRouterConfig.from_env(
             base_url_value="https://openrouter.example/api/v1",
@@ -1121,7 +2631,42 @@ def test_livecodebench_dspy_attempt_propagates_response_error(
 
     assert payload["response_text"] == ""
     assert payload["response_error"] is not None
-    assert "code=None" in payload["response_error"]
+    assert "final extraction" in payload["response_error"]
+
+
+def test_livecodebench_functional_feedback_surfaces_exception_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    traceback_text = "\n".join(
+        [
+            "Traceback (most recent call last):",
+            '  File "/tmp/harness.py", line 12, in <module>',
+            "    spec.loader.exec_module(module)",
+            "  File \"/tmp/candidate.py\", line 1, in <module>",
+            "    class Solution:",
+            "NameError: name 'List' is not defined",
+        ]
+    )
+
+    def fake_run(*args, **kwargs):
+        del args, kwargs
+        return subprocess.CompletedProcess(
+            args=["python3", "harness.py"],
+            returncode=1,
+            stdout=traceback_text,
+            stderr="",
+        )
+
+    monkeypatch.setattr(livecodebench_sources.subprocess, "run", fake_run)
+
+    result = livecodebench_sources._run_functional_public_test(
+        "class Solution:\n    pass\n",
+        {"input": "10", "output": "[]", "testtype": "functional"},
+        func_name="findPrimePairs",
+    )
+
+    assert result.passed is False
+    assert result.feedback == "NameError: name 'List' is not defined"
 
 
 def test_livecodebench_dspy_output_paths_stay_under_pilot_root(tmp_path: Path) -> None:
@@ -1138,6 +2683,20 @@ def test_livecodebench_dspy_output_paths_stay_under_pilot_root(tmp_path: Path) -
     assert run_dir.is_relative_to(output_root)
 
 
+def test_livecodebench_dspy_default_persistent_memory_root_stays_under_output_root(
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / ".benchmarks" / "livecodebench-dspy"
+
+    root = livecodebench_dspy_pilot.default_persistent_memory_root(
+        output_root,
+        scenario="self_repair",
+        model="qwen/qwen3-coder-next",
+    )
+
+    assert root.is_relative_to(output_root)
+
+
 def test_livecodebench_dspy_reference_command_uses_selfrepair_token() -> None:
     config = livecodebench_dspy_pilot.PilotRunConfig(
         methods=("direct",),
@@ -1148,10 +2707,12 @@ def test_livecodebench_dspy_reference_command_uses_selfrepair_token() -> None:
         api_key="openrouter-test-key",
         temperature=0.0,
         max_tokens=8192,
+        candidates_per_attempt=1,
         problem_offset=0,
         max_problems=3,
         execute=False,
         output_root=Path(".benchmarks/livecodebench-dspy"),
+        persistent_memory_root=Path(".benchmarks/livecodebench-dspy/_persistent_vtm_memory"),
         benchmark_root=Path("benchmarks/LiveCodeBench"),
         problem_file=None,
         run_id="pilot_run",
@@ -1265,10 +2826,17 @@ def test_livecodebench_dspy_dry_run_reports_self_repair_semantics(
     payload = json.loads(capsys.readouterr().out)
     assert payload["problem_offset"] == 1
     assert payload["resolved_scenario"] == "self_repair"
+    assert payload["candidates_per_attempt"] == 1
+    expected_root = livecodebench_dspy_pilot.default_persistent_memory_root(
+        Path(payload["output_root"]),
+        scenario="self_repair",
+        model=payload["model"],
+    )
+    assert Path(payload["persistent_memory_root"]) == expected_root
     assert "previous candidate code" in payload["scenario_semantics"].lower()
 
 
-def test_livecodebench_dspy_execute_skips_rlm_methods_without_deno(
+def test_livecodebench_dspy_execute_runs_all_supported_methods(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1291,9 +2859,9 @@ def test_livecodebench_dspy_execute_skips_rlm_methods_without_deno(
         methods=(
             "direct",
             "dspy_baseline",
+            "dspy_vtm_local_only",
+            "dspy_vtm_persistent_only",
             "dspy_vtm",
-            "dspy_rlm_baseline",
-            "dspy_rlm_vtm",
         ),
         requested_scenario="self_repair",
         resolved_scenario="self_repair",
@@ -1302,13 +2870,15 @@ def test_livecodebench_dspy_execute_skips_rlm_methods_without_deno(
         api_key="openrouter-test-key",
         temperature=0.0,
         max_tokens=4096,
+        candidates_per_attempt=1,
         problem_offset=0,
         max_problems=1,
         execute=True,
         output_root=tmp_path / ".benchmarks" / "livecodebench-dspy",
+        persistent_memory_root=tmp_path / ".benchmarks" / "livecodebench-dspy" / "_persistent_vtm_memory",
         benchmark_root=tmp_path / "benchmarks" / "LiveCodeBench",
         problem_file=problem_file,
-        run_id="skip_rlm_missing_deno",
+        run_id="execute_all_methods",
     )
 
     called_methods: list[str] = []
@@ -1331,26 +2901,106 @@ def test_livecodebench_dspy_execute_skips_rlm_methods_without_deno(
             }
         ]
 
-    monkeypatch.setattr(
-        livecodebench_dspy_pilot,
-        "rlm_interpreter_availability",
-        lambda: (False, "Deno required for DSPy RLM."),
-    )
     monkeypatch.setattr(livecodebench_dspy_pilot, "execute_method", fake_execute_method)
 
     payload = livecodebench_dspy_pilot.run_pilot(config, source=source)
 
-    assert called_methods == ["direct", "dspy_baseline", "dspy_vtm"]
-    skipped_runs = {
-        run["method"]: run
-        for run in payload["runs"]
-        if run["method"] in {"dspy_rlm_baseline", "dspy_rlm_vtm"}
-    }
-    assert skipped_runs["dspy_rlm_baseline"]["skipped"] is True
-    assert skipped_runs["dspy_rlm_vtm"]["skipped"] is True
-    assert skipped_runs["dspy_rlm_baseline"]["summary"]["status"] == "skipped"
-    assert skipped_runs["dspy_rlm_vtm"]["summary"]["status"] == "skipped"
-    assert "Deno required" in skipped_runs["dspy_rlm_baseline"]["skip_reason"]
+    assert called_methods == [
+        "direct",
+        "dspy_baseline",
+        "dspy_vtm_local_only",
+        "dspy_vtm_persistent_only",
+        "dspy_vtm",
+    ]
+    assert [run["method"] for run in payload["runs"]] == called_methods
+
+
+def test_livecodebench_dspy_execute_method_writes_incremental_outputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    problems = [
+        LiveCodeBenchProblem(problem_id="lcb-1", scenario="self_repair", prompt="Problem one."),
+        LiveCodeBenchProblem(problem_id="lcb-2", scenario="self_repair", prompt="Problem two."),
+    ]
+
+    class FakeSource:
+        def describe(self) -> dict[str, object]:
+            return {"kind": "fake"}
+
+    config = livecodebench_dspy_pilot.PilotRunConfig(
+        methods=("direct",),
+        requested_scenario="self_repair",
+        resolved_scenario="self_repair",
+        model="qwen/qwen3-coder-next",
+        base_url="https://openrouter.example/api/v1",
+        api_key="openrouter-test-key",
+        temperature=0.0,
+        max_tokens=4096,
+        candidates_per_attempt=1,
+        problem_offset=0,
+        max_problems=2,
+        execute=True,
+        output_root=tmp_path / ".benchmarks" / "livecodebench-dspy",
+        persistent_memory_root=tmp_path / ".benchmarks" / "livecodebench-dspy" / "_persistent_vtm_memory",
+        benchmark_root=tmp_path / "benchmarks" / "LiveCodeBench",
+        problem_file=None,
+        run_id="incremental_outputs",
+    )
+
+    emitted_problem_ids: list[str] = []
+
+    def fake_execute_problem(
+        problem,
+        *,
+        method,
+        config,
+        source,
+        client,
+        model_config,
+        persistent_session=None,
+    ):
+        del method, config, source, client, model_config, persistent_session
+        emitted_problem_ids.append(problem.problem_id)
+        return {
+            "problem_id": problem.problem_id,
+            "method": "direct",
+            "evaluation": {"available": True, "passed": True, "syntax_error": False},
+            "candidate_batches": [
+                {
+                    "attempt_index": 1,
+                    "candidates": [{"candidate_index": 1, "passed": True}],
+                }
+            ],
+            "tool_calls": 0,
+        }
+
+    monkeypatch.setattr(livecodebench_dspy_pilot, "execute_problem", fake_execute_problem)
+
+    rows = livecodebench_dspy_pilot.execute_method(
+        "direct",
+        config=config,
+        problems=problems,
+        source=FakeSource(),
+    )
+
+    paths = livecodebench_dspy_pilot.method_run_paths(
+        config.output_root,
+        scenario=config.resolved_scenario,
+        model=config.model,
+        run_id=config.run_id,
+        method="direct",
+    )
+    summary = json.loads(paths.summary_json.read_text(encoding="utf-8"))
+    problem_lines = paths.problems_jsonl.read_text(encoding="utf-8").strip().splitlines()
+
+    assert [row["problem_id"] for row in rows] == ["lcb-1", "lcb-2"]
+    assert emitted_problem_ids == ["lcb-1", "lcb-2"]
+    assert len(problem_lines) == 2
+    assert summary["status"] == "running"
+    assert summary["completed_problem_count"] == 2
+    assert summary["planned_problem_count"] == 2
+    assert summary["remaining_problem_count"] == 0
 
 
 def test_livecodebench_dspy_direct_completion_retries_empty_provider_response() -> None:

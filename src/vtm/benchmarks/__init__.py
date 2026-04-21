@@ -13,7 +13,6 @@ from vtm.benchmarks.models import (
     RepoSpec,
     RetrievalCase,
 )
-from vtm.benchmarks.runner import BenchmarkRunner
 
 __all__ = [
     "BenchmarkCaseResult",
@@ -29,3 +28,12 @@ __all__ = [
     "RepoSpec",
     "RetrievalCase",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Lazily import heavier benchmark helpers to avoid package cycles."""
+    if name != "BenchmarkRunner":
+        raise AttributeError(name)
+    from vtm.benchmarks.runner import BenchmarkRunner
+
+    return BenchmarkRunner

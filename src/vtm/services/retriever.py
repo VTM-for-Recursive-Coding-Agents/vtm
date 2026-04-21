@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any, Protocol
 
 from vtm.enums import EvidenceBudget
@@ -24,6 +25,23 @@ from vtm.retrieval import (
 from vtm.stores.base import MetadataStore
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+SEARCHABLE_METADATA_KEYS = (
+    "problem_id",
+    "function_name",
+    "feedback_signature",
+    "memory_role",
+)
+EXACT_MATCH_BOOSTS = {
+    "problem_id": 6.0,
+    "function_name": 4.0,
+    "feedback_signature": 3.0,
+    "anchor_symbol": 3.0,
+    "anchor_path": 2.0,
+}
+PARTIAL_MATCH_BOOSTS = {
+    "feedback_signature": 0.75,
+    "anchor_path": 0.5,
+}
 
 
 class Retriever(Protocol):
@@ -52,12 +70,15 @@ def _searchable_fields(item: MemoryItem) -> dict[str, str]:
         payload_parts.append(item.payload.goal)
         payload_parts.extend(step.instruction for step in item.payload.steps)
 
-    return {
+    fields = {
         "title": item.title,
         "summary": item.summary,
         "tags": " ".join(item.tags),
         "payload": " ".join(payload_parts),
     }
+    fields.update(_searchable_metadata_fields(item))
+    fields.update(_searchable_anchor_fields(item))
+    return fields
 
 
 def _query_tokens(query: str) -> set[str]:
@@ -82,6 +103,100 @@ def _match_fields(
             matched_fields.append(field_name)
             score += float(len(overlap))
     return tuple(sorted(matched_tokens)), tuple(matched_fields), score
+
+
+def _searchable_metadata_fields(item: MemoryItem) -> dict[str, str]:
+    metadata = item.metadata if isinstance(item.metadata, Mapping) else {}
+    fields: dict[str, str] = {}
+    for key in SEARCHABLE_METADATA_KEYS:
+        raw_value = metadata.get(key)
+        if isinstance(raw_value, str | int | float):
+            text = str(raw_value).strip()
+            if text:
+                fields[f"metadata:{key}"] = text
+    return fields
+
+
+def _searchable_anchor_fields(item: MemoryItem) -> dict[str, str]:
+    path, symbol = _anchor_metadata(item)
+    fields: dict[str, str] = {}
+    if path:
+        fields["anchor_path"] = path
+    if symbol:
+        fields["anchor_symbol"] = symbol
+    return fields
+
+
+def _anchor_metadata(item: MemoryItem) -> tuple[str | None, str | None]:
+    for evidence in item.evidence:
+        if evidence.code_anchor is not None:
+            return evidence.code_anchor.path, evidence.code_anchor.symbol
+    return None, None
+
+
+def _value_tokens(value: Any) -> set[str]:
+    if not isinstance(value, str | int | float):
+        return set()
+    return set(_tokenize(str(value)))
+
+
+def _boosted_match_fields(
+    query_tokens: set[str],
+    item: MemoryItem,
+) -> tuple[tuple[str, ...], tuple[str, ...], float, dict[str, float]]:
+    metadata = item.metadata if isinstance(item.metadata, Mapping) else {}
+    matched_fields: list[str] = []
+    matched_tokens: set[str] = set()
+    boost_breakdown: dict[str, float] = {}
+    total_boost = 0.0
+
+    for key in ("problem_id", "function_name", "feedback_signature"):
+        value_tokens = _value_tokens(metadata.get(key))
+        if not value_tokens:
+            continue
+        overlap = query_tokens & value_tokens
+        if not overlap:
+            continue
+        field_name = f"metadata:{key}"
+        matched_fields.append(field_name)
+        matched_tokens.update(overlap)
+        if value_tokens <= query_tokens:
+            boost = EXACT_MATCH_BOOSTS[key]
+        else:
+            per_token = PARTIAL_MATCH_BOOSTS.get(key)
+            boost = min(len(overlap) * per_token, EXACT_MATCH_BOOSTS[key]) if per_token else 0.0
+        if boost > 0.0:
+            total_boost += boost
+            boost_breakdown[field_name] = round(boost, 6)
+
+    anchor_path, anchor_symbol = _anchor_metadata(item)
+    anchor_fields = {
+        "anchor_symbol": _value_tokens(anchor_symbol),
+        "anchor_path": _value_tokens(anchor_path),
+    }
+    for field_name, value_tokens in anchor_fields.items():
+        if not value_tokens:
+            continue
+        overlap = query_tokens & value_tokens
+        if not overlap:
+            continue
+        matched_fields.append(field_name)
+        matched_tokens.update(overlap)
+        if value_tokens <= query_tokens:
+            boost = EXACT_MATCH_BOOSTS[field_name]
+        else:
+            per_token = PARTIAL_MATCH_BOOSTS.get(field_name)
+            boost = min(len(overlap) * per_token, EXACT_MATCH_BOOSTS[field_name]) if per_token else 0.0
+        if boost > 0.0:
+            total_boost += boost
+            boost_breakdown[field_name] = round(boost, 6)
+
+    return (
+        tuple(sorted(matched_tokens)),
+        tuple(sorted(set(matched_fields))),
+        total_boost,
+        boost_breakdown,
+    )
 
 
 def _candidate_evidence(
@@ -142,27 +257,45 @@ class LexicalRetriever:
         candidates: list[RetrieveCandidate] = []
 
         for memory in memories:
-            matched_tokens, matched_fields, score = _match_fields(query_tokens, memory)
+            matched_tokens, matched_fields, base_score = _match_fields(query_tokens, memory)
+            boosted_tokens, boosted_fields, boost_score, boost_breakdown = _boosted_match_fields(
+                query_tokens,
+                memory,
+            )
+            score = base_score + boost_score
+            all_matched_tokens = tuple(sorted(set(matched_tokens) | set(boosted_tokens)))
+            all_matched_fields = tuple(dict.fromkeys((*matched_fields, *boosted_fields)))
 
             if query_tokens and score <= 0.0:
                 continue
 
             evidence, raw_evidence_available = _candidate_evidence(request, memory)
+            explanation_metadata = {
+                **_explanation_metadata(memory),
+                "lexical_base_score": base_score,
+                "lexical_boost_score": boost_score,
+            }
+            if boost_breakdown:
+                explanation_metadata["lexical_boost_fields"] = boost_breakdown
 
             candidates.append(
                 RetrieveCandidate(
                     memory=memory,
                     score=score,
                     explanation=RetrieveExplanation(
-                        matched_tokens=tuple(sorted(matched_tokens)),
-                        matched_fields=tuple(matched_fields),
+                        matched_tokens=all_matched_tokens,
+                        matched_fields=all_matched_fields,
                         score=score,
                         reason=(
-                            "matched lexical overlap"
-                            if matched_tokens
-                            else "returned deterministically for empty query"
+                            "matched lexical overlap with exact-match boosts"
+                            if boost_breakdown
+                            else (
+                                "matched lexical overlap"
+                                if matched_tokens
+                                else "returned deterministically for empty query"
+                            )
                         ),
-                        metadata=_explanation_metadata(memory),
+                        metadata=explanation_metadata,
                     ),
                     evidence=evidence,
                     raw_evidence_available=raw_evidence_available,

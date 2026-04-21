@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from collections.abc import Iterable, Mapping, Sequence
@@ -58,6 +59,9 @@ HIDDEN_FIELD_FRAGMENTS: Final[tuple[str, ...]] = (
     "canonical",
     "answer",
     "expected_output",
+)
+EXCEPTION_LINE_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"^[A-Za-z_][\w.]*?(?:Error|Exception|Exit|Interrupt)\b.*$"
 )
 
 
@@ -449,6 +453,18 @@ def compact_text(raw: str | None, *, limit: int = 240) -> str:
     return normalized[: max(0, limit - 3)].rstrip() + "..."
 
 
+def summarize_execution_feedback(raw_feedback: str, *, limit: int = 180) -> str:
+    """Prefer the actionable terminal exception line over a truncated traceback."""
+    stripped = raw_feedback.strip()
+    if not stripped:
+        return compact_text(raw_feedback, limit=limit)
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    for line in reversed(lines):
+        if EXCEPTION_LINE_PATTERN.match(line):
+            return compact_text(line, limit=limit)
+    return compact_text(stripped, limit=limit)
+
+
 def _first_string(payload: Mapping[str, Any], keys: Iterable[str]) -> str | None:
     for key in keys:
         value = payload.get(key)
@@ -589,7 +605,7 @@ def _run_functional_public_test(
     feedback = stdout or (completed.stderr or "").strip() or "Functional public test failed."
     return PublicTestExecutionResult(
         passed=False,
-        feedback=compact_text(feedback, limit=180),
+        feedback=summarize_execution_feedback(feedback, limit=180),
         syntax_error=syntax_error,
     )
 

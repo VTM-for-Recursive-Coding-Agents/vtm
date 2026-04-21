@@ -122,7 +122,6 @@ def build_parser() -> argparse.ArgumentParser:
             "no_memory",
             "naive_lexical",
             "verified_lexical",
-            "lexical_rlm_rerank",
         ),
         default="",
         help="Mode used as the comparison baseline. Defaults to the preset baseline.",
@@ -152,12 +151,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--coding-engine",
-        choices=("vendored_rlm",),
-        default="vendored_rlm",
-        help=(
-            "Maintained coding execution engine. Only the OpenRouter-backed "
-            "RLM path is supported."
-        ),
+        choices=("dspy_react",),
+        default="dspy_react",
+        help="Maintained coding execution engine.",
     )
     parser.add_argument(
         "--workspace-backend",
@@ -198,8 +194,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--execution-model",
-        "--rlm-model-id",
-        dest="rlm_model_id",
+        dest="execution_model_id",
         default="",
         help=(
             "Execution model id for coding runs. Falls back to VTM_EXECUTION_MODEL "
@@ -207,16 +202,10 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--rlm-max-iterations",
+        "--agent-max-iterations",
         type=int,
         default=12,
-        help="Maximum number of vendored-RLM iterations.",
-    )
-    parser.add_argument(
-        "--rlm-max-runtime-seconds",
-        type=int,
-        default=600,
-        help="Maximum runtime budget for vendored RLM.",
+        help="Maximum number of DSPy ReAct iterations.",
     )
     parser.add_argument(
         "--workspace-command-timeout-seconds",
@@ -229,13 +218,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=20000,
         help="Maximum characters captured from a single workspace command.",
-    )
-    parser.add_argument(
-        "--rerank-model",
-        "--rlm-model",
-        dest="rlm_model",
-        default="",
-        help="Model id for lexical_rlm_rerank mode. Falls back to VTM_RERANK_MODEL.",
     )
     parser.add_argument(
         "--comparison-bootstrap-samples",
@@ -304,17 +286,15 @@ def run_matrix_from_args(args: argparse.Namespace) -> BenchmarkMatrixResult:
             docker_network=args.docker_network,
             attempt_count=args.attempts,
             pass_k_values=_resolve_pass_k_values(args.pass_k, attempts=args.attempts, suite=suite),
-            rlm_model_id=args.rlm_model_id or None,
-            rlm_max_iterations=args.rlm_max_iterations,
-            rlm_max_runtime_seconds=args.rlm_max_runtime_seconds,
+            execution_model_id=args.execution_model_id or None,
+            agent_max_iterations=args.agent_max_iterations,
             workspace_command_timeout_seconds=args.workspace_command_timeout_seconds,
             workspace_max_output_chars=args.workspace_max_output_chars,
         )
         run_results[mode] = execute_benchmark_run(
             manifest,
             config,
-            rerank_model_name=args.rlm_model or None,
-            execution_model_name=args.rlm_model_id or None,
+            execution_model_name=args.execution_model_id or None,
         )
 
     baseline_dir = runs_root / baseline_mode

@@ -29,7 +29,7 @@ def _run_subprocess(*args, **kwargs):  # noqa: ANN002, ANN003
     return subprocess.run(*args, env=_cli_env(), **kwargs)
 
 
-def test_run_cli_parser_accepts_rlm_execution_args() -> None:
+def test_run_cli_parser_accepts_execution_model_arg() -> None:
     args = run.build_parser().parse_args(
         [
             "--manifest",
@@ -38,12 +38,12 @@ def test_run_cli_parser_accepts_rlm_execution_args() -> None:
             "coding",
             "--output",
             "out",
-            "--rlm-model-id",
+            "--execution-model",
             "gpt-test",
         ]
     )
 
-    assert args.rlm_model_id == "gpt-test"
+    assert args.execution_model_id == "gpt-test"
 
 
 def test_run_cli_parser_accepts_maintained_coding_engine() -> None:
@@ -56,11 +56,11 @@ def test_run_cli_parser_accepts_maintained_coding_engine() -> None:
             "--output",
             "out",
             "--coding-engine",
-            "vendored_rlm",
+            "dspy_react",
         ]
     )
 
-    assert args.coding_engine == "vendored_rlm"
+    assert args.coding_engine == "dspy_react"
 
 
 def test_run_cli_parser_accepts_new_lexical_modes() -> None:
@@ -111,17 +111,17 @@ def test_run_cli_parser_accepts_seed_on_base_query_on_head() -> None:
     assert args.seed_on_base_query_on_head is True
 
 
-def test_matrix_cli_parser_accepts_rlm_execution_args() -> None:
+def test_matrix_cli_parser_accepts_execution_model_arg() -> None:
     args = matrix.build_parser().parse_args(
         [
             "--output",
             "out",
-            "--rlm-model-id",
+            "--execution-model",
             "gpt-test",
         ]
     )
 
-    assert args.rlm_model_id == "gpt-test"
+    assert args.execution_model_id == "gpt-test"
 
 
 def test_matrix_cli_parser_accepts_maintained_coding_engine() -> None:
@@ -130,11 +130,11 @@ def test_matrix_cli_parser_accepts_maintained_coding_engine() -> None:
             "--output",
             "out",
             "--coding-engine",
-            "vendored_rlm",
+            "dspy_react",
         ]
     )
 
-    assert args.coding_engine == "vendored_rlm"
+    assert args.coding_engine == "dspy_react"
 
 
 def test_matrix_cli_parser_accepts_seed_on_base_query_on_head() -> None:
@@ -217,17 +217,10 @@ def test_execute_benchmark_run_resolves_openrouter_defaults(
     manifest = BenchmarkManifest.from_path("benchmarks/manifests/synthetic-smoke.json")
     captured: dict[str, object] = {}
 
-    class FakeAdapter:
-        def __init__(self, *, model: str, base_url: str, api_key: str | None) -> None:
-            captured["adapter_model"] = model
-            captured["adapter_base_url"] = base_url
-            captured["adapter_api_key"] = api_key
-
     class FakeRunner:
-        def __init__(self, manifest, config, rlm_adapter=None) -> None:  # noqa: ANN001, ANN204
+        def __init__(self, manifest, config) -> None:  # noqa: ANN001, ANN204
             captured["runner_manifest"] = manifest
             captured["runner_config"] = config
-            captured["runner_adapter"] = rlm_adapter
 
         def run(self) -> BenchmarkRunResult:
             return BenchmarkRunResult(
@@ -235,7 +228,7 @@ def test_execute_benchmark_run_resolves_openrouter_defaults(
                 manifest_id="synthetic_python_smoke",
                 manifest_digest="deadbeef",
                 suite="coding",
-                mode="lexical_rlm_rerank",
+                mode="verified_lexical",
                 case_count=0,
                 started_at="2026-01-01T00:00:00Z",
                 completed_at="2026-01-01T00:00:01Z",
@@ -243,11 +236,7 @@ def test_execute_benchmark_run_resolves_openrouter_defaults(
                 artifacts={},
             )
 
-    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-key")
-    monkeypatch.setenv("VTM_OPENROUTER_BASE_URL", "https://openrouter.example/api/v1")
     monkeypatch.setenv("VTM_EXECUTION_MODEL", "google/gemma-test")
-    monkeypatch.setenv("VTM_RERANK_MODEL", "nvidia/nemotron-test")
-    monkeypatch.setattr(run, "OpenAIRLMAdapter", FakeAdapter)
     monkeypatch.setattr(run, "BenchmarkRunner", FakeRunner)
 
     result = run.execute_benchmark_run(
@@ -255,18 +244,15 @@ def test_execute_benchmark_run_resolves_openrouter_defaults(
         BenchmarkRunConfig(
             manifest_path="benchmarks/manifests/synthetic-smoke.json",
             suite="coding",
-            mode="lexical_rlm_rerank",
+            mode="verified_lexical",
             output_dir=str(tmp_path / "openrouter-defaults"),
         ),
     )
 
     assert result.run_id == "run-1"
-    assert captured["adapter_model"] == "nvidia/nemotron-test"
-    assert captured["adapter_base_url"] == "https://openrouter.example/api/v1"
-    assert captured["adapter_api_key"] == "openrouter-test-key"
     resolved_config = captured["runner_config"]
     assert isinstance(resolved_config, BenchmarkRunConfig)
-    assert resolved_config.rlm_model_id == "google/gemma-test"
+    assert resolved_config.execution_model_id == "google/gemma-test"
 
 
 def test_benchmark_cli_runs_synthetic_retrieval(tmp_path: Path) -> None:
@@ -525,7 +511,7 @@ def test_benchmark_compare_cli_reports_retrieval_deltas(tmp_path: Path) -> None:
 
 def test_benchmark_compare_cli_reports_coding_attempt_metrics(
     tmp_path: Path,
-    install_fake_vendored_rlm,
+    install_fake_benchmark_agent,
 ) -> None:
     def apply_candidate_update(task_pack, workspace_root: Path, artifact_root: Path) -> None:
         attempt_dir = next(
@@ -560,7 +546,7 @@ def test_benchmark_compare_cli_reports_coding_attempt_metrics(
             text=True,
         )
 
-    install_fake_vendored_rlm(
+    install_fake_benchmark_agent(
         apply_workspace_update=lambda task_pack, workspace_root, artifact_root: None
     )
     baseline_dir = tmp_path / "coding-baseline"
@@ -575,13 +561,13 @@ def test_benchmark_compare_cli_reports_coding_attempt_metrics(
             mode="verified_lexical",
             output_dir=str(baseline_dir),
             pair_filters=("bugfix",),
-            rlm_model_id="fake-model",
+            execution_model_id="fake-model",
             attempt_count=2,
             pass_k_values=(1, 2),
         ),
     ).run()
 
-    install_fake_vendored_rlm(apply_workspace_update=apply_candidate_update)
+    install_fake_benchmark_agent(apply_workspace_update=apply_candidate_update)
     BenchmarkRunner(
         manifest,
         BenchmarkRunConfig(
@@ -590,7 +576,7 @@ def test_benchmark_compare_cli_reports_coding_attempt_metrics(
             mode="verified_lexical",
             output_dir=str(candidate_dir),
             pair_filters=("bugfix",),
-            rlm_model_id="fake-model",
+            execution_model_id="fake-model",
             attempt_count=2,
             pass_k_values=(1, 2),
         ),
@@ -744,9 +730,9 @@ def test_benchmark_matrix_preset_runs_verified_drift_mode_only(tmp_path: Path) -
 
 def test_benchmark_matrix_preset_runs_maintained_coding_modes(
     tmp_path: Path,
-    install_fake_vendored_rlm,
+    install_fake_benchmark_agent,
 ) -> None:
-    install_fake_vendored_rlm()
+    install_fake_benchmark_agent()
     output_dir = tmp_path / "coding-matrix"
     args = matrix.build_parser().parse_args(
         [
@@ -758,7 +744,7 @@ def test_benchmark_matrix_preset_runs_maintained_coding_modes(
             "bugfix",
             "--max-cases",
             "1",
-            "--rlm-model-id",
+            "--execution-model",
             "fake-model",
             "--comparison-bootstrap-samples",
             "100",
@@ -775,9 +761,9 @@ def test_benchmark_matrix_preset_runs_maintained_coding_modes(
 
 def test_benchmark_matrix_preset_runs_controlled_coding_drift_modes(
     tmp_path: Path,
-    install_fake_vendored_rlm,
+    install_fake_benchmark_agent,
 ) -> None:
-    install_fake_vendored_rlm()
+    install_fake_benchmark_agent()
     output_dir = tmp_path / "controlled-coding-matrix"
     args = matrix.build_parser().parse_args(
         [
@@ -789,7 +775,7 @@ def test_benchmark_matrix_preset_runs_controlled_coding_drift_modes(
             "validation_procedure",
             "--max-cases",
             "1",
-            "--rlm-model-id",
+            "--execution-model",
             "fake-model",
             "--comparison-bootstrap-samples",
             "100",

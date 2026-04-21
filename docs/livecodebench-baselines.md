@@ -135,12 +135,14 @@ The repository also includes a small scaffolded LiveCodeBench DSPy pilot that co
 - direct OpenRouter calls
 - DSPy ReAct without VTM memory
 - DSPy ReAct with VTM verified-memory tools
-- DSPy RLM without VTM memory
-- DSPy RLM with VTM verified-memory tools
 
 That pilot is intentionally separate from the maintained retrieval, drift verification, drifted retrieval, and controlled coding-drift evidence. It does not change VTM retrieval scoring, drift scoring, drifted retrieval scoring, or verifier semantics.
 
 In pilot `self_repair` mode, all methods receive the same public problem statement, the same previous candidate code, and the same visible public-test feedback on the repair attempt. The intended comparison isolates both orchestration choice and whether VTM verified-memory tools are available.
+
+If you enable `--candidates-per-attempt K`, that setting applies to all methods equally and the pilot reports it as `best_of_k_public_tests` rather than plain single-sample pass rate.
+
+The pilot now defaults to a larger completion budget of `65536` tokens. Override it with `--max-tokens` if you want a lower cap for cheaper runs.
 
 Preview the pilot without calling the model:
 
@@ -160,6 +162,7 @@ uv run --extra dspy python scripts/run_livecodebench_dspy_pilot.py \
   --scenario self_repair \
   --problem-offset 0 \
   --max-problems 3 \
+  --candidates-per-attempt 3 \
   --model qwen/qwen3-coder-next \
   --execute
 ```
