@@ -578,6 +578,7 @@ def test_openrouter_config_maps_env_vars(monkeypatch: pytest.MonkeyPatch) -> Non
     assert config.execution_model == "google/gemma-test"
     assert config.rerank_model == "nvidia/nemotron-test"
     assert config.dspy_model == "openrouter/google/gemma-test"
+    assert config.timeout_seconds == 180.0
     assert config.lm_model_name() == "openai/google/gemma-test"
     assert config.as_env()["VTM_DSPY_MODEL"] == "openrouter/google/gemma-test"
 
@@ -591,6 +592,12 @@ def test_openrouter_config_includes_optional_lm_kwargs(monkeypatch: pytest.Monke
         dspy_model_name="google/gemma-test",
         temperature=0.25,
         max_tokens=4096,
+        extra_body={
+            "provider": {
+                "only": ["ionstream/fp8"],
+                "allow_fallbacks": False,
+            }
+        },
     )
 
     assert config.lm_kwargs() == {
@@ -599,6 +606,13 @@ def test_openrouter_config_includes_optional_lm_kwargs(monkeypatch: pytest.Monke
         "api_key": "openrouter-test-key",
         "temperature": 0.25,
         "max_tokens": 4096,
+        "timeout": 180.0,
+        "extra_body": {
+            "provider": {
+                "only": ["ionstream/fp8"],
+                "allow_fallbacks": False,
+            }
+        },
     }
 
 
@@ -622,6 +636,12 @@ def test_react_agent_create_lm_forwards_sampling_kwargs(monkeypatch: pytest.Monk
             dspy_model="openrouter/google/gemma-test",
             temperature=0.25,
             max_tokens=4096,
+            extra_body={
+                "provider": {
+                    "only": ["ionstream/fp8"],
+                    "allow_fallbacks": False,
+                }
+            },
         ),
     )
     monkeypatch.setattr("vtm_dspy.react_agent.require_dspy", lambda: FakeDSPy)
@@ -637,9 +657,31 @@ def test_react_agent_create_lm_forwards_sampling_kwargs(monkeypatch: pytest.Monk
                 "api_key": "openrouter-test-key",
                 "temperature": 0.25,
                 "max_tokens": 4096,
+                "timeout": 180.0,
+                "extra_body": {
+                    "provider": {
+                        "only": ["ionstream/fp8"],
+                        "allow_fallbacks": False,
+                    }
+                },
             },
         )
     ]
+
+
+def test_openrouter_config_allows_timeout_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-test-key")
+    monkeypatch.setenv("VTM_OPENROUTER_BASE_URL", "https://openrouter.example/api/v1")
+    monkeypatch.setenv("VTM_DSPY_TIMEOUT_SECONDS", "75")
+
+    config = DSPyOpenRouterConfig.from_env(
+        execution_model_name="google/gemma-test",
+        dspy_model_name="google/gemma-test",
+    )
+
+    assert config.timeout_seconds == 75.0
+    assert config.lm_kwargs()["timeout"] == 75.0
+    assert config.as_env()["VTM_DSPY_TIMEOUT_SECONDS"] == "75.0"
 
 
 def test_docs_frame_dspy_and_livecodebench_correctly() -> None:

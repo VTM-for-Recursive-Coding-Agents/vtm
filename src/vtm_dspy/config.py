@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from vtm.benchmarks.openrouter import (
@@ -14,12 +15,20 @@ from vtm.benchmarks.openrouter import (
 
 DEFAULT_DSPY_MODEL = "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
 DEFAULT_DSPY_MODEL_TYPE = "chat"
+DEFAULT_DSPY_TIMEOUT_SECONDS = 180.0
 
 
 def _normalize_non_empty(value: str, *, field_name: str) -> str:
     resolved = value.strip()
     if not resolved:
         raise ValueError(f"{field_name} must not be empty")
+    return resolved
+
+
+def _normalize_positive_float(value: float | int | str, *, field_name: str) -> float:
+    resolved = float(value)
+    if resolved <= 0:
+        raise ValueError(f"{field_name} must be greater than zero")
     return resolved
 
 
@@ -47,6 +56,15 @@ def resolve_dspy_model(explicit: str | None = None) -> str:
     raise ValueError("unable to resolve a DSPy model name")
 
 
+def resolve_dspy_timeout_seconds(explicit: float | int | str | None = None) -> float:
+    """Resolve the configured DSPy request timeout in seconds."""
+    candidate = explicit
+    if candidate is None:
+        env_value = os.getenv("VTM_DSPY_TIMEOUT_SECONDS", "").strip()
+        candidate = env_value or DEFAULT_DSPY_TIMEOUT_SECONDS
+    return _normalize_positive_float(candidate, field_name="timeout_seconds")
+
+
 def resolve_dspy_lm_model(model_name: str) -> str:
     """Map the stored DSPy model id onto DSPy's OpenAI-compatible LM naming."""
     normalized = _normalize_openrouter_model(model_name)
@@ -65,6 +83,8 @@ class DSPyOpenRouterConfig:
     model_type: str = DEFAULT_DSPY_MODEL_TYPE
     temperature: float | None = None
     max_tokens: int | None = None
+    timeout_seconds: float = DEFAULT_DSPY_TIMEOUT_SECONDS
+    extra_body: dict[str, object] | None = None
 
     @classmethod
     def from_env(
@@ -77,6 +97,8 @@ class DSPyOpenRouterConfig:
         dspy_model_name: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        timeout_seconds: float | int | str | None = None,
+        extra_body: Mapping[str, object] | None = None,
     ) -> DSPyOpenRouterConfig:
         """Resolve one consistent config bundle from the repo's environment variables."""
         base_url = _normalize_non_empty(
@@ -87,6 +109,7 @@ class DSPyOpenRouterConfig:
         execution = execution_model(execution_model_name)
         rerank = rerank_model(rerank_model_name)
         dspy_model = resolve_dspy_model(dspy_model_name)
+        resolved_timeout_seconds = resolve_dspy_timeout_seconds(timeout_seconds)
         return cls(
             base_url=base_url,
             api_key=api_key,
@@ -95,6 +118,8 @@ class DSPyOpenRouterConfig:
             dspy_model=dspy_model,
             temperature=temperature,
             max_tokens=max_tokens,
+            timeout_seconds=resolved_timeout_seconds,
+            extra_body=dict(extra_body) if extra_body is not None else None,
         )
 
     def require_api_key(self) -> str:
@@ -121,6 +146,9 @@ class DSPyOpenRouterConfig:
             kwargs["temperature"] = self.temperature
         if self.max_tokens is not None:
             kwargs["max_tokens"] = self.max_tokens
+        kwargs["timeout"] = self.timeout_seconds
+        if self.extra_body is not None:
+            kwargs["extra_body"] = dict(self.extra_body)
         return kwargs
 
     def as_env(self) -> dict[str, str]:
@@ -133,6 +161,7 @@ class DSPyOpenRouterConfig:
         }
         if self.api_key is not None:
             payload["OPENROUTER_API_KEY"] = self.api_key
+        payload["VTM_DSPY_TIMEOUT_SECONDS"] = str(self.timeout_seconds)
         return payload
 
     def summary(self) -> dict[str, str]:
@@ -145,13 +174,17 @@ class DSPyOpenRouterConfig:
             "dspy_lm_model": self.lm_model_name(),
             "model_type": self.model_type,
             "api_key_configured": "true" if self.api_key is not None else "false",
+            "timeout_seconds": str(self.timeout_seconds),
+            "extra_body_configured": "true" if self.extra_body else "false",
         }
 
 
 __all__ = [
     "DEFAULT_DSPY_MODEL",
     "DEFAULT_DSPY_MODEL_TYPE",
+    "DEFAULT_DSPY_TIMEOUT_SECONDS",
     "DSPyOpenRouterConfig",
+    "resolve_dspy_timeout_seconds",
     "resolve_dspy_lm_model",
     "resolve_dspy_model",
 ]

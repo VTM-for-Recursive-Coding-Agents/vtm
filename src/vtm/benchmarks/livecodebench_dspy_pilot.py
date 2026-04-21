@@ -48,7 +48,7 @@ from vtm.stores.artifact_store import FilesystemArtifactStore
 from vtm.stores.cache_store import SqliteCacheStore
 from vtm.stores.sqlite_store import SqliteMetadataStore
 from vtm_dspy import dspy_available
-from vtm_dspy.config import DSPyOpenRouterConfig
+from vtm_dspy.config import DEFAULT_DSPY_TIMEOUT_SECONDS, DSPyOpenRouterConfig, resolve_dspy_timeout_seconds
 from vtm_dspy.react_agent import VTMReActCodingAgent
 from vtm_dspy.tools import memory_tooling_supported
 
@@ -67,6 +67,7 @@ DEFAULT_MAX_PROBLEMS: Final[int] = 3
 DEFAULT_MAX_TOKENS: Final[int] = 65536
 DEFAULT_TEMPERATURE: Final[float] = 0.0
 DEFAULT_SCENARIO: Final[PilotScenario] = "self_repair"
+DEFAULT_PROVIDER_ONLY: Final[tuple[str, ...]] = ("ionstream/fp8",)
 DEFAULT_SELF_REPAIR_MAX_ATTEMPTS: Final[int] = 3
 DEFAULT_DIRECT_EMPTY_RESPONSE_RETRIES: Final[int] = 2
 PILOT_ATTEMPT_ONE_REACT_MAX_ITERS: Final[int] = 8
@@ -207,6 +208,8 @@ class PilotRunConfig:
     benchmark_root: Path
     problem_file: Path | None
     run_id: str
+    dspy_timeout_seconds: float = DEFAULT_DSPY_TIMEOUT_SECONDS
+    provider_only: tuple[str, ...] = DEFAULT_PROVIDER_ONLY
 
     @property
     def dry_run(self) -> bool:
@@ -369,6 +372,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE)
     parser.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     parser.add_argument(
+        "--provider-only",
+        default=",".join(DEFAULT_PROVIDER_ONLY),
+        help=(
+            "Comma-separated OpenRouter provider slugs to allow for this pilot. "
+            "Defaults to ionstream/fp8 with fallbacks disabled."
+        ),
+    )
+    parser.add_argument(
+        "--dspy-timeout-seconds",
+        type=float,
+        default=None,
+        help=(
+            "Per-request timeout for DSPy/OpenRouter calls. "
+            "Defaults to VTM_DSPY_TIMEOUT_SECONDS or 180 seconds."
+        ),
+    )
+    parser.add_argument(
         "--candidates-per-attempt",
         type=int,
         default=1,
@@ -398,6 +418,21 @@ def resolve_methods(raw_method: str) -> tuple[PilotMethod, ...]:
     if raw_method == "all":
         return METHODS
     return (raw_method,)  # type: ignore[return-value]
+
+
+def _parse_provider_only(raw_value: str) -> tuple[str, ...]:
+    parts = tuple(part.strip() for part in raw_value.split(",") if part.strip())
+    return parts
+
+
+def _openrouter_provider_preferences(provider_only: Sequence[str]) -> dict[str, Any] | None:
+    resolved_only = [provider for provider in provider_only if str(provider).strip()]
+    if not resolved_only:
+        return None
+    return {
+        "only": resolved_only,
+        "allow_fallbacks": False,
+    }
 
 
 def method_run_dir(
@@ -470,6 +505,8 @@ def resolve_config(
     supported = source.supported_scenarios()
     resolved_scenario = resolve_scenario(requested_scenario, supported_scenarios=supported)
     run_id = args.run_id or f"lcb_dspy_pilot_{utc_now().strftime('%Y%m%d_%H%M%S')}"
+    dspy_timeout_seconds = resolve_dspy_timeout_seconds(args.dspy_timeout_seconds)
+    provider_only = _parse_provider_only(str(args.provider_only))
     persistent_memory_root = (
         args.persistent_memory_root
         if args.persistent_memory_root is not None
@@ -497,6 +534,8 @@ def resolve_config(
         benchmark_root=args.benchmark_root,
         problem_file=args.problem_file,
         run_id=run_id,
+        dspy_timeout_seconds=dspy_timeout_seconds,
+        provider_only=provider_only,
     )
 
 
@@ -506,12 +545,21 @@ def describe_method_runtime(
     model: str,
     base_url: str,
     api_key: str | None,
+    timeout_seconds: float | None = None,
+    provider_only: Sequence[str] = DEFAULT_PROVIDER_ONLY,
 ) -> MethodRuntime:
+    provider_preferences = _openrouter_provider_preferences(provider_only)
     model_config = DSPyOpenRouterConfig.from_env(
         base_url_value=base_url,
         api_key_value=api_key,
         execution_model_name=model,
         dspy_model_name=model,
+        timeout_seconds=timeout_seconds,
+        extra_body=(
+            {"provider": provider_preferences}
+            if provider_preferences is not None
+            else None
+        ),
     )
     if method_uses_vtm_memory(method):
         with TemporaryDirectory(prefix="vtm-lcb-dspy-dry-run-") as temp_dir:
@@ -1033,6 +1081,8 @@ def run_pilot(
             model=config.model,
             base_url=config.base_url,
             api_key=config.api_key,
+            timeout_seconds=config.dspy_timeout_seconds,
+            provider_only=config.provider_only,
         )
         paths = method_run_paths(
             config.output_root,
@@ -1139,8 +1189,14 @@ def execute_method(
         OpenAICompatibleChatConfig(
             base_url=config.base_url,
             api_key=config.api_key,
+            extra_body=(
+                {"provider": _openrouter_provider_preferences(config.provider_only)}
+                if _openrouter_provider_preferences(config.provider_only) is not None
+                else None
+            ),
         )
     )
+    provider_preferences = _openrouter_provider_preferences(config.provider_only)
     model_config = DSPyOpenRouterConfig.from_env(
         base_url_value=config.base_url,
         api_key_value=config.api_key,
@@ -1148,6 +1204,12 @@ def execute_method(
         dspy_model_name=config.model,
         temperature=config.temperature,
         max_tokens=config.max_tokens,
+        timeout_seconds=config.dspy_timeout_seconds,
+        extra_body=(
+            {"provider": provider_preferences}
+            if provider_preferences is not None
+            else None
+        ),
     )
     rows: list[dict[str, Any]] = []
     paths = method_run_paths(
@@ -1541,33 +1603,43 @@ def _generate_attempt_candidate(
     model_config: DSPyOpenRouterConfig,
     attempt_index: int,
 ) -> AttemptCandidate:
-    if method == "direct":
-        response_payload, response_text, retry_count, response_error = _request_direct_completion(
-            client,
-            model=config.model,
-            prompt=prompt,
-            temperature=config.temperature,
-            max_tokens=config.max_tokens,
-        )
-        usage = _normalize_usage(response_payload.get("usage"))
-        dspy_tool_calls = 0
-    else:
-        response_payload = run_dspy_attempt(
-            prompt=prompt,
-            method=method,
-            session=session,
-            model_config=model_config,
-            attempt_index=attempt_index,
-        )
-        response_text = response_payload["response_text"]
+    response_payload: Mapping[str, Any] = {}
+    memory_write_proposals: tuple[dict[str, Any], ...] = ()
+    try:
+        if method == "direct":
+            response_payload, response_text, retry_count, response_error = _request_direct_completion(
+                client,
+                model=config.model,
+                prompt=prompt,
+                temperature=config.temperature,
+                max_tokens=config.max_tokens,
+            )
+            usage = _normalize_usage(response_payload.get("usage"))
+            dspy_tool_calls = 0
+        else:
+            response_payload = run_dspy_attempt(
+                prompt=prompt,
+                method=method,
+                session=session,
+                model_config=model_config,
+                attempt_index=attempt_index,
+            )
+            response_text = response_payload["response_text"]
+            retry_count = 0
+            usage = _normalize_usage(response_payload.get("usage"))
+            response_error = (
+                response_payload["response_error"]
+                if isinstance(response_payload.get("response_error"), str)
+                else None
+            )
+            dspy_tool_calls = int(response_payload["tool_calls"])
+            memory_write_proposals = tuple(response_payload.get("memory_write_proposals") or ())
+    except Exception as exc:
+        response_text = ""
         retry_count = 0
-        usage = _normalize_usage(response_payload.get("usage"))
-        response_error = (
-            response_payload["response_error"]
-            if isinstance(response_payload.get("response_error"), str)
-            else None
-        )
-        dspy_tool_calls = int(response_payload["tool_calls"])
+        usage = None
+        dspy_tool_calls = 0
+        response_error = _format_runtime_error(exc)
     extracted_code = extract_code(response_text)
     evaluation = source.evaluate(
         problem,
@@ -1582,8 +1654,15 @@ def _generate_attempt_candidate(
         response_error=response_error,
         direct_retry_count=retry_count,
         dspy_tool_calls=dspy_tool_calls,
-        memory_write_proposals=tuple(response_payload.get("memory_write_proposals") or ()),
+        memory_write_proposals=memory_write_proposals,
     )
+
+
+def _format_runtime_error(exc: Exception) -> str:
+    detail = str(exc).strip()
+    if detail:
+        return f"{exc.__class__.__name__}: {detail}"
+    return exc.__class__.__name__
 
 
 def _select_attempt_candidate(candidates: Sequence[AttemptCandidate]) -> tuple[int, AttemptCandidate]:

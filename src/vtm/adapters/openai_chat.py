@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 from urllib import error, request
@@ -15,6 +16,7 @@ class OpenAICompatibleChatConfig:
     base_url: str
     api_key: str
     timeout_seconds: int = 180
+    extra_body: Mapping[str, Any] | None = None
 
 
 class OpenAICompatibleChatClient:
@@ -47,6 +49,8 @@ class OpenAICompatibleChatClient:
             payload["seed"] = seed
         if response_format is not None:
             payload["response_format"] = response_format
+        if self._config.extra_body is not None:
+            payload.update(dict(self._config.extra_body))
 
         body = json.dumps(payload).encode("utf-8")
         http_request = request.Request(

@@ -760,6 +760,13 @@ def test_livecodebench_dspy_default_max_tokens_is_high_for_long_repairs() -> Non
     assert args.max_tokens == 65536
 
 
+def test_livecodebench_dspy_defaults_to_ionstream_fp8_provider() -> None:
+    parser = livecodebench_dspy_pilot.build_parser()
+    args = parser.parse_args([])
+
+    assert args.provider_only == "ionstream/fp8"
+
+
 def test_livecodebench_dspy_summary_aggregation_handles_missing_retrieval_metrics() -> None:
     summary = aggregate_summary(
         [
@@ -2632,6 +2639,75 @@ def test_livecodebench_dspy_attempt_propagates_response_error(
     assert payload["response_text"] == ""
     assert payload["response_error"] is not None
     assert "final extraction" in payload["response_error"]
+
+
+def test_livecodebench_attempt_candidate_recovers_from_provider_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    problem = LiveCodeBenchProblem(
+        problem_id="lcb-timeout-case",
+        scenario="self_repair",
+        prompt="Implement add(a, b).",
+        evaluator_payload={
+            "public_tests": [{"input": "[2, 3]", "output": "5", "testtype": "functional"}],
+            "problem_metadata": {"func_name": "add"},
+        },
+    )
+
+    monkeypatch.setattr(
+        livecodebench_dspy_pilot,
+        "run_dspy_attempt",
+        lambda **kwargs: (_ for _ in ()).throw(TimeoutError("provider read timed out")),
+    )
+
+    candidate = livecodebench_dspy_pilot._generate_attempt_candidate(
+        method="dspy_baseline",
+        prompt="Solve it",
+        problem=problem,
+        source=livecodebench_sources.ProblemFileSource(Path("/tmp/problems.jsonl")),
+        client=livecodebench_dspy_pilot.OpenAICompatibleChatClient(
+            livecodebench_dspy_pilot.OpenAICompatibleChatConfig(
+                base_url="https://openrouter.example/api/v1",
+                api_key="openrouter-test-key",
+            )
+        ),
+        session=None,
+        config=livecodebench_dspy_pilot.PilotRunConfig(
+            methods=("dspy_baseline",),
+            requested_scenario="self_repair",
+            resolved_scenario="self_repair",
+            model="qwen/qwen3-coder-next",
+            base_url="https://openrouter.example/api/v1",
+            api_key="openrouter-test-key",
+            temperature=0.0,
+            max_tokens=4096,
+            candidates_per_attempt=1,
+            problem_offset=0,
+            max_problems=1,
+            execute=True,
+            output_root=Path(".benchmarks/livecodebench-dspy"),
+            persistent_memory_root=Path(".benchmarks/livecodebench-dspy/_persistent_vtm_memory"),
+            benchmark_root=Path("benchmarks/LiveCodeBench"),
+            problem_file=None,
+            run_id="timeout_candidate_test",
+        ),
+        model_config=livecodebench_dspy_pilot.DSPyOpenRouterConfig.from_env(
+            base_url_value="https://openrouter.example/api/v1",
+            api_key_value="openrouter-test-key",
+            execution_model_name="qwen/qwen3-coder-next",
+            dspy_model_name="qwen/qwen3-coder-next",
+            timeout_seconds=45,
+        ),
+        attempt_index=1,
+    )
+
+    assert candidate.response_text == ""
+    assert candidate.response_error == "TimeoutError: provider read timed out"
+    assert candidate.evaluation is not None
+    assert candidate.evaluation["passed"] is False
+    assert candidate.evaluation["failure_feedback"] == [
+        "No executable code was extracted from the response."
+    ]
 
 
 def test_livecodebench_functional_feedback_surfaces_exception_line(

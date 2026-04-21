@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from urllib import error
 
 import pytest
@@ -160,3 +161,55 @@ def test_create_chat_completion_wraps_url_errors(monkeypatch: pytest.MonkeyPatch
             model="qwen/qwen3-coder-next",
             messages=[{"role": "user", "content": "hello"}],
         )
+
+
+def test_create_chat_completion_merges_extra_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+    client = OpenAICompatibleChatClient(
+        OpenAICompatibleChatConfig(
+            base_url="https://openrouter.example/api/v1",
+            api_key="openrouter-test-key",
+            extra_body={
+                "provider": {
+                    "only": ["ionstream/fp8"],
+                    "allow_fallbacks": False,
+                }
+            },
+        )
+    )
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            del exc_type, exc, tb
+
+        def read(self) -> bytes:
+            return json.dumps(
+                {"choices": [{"message": {"content": "hello"}}]}
+            ).encode("utf-8")
+
+    def fake_urlopen(http_request, timeout):
+        del timeout
+        captured["payload"] = json.loads(http_request.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setattr("vtm.adapters.openai_chat.request.urlopen", fake_urlopen)
+
+    response = client.create_chat_completion(
+        model="qwen/qwen3-coder-next",
+        messages=[{"role": "user", "content": "hello"}],
+    )
+
+    assert response["choices"][0]["message"]["content"] == "hello"
+    assert captured["payload"] == {
+        "model": "qwen/qwen3-coder-next",
+        "temperature": 0.0,
+        "max_tokens": 8192,
+        "messages": [{"role": "user", "content": "hello"}],
+        "provider": {
+            "only": ["ionstream/fp8"],
+            "allow_fallbacks": False,
+        },
+    }
