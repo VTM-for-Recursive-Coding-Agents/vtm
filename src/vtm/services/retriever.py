@@ -186,7 +186,11 @@ def _boosted_match_fields(
             boost = EXACT_MATCH_BOOSTS[field_name]
         else:
             per_token = PARTIAL_MATCH_BOOSTS.get(field_name)
-            boost = min(len(overlap) * per_token, EXACT_MATCH_BOOSTS[field_name]) if per_token else 0.0
+            boost = (
+                min(len(overlap) * per_token, EXACT_MATCH_BOOSTS[field_name])
+                if per_token
+                else 0.0
+            )
         if boost > 0.0:
             total_boost += boost
             boost_breakdown[field_name] = round(boost, 6)

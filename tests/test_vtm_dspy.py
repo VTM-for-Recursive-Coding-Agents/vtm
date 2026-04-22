@@ -159,7 +159,10 @@ def test_vtm_memory_tools_buffer_write_proposals(
     )
     failure = tools.propose_failure_pattern(
         "expected 5 actual 4",
-        "Mismatched totals usually indicate the subtraction branch survived instead of the sum branch.",
+        (
+            "Mismatched totals usually indicate the subtraction branch survived "
+            "instead of the sum branch."
+        ),
         transfer_terms="logic_mismatch,sum",
     )
     drained = tools.drain_write_proposals()

@@ -319,7 +319,9 @@ class BenchmarkReporter:
             )
             summary["attempt_2_rescue_count"] = attempt_2_rescue_count
             summary["attempt_2_rescue_eligible_count"] = attempt_2_rescue_eligible
-            summary["memory_used_rate"] = 0.0 if not results else memory_used_case_count / len(results)
+            summary["memory_used_rate"] = (
+                0.0 if not results else memory_used_case_count / len(results)
+            )
             summary["memory_used_case_count"] = memory_used_case_count
             summary["memory_helped_rate"] = (
                 0.0 if not results else memory_helped_case_count / len(results)
@@ -1032,7 +1034,9 @@ class BenchmarkReporter:
         return breakdown
 
     def _classify_attempt_failure(self, attempt: BenchmarkAttemptResult) -> str | None:
-        if bool(attempt.metrics.get("passed", False)) or bool(attempt.metrics.get("resolved", False)):
+        if bool(attempt.metrics.get("passed", False)) or bool(
+            attempt.metrics.get("resolved", False)
+        ):
             return None
         if bool(attempt.metrics.get("infra_failure", False)):
             return "infra"

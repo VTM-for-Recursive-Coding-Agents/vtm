@@ -144,4 +144,4 @@ with tempfile.TemporaryDirectory() as temp_dir:
     metadata.close()
 ```
 
-With code-anchor evidence, a non-semantic source move can now transition the memory to `relocated` with an updated anchor span instead of dropping to `unknown`. Python Tree-sitter is the primary adapter path; Python AST remains as a fallback/parity implementation. The artifact store can also expose a non-mutating integrity report before any janitor cleanup runs.
+With code-anchor evidence, a non-semantic source move can now transition the memory to `relocated` with an updated anchor span instead of dropping to `unknown`. Python Tree-sitter is used when the optional parser packages are installed; Python AST remains the built-in fallback/parity implementation. The artifact store can also expose a non-mutating integrity report before any janitor cleanup runs.

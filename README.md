@@ -93,6 +93,7 @@ uv run python -m vtm.benchmarks.run \
 
 - `benchmarks/manifests/`: checked-in synthetic smoke, controlled coding-drift, and pinned OSS manifests
 - `docs/`: maintained benchmark recipes, scope note, audit, harness notes, ADRs
+- `experiments/`: non-maintained pilot implementations kept out of the typed package path
 - `src/vtm/`: kernel package plus harness, adapters, services, stores, benchmarks
 - `src/vtm_dspy/`: optional DSPy integration layer over the current kernel and workspace tools
 - `tests/`: regression coverage for kernel, retrieval, verification, harness, and controlled coding paths

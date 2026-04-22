@@ -34,7 +34,9 @@ class UnavailableTreeSitterAdapter:
     """Fallback adapter used when tree-sitter is unavailable."""
 
     def build_anchor(self, source_path: str, symbol: str) -> CodeAnchor:
-        raise NotImplementedError("Tree-sitter integration is deferred in the kernel scaffold")
+        raise NotImplementedError(
+            "Tree-sitter support requires the tree-sitter and tree-sitter-python packages"
+        )
 
     def relocate(self, anchor: CodeAnchor) -> AnchorRelocation | None:
         return None

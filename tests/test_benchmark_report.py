@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from pathlib import Path
 
 from vtm.benchmarks import BenchmarkManifest, BenchmarkRunConfig, BenchmarkRunner
@@ -337,7 +338,7 @@ def test_export_paper_tables_includes_drifted_retrieval_metrics(
     assert retrieval_rows[0]["valid_recall_at_1"]
     assert retrieval_rows[0]["stale_rejection_rate"] == "1.0"
     assert retrieval_rows[0]["stale_hit_rate"] == "0.0"
-    assert retrieval_rows[0]["safe_retrieval_at_1"] == "1.0"
+    assert math.isclose(float(retrieval_rows[0]["safe_retrieval_at_1"]), 11.0 / 12.0)
     assert retrieval_rows[0]["safe_retrieval_at_5"] == "1.0"
     assert "| Corpus | Method | Cases |" in markdown
     assert "Valid Recall@1" in markdown

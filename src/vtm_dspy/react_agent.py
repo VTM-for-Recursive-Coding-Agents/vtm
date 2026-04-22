@@ -95,7 +95,9 @@ class _DSPyTraceRecorder:
             "instance": instance,
             "history_len": len(history) if isinstance(history, Sequence) else 0,
             "message_count": _sequence_length(inputs.get("messages")),
-            "prompt_chars": len(inputs["prompt"]) if isinstance(inputs.get("prompt"), str) else None,
+            "prompt_chars": (
+                len(inputs["prompt"]) if isinstance(inputs.get("prompt"), str) else None
+            ),
             "requested_max_tokens": inputs.get("kwargs", {}).get("max_tokens")
             if isinstance(inputs.get("kwargs"), Mapping)
             else None,
@@ -109,7 +111,10 @@ class _DSPyTraceRecorder:
     ) -> None:
         active = self._active_lm.pop(call_id, {})
         instance = active.get("instance")
-        duration_ms = round((time.perf_counter() - active.get("started_at", time.perf_counter())) * 1000, 3)
+        duration_ms = round(
+            (time.perf_counter() - active.get("started_at", time.perf_counter())) * 1000,
+            3,
+        )
         history_entry = self._latest_history_entry(instance, active.get("history_len", 0))
         usage = _normalize_usage(history_entry.get("usage") if history_entry is not None else None)
         finish_reasons = _extract_finish_reasons(

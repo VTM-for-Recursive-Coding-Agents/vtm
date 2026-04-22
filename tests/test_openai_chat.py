@@ -136,7 +136,10 @@ def test_create_chat_completion_raises_helpful_error_for_non_json_response(
         def read(self) -> bytes:
             return b"<html>temporary upstream gateway issue</html>"
 
-    monkeypatch.setattr("vtm.adapters.openai_chat.request.urlopen", lambda *args, **kwargs: FakeResponse())
+    monkeypatch.setattr(
+        "vtm.adapters.openai_chat.request.urlopen",
+        lambda *args, **kwargs: FakeResponse(),
+    )
 
     with pytest.raises(RuntimeError, match="not valid JSON") as excinfo:
         client.create_chat_completion(

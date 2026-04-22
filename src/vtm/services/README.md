@@ -5,7 +5,7 @@ Purpose: kernel orchestration layer that turns stores and adapters into the publ
 Contents
 - `memory_kernel.py`: `MemoryKernel` protocol and the `TransactionalMemoryKernel` facade.
 - `kernel_transactions.py`, `kernel_validation.py`, `kernel_retrieval.py`, `kernel_artifacts.py`, `kernel_mutations.py`: focused kernel collaborators.
-- `retriever.py`, `reranking_retriever.py`: retrieval implementations.
+- `retriever.py`: lexical retrieval implementation.
 - `verifier.py`: dependency and anchor-based verification.
 - `procedures.py`: command-based procedure validation.
 - `consolidator.py`: deterministic consolidation services.
