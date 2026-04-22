@@ -1,0 +1,32 @@
+uv run --extra dspy python scripts/run_livecodebench_dspy_pilot.py \
+  --method dspy_baseline \
+  --scenario self_repair \
+  --problem-offset 0 \
+  --max-problems 25 \
+  --candidates-per-attempt 1 \
+  --model qwen/qwen3-coder-next \
+  --run-id baseline_25 \
+  --output-root .benchmarks/livecodebench-dspy-tonight \
+  --persistent-memory-root .benchmarks/livecodebench-dspy-tonight/_persistent_vtm_memory \
+  --dspy-timeout-seconds 120 \
+  --provider-only ionstream/fp8 \
+  --execute
+
+uv run --extra dspy python scripts/run_livecodebench_dspy_pilot.py \
+  --method dspy_vtm \
+  --scenario self_repair \
+  --problem-offset 0 \
+  --max-problems 25 \
+  --candidates-per-attempt 1 \
+  --model qwen/qwen3-coder-next \
+  --run-id vtm_25 \
+  --output-root .benchmarks/livecodebench-dspy-tonight \
+  --persistent-memory-root .benchmarks/livecodebench-dspy-tonight/_persistent_vtm_memory \
+  --dspy-timeout-seconds 120 \
+  --provider-only ionstream/fp8 \
+  --execute
+
+uv run python scripts/livecodebench/export_dspy_pilot_results.py \
+  --input-root .benchmarks/livecodebench-dspy-tonight \
+  --output-root .benchmarks/paper-tables/livecodebench-dspy-pilot-tonight
+

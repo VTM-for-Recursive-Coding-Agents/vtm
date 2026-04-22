@@ -790,6 +790,29 @@ def test_livecodebench_dspy_defaults_to_ionstream_fp8_provider() -> None:
     assert args.provider_only == "ionstream/fp8"
 
 
+def test_livecodebench_dspy_hard_timeout_defaults_to_four_minute_floor(
+    tmp_path: Path,
+) -> None:
+    class FakeSource:
+        def supported_scenarios(self) -> set[str]:
+            return {"self_repair"}
+
+    parser = livecodebench_dspy_pilot.build_parser()
+    args = parser.parse_args(
+        [
+            "--benchmark-root",
+            str(tmp_path / "benchmarks" / "LiveCodeBench"),
+            "--dspy-timeout-seconds",
+            "120",
+        ]
+    )
+
+    config = livecodebench_dspy_pilot.resolve_config(args, source=FakeSource())
+
+    assert config.dspy_timeout_seconds == 120.0
+    assert config.dspy_hard_timeout_seconds == 240.0
+
+
 def test_livecodebench_dspy_summary_aggregation_handles_missing_retrieval_metrics() -> None:
     summary = aggregate_summary(
         [
@@ -2841,6 +2864,53 @@ def test_livecodebench_dspy_attempt_propagates_response_error(
     assert payload["response_text"] == ""
     assert payload["response_error"] is not None
     assert "final extraction" in payload["response_error"]
+
+
+def test_livecodebench_dspy_attempt_uses_resolved_hard_timeout_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeAgent:
+        def __init__(self, **kwargs) -> None:
+            del kwargs
+
+        def run(self, prompt: str) -> dict[str, object]:
+            captured["prompt"] = prompt
+            return {
+                "response": {"response": "```python\npass\n```"},
+                "trajectory": {"execution_mode": "predict"},
+            }
+
+    def fake_run_with_hard_timeout(func, *, timeout_seconds: float, operation_name: str):
+        captured["timeout_seconds"] = timeout_seconds
+        captured["operation_name"] = operation_name
+        return func()
+
+    monkeypatch.setattr(livecodebench_dspy_pilot, "VTMReActCodingAgent", FakeAgent)
+    monkeypatch.setattr(
+        livecodebench_dspy_pilot,
+        "_run_with_hard_timeout",
+        fake_run_with_hard_timeout,
+    )
+
+    payload = livecodebench_dspy_pilot.run_dspy_attempt(
+        prompt="Solve it",
+        method="dspy_baseline",
+        session=None,
+        model_config=livecodebench_dspy_pilot.DSPyOpenRouterConfig.from_env(
+            base_url_value="https://openrouter.example/api/v1",
+            api_key_value="openrouter-test-key",
+            execution_model_name="qwen/qwen3-coder-next",
+            dspy_model_name="qwen/qwen3-coder-next",
+            timeout_seconds=120,
+        ),
+    )
+
+    assert payload["response_text"] == "```python\npass\n```"
+    assert captured["prompt"] == "Solve it"
+    assert captured["operation_name"] == "DSPy attempt 1"
+    assert captured["timeout_seconds"] == 240.0
 
 
 def test_livecodebench_attempt_candidate_recovers_from_provider_timeout(

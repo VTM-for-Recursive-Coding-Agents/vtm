@@ -8,6 +8,8 @@ import importlib.util
 import json
 import platform
 import re
+import signal
+import threading
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,6 +70,7 @@ DEFAULT_MAX_TOKENS: Final[int] = 65536
 DEFAULT_TEMPERATURE: Final[float] = 0.0
 DEFAULT_SCENARIO: Final[PilotScenario] = "self_repair"
 DEFAULT_PROVIDER_ONLY: Final[tuple[str, ...]] = ("ionstream/fp8",)
+DEFAULT_DSPY_HARD_TIMEOUT_SECONDS: Final[float] = 240.0
 DEFAULT_SELF_REPAIR_MAX_ATTEMPTS: Final[int] = 3
 DEFAULT_DIRECT_EMPTY_RESPONSE_RETRIES: Final[int] = 2
 PILOT_ATTEMPT_ONE_REACT_MAX_ITERS: Final[int] = 8
@@ -220,6 +223,7 @@ class PilotRunConfig:
     problem_file: Path | None
     run_id: str
     dspy_timeout_seconds: float = DEFAULT_DSPY_TIMEOUT_SECONDS
+    dspy_hard_timeout_seconds: float = DEFAULT_DSPY_HARD_TIMEOUT_SECONDS
     provider_only: tuple[str, ...] = DEFAULT_PROVIDER_ONLY
 
     @property
@@ -400,6 +404,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--dspy-hard-timeout-seconds",
+        type=float,
+        default=None,
+        help=(
+            "Hard wall-clock timeout for one DSPy attempt. "
+            "Defaults to max(--dspy-timeout-seconds, 240 seconds)."
+        ),
+    )
+    parser.add_argument(
         "--candidates-per-attempt",
         type=int,
         default=1,
@@ -434,6 +447,19 @@ def resolve_methods(raw_method: str) -> tuple[PilotMethod, ...]:
 def _parse_provider_only(raw_value: str) -> tuple[str, ...]:
     parts = tuple(part.strip() for part in raw_value.split(",") if part.strip())
     return parts
+
+
+def resolve_dspy_hard_timeout_seconds(
+    explicit: float | int | str | None,
+    *,
+    dspy_timeout_seconds: float,
+) -> float:
+    if explicit is None:
+        return max(dspy_timeout_seconds, DEFAULT_DSPY_HARD_TIMEOUT_SECONDS)
+    return max(
+        dspy_timeout_seconds,
+        resolve_dspy_timeout_seconds(explicit),
+    )
 
 
 def _openrouter_provider_preferences(provider_only: Sequence[str]) -> dict[str, Any] | None:
@@ -517,6 +543,10 @@ def resolve_config(
     resolved_scenario = resolve_scenario(requested_scenario, supported_scenarios=supported)
     run_id = args.run_id or f"lcb_dspy_pilot_{utc_now().strftime('%Y%m%d_%H%M%S')}"
     dspy_timeout_seconds = resolve_dspy_timeout_seconds(args.dspy_timeout_seconds)
+    dspy_hard_timeout_seconds = resolve_dspy_hard_timeout_seconds(
+        args.dspy_hard_timeout_seconds,
+        dspy_timeout_seconds=dspy_timeout_seconds,
+    )
     provider_only = _parse_provider_only(str(args.provider_only))
     persistent_memory_root = (
         args.persistent_memory_root
@@ -546,6 +576,7 @@ def resolve_config(
         problem_file=args.problem_file,
         run_id=run_id,
         dspy_timeout_seconds=dspy_timeout_seconds,
+        dspy_hard_timeout_seconds=dspy_hard_timeout_seconds,
         provider_only=provider_only,
     )
 
@@ -1282,6 +1313,8 @@ def run_pilot(
         "output_root": str(config.output_root),
         "persistent_memory_root": str(config.persistent_memory_root),
         "benchmark_root": str(config.benchmark_root),
+        "dspy_timeout_seconds": config.dspy_timeout_seconds,
+        "dspy_hard_timeout_seconds": config.dspy_hard_timeout_seconds,
         "candidates_per_attempt": config.candidates_per_attempt,
         "problem_offset": config.problem_offset,
         "problem_source": source.describe(),
@@ -1962,6 +1995,7 @@ def _generate_attempt_candidate(
                 session=session,
                 model_config=model_config,
                 attempt_index=attempt_index,
+                hard_timeout_seconds=config.dspy_hard_timeout_seconds,
             )
             response_text = response_payload["response_text"]
             retry_count = 0
@@ -2004,6 +2038,69 @@ def _format_runtime_error(exc: Exception) -> str:
     if detail:
         return f"{exc.__class__.__name__}: {detail}"
     return exc.__class__.__name__
+
+
+class DSPyHardTimeoutError(TimeoutError):
+    """Raised when a DSPy attempt exceeds the pilot's outer wall-clock budget."""
+
+
+def _run_with_hard_timeout(
+    func,
+    *,
+    timeout_seconds: float,
+    operation_name: str,
+):
+    resolved_timeout_seconds = max(float(timeout_seconds), 0.001)
+    timeout_message = (
+        f"{operation_name} exceeded hard wall-clock timeout "
+        f"after {resolved_timeout_seconds:g} seconds"
+    )
+    sigalrm = getattr(signal, "SIGALRM", None)
+    setitimer = getattr(signal, "setitimer", None)
+    itimer_real = getattr(signal, "ITIMER_REAL", None)
+    if (
+        sigalrm is not None
+        and setitimer is not None
+        and itimer_real is not None
+        and threading.current_thread() is threading.main_thread()
+    ):
+        previous_handler = signal.getsignal(sigalrm)
+        previous_timer = signal.setitimer(itimer_real, 0.0)
+
+        def _raise_timeout(_signum, _frame):  # noqa: ANN001
+            raise DSPyHardTimeoutError(timeout_message)
+
+        try:
+            signal.signal(sigalrm, _raise_timeout)
+            signal.setitimer(itimer_real, resolved_timeout_seconds)
+            return func()
+        finally:
+            signal.setitimer(itimer_real, 0.0)
+            signal.signal(sigalrm, previous_handler)
+            if previous_timer != (0.0, 0.0):
+                signal.setitimer(itimer_real, *previous_timer)
+
+    result: dict[str, Any] = {}
+    error: dict[str, BaseException] = {}
+
+    def _invoke() -> None:
+        try:
+            result["value"] = func()
+        except BaseException as exc:  # pragma: no cover - fallback path
+            error["exc"] = exc
+
+    worker = threading.Thread(
+        target=_invoke,
+        name="vtm-dspy-hard-timeout",
+        daemon=True,
+    )
+    worker.start()
+    worker.join(resolved_timeout_seconds)
+    if worker.is_alive():
+        raise DSPyHardTimeoutError(timeout_message)
+    if "exc" in error:
+        raise error["exc"]
+    return result["value"]
 
 
 def _select_attempt_candidate(candidates: Sequence[AttemptCandidate]) -> tuple[int, AttemptCandidate]:
@@ -2092,6 +2189,7 @@ def run_dspy_attempt(
     session: PilotMemorySession | None,
     model_config: DSPyOpenRouterConfig,
     attempt_index: int = 1,
+    hard_timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
     if method_uses_vtm_memory(method):
         assert session is not None
@@ -2110,7 +2208,15 @@ def run_dspy_attempt(
         enable_memory_write_tools=enable_memory_write_tools,
         max_iters=react_max_iters,
     )
-    result = agent.run(prompt)
+    resolved_hard_timeout_seconds = resolve_dspy_hard_timeout_seconds(
+        hard_timeout_seconds,
+        dspy_timeout_seconds=model_config.timeout_seconds,
+    )
+    result = _run_with_hard_timeout(
+        lambda: agent.run(prompt),
+        timeout_seconds=resolved_hard_timeout_seconds,
+        operation_name=f"DSPy attempt {attempt_index}",
+    )
     response_payload = result.get("response")
     response_error = None
     if isinstance(response_payload, Mapping):
